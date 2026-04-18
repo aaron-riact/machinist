@@ -2,7 +2,8 @@
 
 Devices declare themselves via :func:`register`. The CLI/loader looks
 them up by ``kind`` and instantiates them with their per-device config.
-This keeps adding a new device a one-liner: ``@register("ur_robot", default_port=29999)``.
+This keeps adding a new device a one-liner:
+``@register("ur_robot", default_port=29999)``.
 """
 
 from __future__ import annotations
@@ -62,65 +63,6 @@ def register(kind: str, *, default_port: int = 0) -> Callable[[DeviceFactory], D
 
     def decorator(factory: DeviceFactory) -> DeviceFactory:
         default_registry.register(kind, factory, default_port=default_port)
-        return factory
-
-    return decorator
-"""A type-safe registry of device factories.
-
-Devices declare themselves via :func:`register`. The CLI/loader looks
-them up by ``kind`` and instantiates them with their per-device config.
-This keeps adding a new device a one-liner: ``@register("ur_robot")``.
-"""
-
-from __future__ import annotations
-
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
-
-from .device import Device
-from .events import EventBus
-from .types import Endpoint
-
-DeviceFactory = Callable[[str, Endpoint, EventBus, dict[str, Any]], Device]
-
-
-@dataclass(slots=True)
-class DeviceRegistry:
-    """Maps device ``kind`` strings to factory callables."""
-
-    _factories: dict[str, DeviceFactory]
-
-    def __init__(self) -> None:
-        self._factories = {}
-
-    def register(self, kind: str, factory: DeviceFactory) -> None:
-        if kind in self._factories:
-            raise ValueError(f"Device kind {kind!r} already registered")
-        self._factories[kind] = factory
-
-    def create(
-        self, kind: str, name: str, endpoint: Endpoint, bus: EventBus, config: dict[str, Any]
-    ) -> Device:
-        try:
-            factory = self._factories[kind]
-        except KeyError as exc:
-            raise KeyError(f"Unknown device kind {kind!r}") from exc
-        return factory(name, endpoint, bus, config)
-
-    def kinds(self) -> tuple[str, ...]:
-        return tuple(sorted(self._factories))
-
-
-#: Process-wide default registry. Devices populate this at import time.
-default_registry = DeviceRegistry()
-
-
-def register(kind: str) -> Callable[[DeviceFactory], DeviceFactory]:
-    """Decorator that registers a factory in :data:`default_registry`."""
-
-    def decorator(factory: DeviceFactory) -> DeviceFactory:
-        default_registry.register(kind, factory)
         return factory
 
     return decorator
