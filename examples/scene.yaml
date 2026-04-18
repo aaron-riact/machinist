@@ -1,0 +1,36 @@
+# Example Machinist scene.
+#
+# Run with:
+#   uv run machinist run examples/scene.yaml --no-tui
+# or with the TUI:
+#   uv run machinist run examples/scene.yaml
+
+devices:
+  - name: ur1
+    kind: ur_dashboard         # default port 29999
+  - name: io1
+    kind: weidmuller_ur20      # default port 502 -> moves to 127.0.0.2
+    options:
+      inputs: 16
+      outputs: 16
+  - name: gripper1
+    kind: pneumatic_gripper    # IO-only, no listener
+    options:
+      settle_seconds: 0.5
+  - name: mill
+    kind: haas_ngc             # MDC on TCP/5051
+    options:
+      doors: [main, sub]
+  - name: lathe
+    kind: mazak_840d           # S7 stub on TCP/102
+    options:
+      mappings:
+        door_open_cmd:  {db: 1, byte: 0, bit: 0}
+        door_close_cmd: {db: 1, byte: 0, bit: 1}
+
+io_links:
+  # Wire the IO controller's output 5 to the pneumatic gripper.
+  - {source: io1.o5, target: gripper1.cmd_open}
+  - {source: io1.o6, target: gripper1.cmd_close}
+  # Wire the IO controller's output 1 to the Mazak's door open command.
+  - {source: io1.o1, target: lathe.door_open_cmd}
