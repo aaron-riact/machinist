@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import socket
-import time
 
 import pytest
 
 from machinist.core.events import Event, EventBus
 from machinist.core.line_device import LineServerDevice
-from machinist.core.types import DeviceState, Endpoint
+from machinist.core.types import Endpoint
 
 
 class EchoDevice(LineServerDevice):
@@ -33,12 +32,7 @@ def test_line_device_round_trip() -> None:
     device = EchoDevice("echo1", Endpoint("127.0.0.1", port), bus)
     device.start()
     try:
-        # Wait for RUNNING.
-        for _ in range(50):
-            if device.state is DeviceState.RUNNING:
-                break
-            time.sleep(0.05)
-
+        assert device.wait_ready(timeout=2.0)
         with socket.create_connection(("127.0.0.1", port), timeout=2) as s:
             s.sendall(b"hello\n")
             data = s.recv(64)

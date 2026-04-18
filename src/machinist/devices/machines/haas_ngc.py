@@ -100,7 +100,9 @@ class HaasNGC(Device):
         ready = threading.Event()
         thread = threading.Thread(target=self._mdc.serve_forever, args=(ready,), daemon=True)
         thread.start()
-        ready.wait(timeout=2.0)
+        if not ready.wait(timeout=2.0):
+            raise RuntimeError(f"{self.name} server failed to bind")
+        self._mark_running()
         self._sub.threads.append(thread)
         stop.wait()
         self._mdc.shutdown()

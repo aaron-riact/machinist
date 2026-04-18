@@ -1,6 +1,6 @@
 """The :class:`Device` abstract base class.
 
-Every emulated machine — robot arm, CNC, gripper, IO controller —
+Every emulated machine - robot arm, CNC, gripper, IO controller -
 implements this interface. The base class is intentionally thin: it owns
 *lifecycle* (start/stop) and *status reporting*, and delegates everything
 else to subclasses.
@@ -27,7 +27,8 @@ class Device(ABC):
 
     Subclasses implement :meth:`_run` (long-running listener) and
     :meth:`_shutdown` (graceful teardown). They publish status updates
-    via :meth:`emit`.
+    via :meth:`emit`. They mark themselves *RUNNING* by calling
+    :meth:`_mark_running` once their external listeners are bound.
     """
 
     #: Human-readable device kind (e.g. ``"ur_robot"``). Subclasses set this.
@@ -37,66 +38,74 @@ class Device(ABC):
         self.name = name
         self.endpoint = endpoint
         self._bus = bus
-        self._state = DeviceState.CREATED
-        self._state_lock = threading.Lock()
+        self._lifecycle = DeviceState.CREATED
+        self._lifecycle_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._ready = threading.Event()
 
     # ----- public API --------------------------------------------------
 
     @property
-    def state(self) -> DeviceState:
-        with self._state_lock:
-            return self._state
+    def lifecycle(self) -> DeviceState:
+        """Current lifecycle state. Distinct from any *domain* state."""
+        with self._lifecycle_lock:
+            return self._lifecycle
 
     def start(self) -> None:
-        """Spawn the device worker thread."""
-        with self._state_lock:
-            if self._state is not DeviceState.CREATED:
-                raise RuntimeError(f"{self.name} already started ({self._state})")
-            self._state = DeviceState.STARTING
+        with self._lifecycle_lock:
+            if self._lifecycle is not DeviceState.CREATED:
+                raise RuntimeError(f"{self.name} already started ({self._lifecycle})")
+            self._lifecycle = DeviceState.STARTING
         self._thread = threading.Thread(
             target=self._thread_main, name=f"machinist-{self.name}", daemon=True
         )
         self._thread.start()
 
+    def wait_ready(self, timeout: float = 5.0) -> bool:
+        """Block until :meth:`_mark_running` has been called."""
+        return self._ready.wait(timeout=timeout)
+
     def stop(self, *, timeout: float = 5.0) -> None:
-        """Request shutdown and wait for the worker to exit."""
-        with self._state_lock:
-            if self._state in (DeviceState.STOPPED, DeviceState.CREATED):
+        with self._lifecycle_lock:
+            if self._lifecycle in (DeviceState.STOPPED, DeviceState.CREATED):
                 return
-            self._state = DeviceState.STOPPING
+            self._lifecycle = DeviceState.STOPPING
         self._stop_event.set()
         self._shutdown()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
 
     def emit(self, kind: str, **payload: Any) -> None:
-        """Publish a status :class:`Event` for this device."""
         self._bus.publish(Event(device=self.name, kind=kind, payload=payload))
 
     # ----- subclass hooks ---------------------------------------------
 
     @abstractmethod
     def _run(self, stop: threading.Event) -> None:
-        """Long-running worker. Should return when ``stop`` is set."""
+        """Long-running worker. Returns when ``stop`` is set."""
 
     def _shutdown(self) -> None:
         """Optional hook for releasing OS resources before joining."""
 
+    def _mark_running(self) -> None:
+        """Subclasses call this once external listeners are bound."""
+        with self._lifecycle_lock:
+            self._lifecycle = DeviceState.RUNNING
+        self._ready.set()
+        self.emit("state", state=DeviceState.RUNNING)
+
     # ----- internals ---------------------------------------------------
 
     def _thread_main(self) -> None:
-        with self._state_lock:
-            self._state = DeviceState.RUNNING
-        self.emit("state", state=self._state)
         try:
             self._run(self._stop_event)
-        except Exception as exc:  # pragma: no cover - exercised in tests
-            with self._state_lock:
-                self._state = DeviceState.FAULTED
+        except Exception as exc:
+            with self._lifecycle_lock:
+                self._lifecycle = DeviceState.FAULTED
             self.emit("error", message=str(exc))
-        else:
-            with self._state_lock:
-                self._state = DeviceState.STOPPED
-        self.emit("state", state=self.state)
+            self._ready.set()
+            return
+        with self._lifecycle_lock:
+            self._lifecycle = DeviceState.STOPPED
+        self.emit("state", state=DeviceState.STOPPED)

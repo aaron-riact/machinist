@@ -69,6 +69,7 @@ class PneumaticGripper(Device):
 
     def _run(self, stop: threading.Event) -> None:
         # IO-only device: just block until shutdown.
+        self._mark_running()
         stop.wait()
         if self._timer is not None:
             self._timer.cancel()

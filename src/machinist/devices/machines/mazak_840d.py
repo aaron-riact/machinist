@@ -111,7 +111,9 @@ class MazakSinumerik840D(Device):
         ready = threading.Event()
         thread = threading.Thread(target=self._server.serve_forever, args=(ready,), daemon=True)
         thread.start()
-        ready.wait(timeout=2.0)
+        if not ready.wait(timeout=2.0):
+            raise RuntimeError(f"{self.name} server failed to bind")
+        self._mark_running()
         stop.wait()
         self._server.shutdown()
         thread.join(timeout=2.0)
