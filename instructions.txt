@@ -23,7 +23,7 @@ The devices will will start with:
 
 * CNC Machines:
   * Mazak with sinumeric controller (840D), User should be able to specify which DB/inputs control, door open, door close and cycle start (and also read door is open / door is closed / cycle is running) (S7 protocol) (should work with the python-snap7 package)
-  * HAAS NGC (with MDC, SMB, DPRINT and MTConnect interfaces)
+  * HAAS NGC (with MDC, SMB, DPRINT and MTConnect interfaces) (look online for docs on each of these interfaces)
   * For machines we can provide a basic gcode implementation (is there a python library that can help?), with support for emulating movement and delays and "writing to the screen" etc, writing variables, writing to DPRINT
   * machines in general can open/close doors (may be more than one), open/close chucks and run programs, and report the status of each of those.
 
