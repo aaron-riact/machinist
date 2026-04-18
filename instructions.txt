@@ -1,0 +1,45 @@
+We are going to have some fun.
+We are going to create a framework for emulating different kinds of machines in python.
+Eg CNC machines, robot arms, grippers, IO Controllers
+Use modern software practices, use uv to setup the project, ensure comprehensive test coverage.
+The config should be able to be read from a yaml file, or given on the command line.
+Each emulated device will bind to its own ip address (usually, or the address or interface specified) (loopback by default unless specified in config/cli.  If ports will collide increment the ip for that device (only if using default loopback), eg first on 127.0.0.1, next conflicting on 127.0.0.2)
+Ports will also be configurable (but will default to the ports of the real devices)
+Write comprehensive readme at the end
+Use Textual for the user interface (user will want to see each devices status, current command/movement etc.  There could be an arbitrary number of devices)
+Anticipate we will likely want a 3d web interface later, to show device visualisation, but not now.
+Framework support should include being able to write "emulators", threaded or using asyncio, or whatever comes along in the future.
+
+The devices will will start with:
+* Robot arms
+  * In general, user can specify a urdf for the kinematics (or DH params)
+  * User will specify the interface to use for each arm, and we will start with support for:
+	* UR (the ur-rtde library should work with this interface, all aspects eg Dashboard and real time interfaces)
+	* Yaskawa motoman (document in this folder, but also https://drive.google.com/file/d/11TY9v_Tb5k23DTz9VuEBmj-vJE5Fmc4R/view)
+	* Dobot  (document in this folder)
+	* Fanuc (look online for specs, but should work with FaRoC library, and Fanucpy)
+  * For IK movement, use an abstraction, and fulfil that abstraction with ik-geo, pykdl and pinnochio libraries (default to pinocchio, but user can choose)
+  * In the first instance we only need to provide emulation for commands related to movement and IO.  So, intial handshaking, requesting pose, position, joints, monitoring etc, and joint and linear movements.
+
+* CNC Machines:
+  * Mazak with sinumeric controller (840D), User should be able to specify which DB/inputs control, door open, door close and cycle start (and also read door is open / door is closed / cycle is running) (S7 protocol)
+  * HAAS NGC (with MDC, SMB, DPRINT and MTConnect interfaces)
+  * For machines we can provide a basic gcode implementation (is there a python library that can help?), with support for emulating movement and delays and "writing to the screen" etc, writing variables, writing to DPRINT
+  * machines in general can open/close doors (may be more than one), open/close chucks and run programs, and report the status of each of those.
+
+* Grippers
+  * OnRobot 3fg25 (modbus)
+  * Zimmer GED6000IL (via TCP IOLink Gateway) (Use the IFL Web interface) IOLink devices will need to specify an "IOLink adapter protocol, we will use http rest calls by default" (the IOLink interface we will offer, will emulate an IFM AL1350 (document in this folder)) Specs for this gripper are in a file in this folder
+  * Generic IO emlating a pnumatic gripper with just "open", "close" and "is fully open", and "is fully closed" IOs
+
+* IOController
+  * Weidmuller (document in this folder, but its again a modbus device)
+  * We need to support the ability to map IOs from IO controllers (eg weidmuller, robots arms also offer io interfaces) to declared IO functionality in the other devices, for example, the user may wish to express "Output 5 of the IO Controller is connected to Input 7 of the machine, where the machines Input 7 commands the door to open"
+
+For each device, search online for the most up-to-date specification
+The user should be able to use the interface to interact with each device (eg put a robot arm into emergency stop state)
+For devices with an SMB service, use an abstration (configurable by the user), and provide implementations with impacket, pysmb and smbprotocol, aiosmb as appropriate
+
+
+make a fun, cool, ultra modern interface in the style of claude code.
+use a very modular project structure, very composable.
