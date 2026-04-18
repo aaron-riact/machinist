@@ -1,0 +1,67 @@
+[project]
+name = "machinist"
+version = "0.1.0"
+description = "A composable framework for emulating industrial machines (robots, CNCs, grippers, IO controllers)."
+authors = [{ name = "Aaron", email = "akl@riact.eu" }]
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+keywords = ["emulation", "robotics", "cnc", "modbus", "s7", "industrial"]
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "textual>=0.79",
+    "anyio>=4.4",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+modbus = ["pymodbus>=3.6"]
+s7 = ["python-snap7>=2.0"]
+http = ["aiohttp>=3.9"]
+smb = ["smbprotocol>=1.13"]
+kinematics = ["numpy>=1.26"]
+
+[project.scripts]
+machinist = "machinist.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.8,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+timeout = 15
+
+[tool.coverage.run]
+branch = true
+source = ["machinist"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "UP", "SIM", "RUF", "PL", "PT"]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
