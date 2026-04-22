@@ -1,18 +1,28 @@
-"""Yaskawa Motoman NX100/DX100 telnet HSE-style command emulator.
+"""Yaskawa Motoman NX100/DX100 Ethernet-server emulator.
 
-Reference: NX100 HTTP / Telnet network command guide
-(``NX100_http_network_command.pdf`` in the repo root).
+Reference: *NX100 HTTP/Telnet Network Command Guide*.
 
-Commands are short ASCII text terminated by ``\\r\\n``. Every reply
-starts with either ``OK`` or ``ERROR:<code>``. We implement enough to
-let a typical monitoring client work end-to-end: ``RPOSJ`` (joint
-position), ``RPOSC`` (cartesian pose), ``CANCEL``, ``HOLD``,
-``SVON``/``SVOFF``, and ``MOVJ``/``MOVL``.
+The NX100 serves on TCP port 80 but the protocol is **not** HTTP.  The
+session opens with::
+
+    CONNECT Robot_access[ Keep-Alive:<n>]<CR><LF>
+    ← OK: NX Information Server(Ver 1.10).<CR><LF>
+
+Subsequent commands are framed as::
+
+    HOSTCTRL_REQUEST <Command> <Size><CR><LF>
+    ← OK: <Command><CR><LF>      (or  NG: <Message>)
+    [if Size > 0] <Command data ending with CR>
+    ← <answer ending with CRLF>
+
+We model this with a stateful :class:`_Session` so CONNECT is a hard
+gate before any verb runs — exactly what a real NX100 does.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.events import EventBus
@@ -20,9 +30,97 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import CRLF
+from ...transport.line_server import Reply, SessionHandler
 from .arm import ArmMode, RobotArm
 
-MOTOMAN_PORT = 80  # HSE web/console port on NX100
+MOTOMAN_PORT = 80
+SERVER_BANNER = "OK: NX Information Server(Ver 1.10)."
+
+
+@dataclass(slots=True)
+class _Session:
+    """Per-connection Motoman handshake + command dispatcher."""
+
+    arm: RobotArm
+    connected: bool = False
+    pending_cmd: str | None = None  # set after HOSTCTRL_REQUEST with Size>0
+    _keep_alive: int | None = None
+
+    # Public: SessionHandler.handle
+    def handle(self, message: str) -> Reply:
+        if self.pending_cmd is not None:
+            cmd, self.pending_cmd = self.pending_cmd, None
+            return self._answer(cmd, message.rstrip("\r"))
+
+        if not self.connected:
+            return self._handle_connect(message)
+
+        if message.startswith("HOSTCTRL_REQUEST"):
+            return self._handle_request(message)
+
+        return "NG: not connected"
+
+    # --- handshake ---------------------------------------------------
+
+    def _handle_connect(self, message: str) -> str:
+        head, _, rest = message.partition(" ")
+        if head.upper() != "CONNECT" or not rest.startswith("Robot_access"):
+            return "NG: bad CONNECT"
+        # Optional Keep-Alive:<n>
+        tail = rest[len("Robot_access"):].strip()
+        if tail.startswith("Keep-Alive:"):
+            try:
+                self._keep_alive = int(tail.split(":", 1)[1])
+            except ValueError:
+                return "NG: bad keep-alive"
+            self.connected = True
+            return f"{SERVER_BANNER} Keep-Alive:{self._keep_alive}."
+        self.connected = True
+        return SERVER_BANNER
+
+    # --- HOSTCTRL_REQUEST -------------------------------------------
+
+    def _handle_request(self, message: str) -> Reply:
+        parts = message.split()
+        if len(parts) < 3:
+            return "NG: bad request"
+        _, cmd, size_s = parts[0], parts[1].upper(), parts[-1]
+        try:
+            size = int(size_s)
+        except ValueError:
+            return "NG: bad size"
+        if size == 0:
+            return [f"OK: {cmd}", self._answer(cmd, "")]
+        self.pending_cmd = cmd
+        return f"OK: {cmd}"
+
+    # --- answer -----------------------------------------------------
+
+    def _answer(self, cmd: str, data: str) -> str:
+        arm, s = self.arm, self.arm.state.snapshot()
+        match cmd:
+            case "RPOSJ":
+                return ",".join(f"{j:.4f}" for j in s.joints)
+            case "RPOSC":
+                return ",".join(f"{p:.4f}" for p in s.pose)
+            case "RSTATS":
+                return _state_word(s.mode)
+            case "SVON":
+                arm.set_servo(True); return "0000"
+            case "SVOFF":
+                arm.set_servo(False); return "0000"
+            case "HOLD" | "CANCEL":
+                arm.estop(); return "0000"
+            case "RESET":
+                arm.reset(); return "0000"
+            case "MOVJ":
+                arm.movej(tuple(_parse_floats(data, count=len(s.joints))))
+                return "0000"
+            case "MOVL":
+                arm.movel(tuple(_parse_floats(data, count=6)))  # type: ignore[arg-type]
+                return "0000"
+            case _:
+                return "ERROR:E2010"
 
 
 class MotomanNX100(LineServerDevice):
@@ -37,43 +135,27 @@ class MotomanNX100(LineServerDevice):
         self.arm = RobotArm(joint_count=int(options.get("joint_count", 6)))
         self.arm.start_ticker()
 
-    def handle_line(self, line: str) -> Iterable[str] | str | None:
-        verb, _, args = line.strip().partition(" ")
-        v = verb.upper()
-        s = self.arm.state.snapshot()
-        match v:
-            case "RPOSJ":
-                return ",".join(f"{j:.4f}" for j in s.joints)
-            case "RPOSC":
-                return ",".join(f"{p:.4f}" for p in s.pose)
-            case "SVON":
-                self.arm.set_servo(True)
-                return "OK"
-            case "SVOFF":
-                self.arm.set_servo(False)
-                return "OK"
-            case "HOLD" | "CANCEL":
-                self.arm.estop()
-                return "OK"
-            case "RESET":
-                self.arm.reset()
-                return "OK"
-            case "MOVJ":
-                joints = _parse_floats(args, count=len(s.joints))
-                self.arm.movej(tuple(joints))
-                return "OK"
-            case "MOVL":
-                pose = tuple(_parse_floats(args, count=6))
-                self.arm.movel(pose)  # type: ignore[arg-type]
-                return "OK"
-            case "STATE":
-                return _state_word(s.mode)
-            case _:
-                return "ERROR:E2010"
+    def make_session(self) -> SessionHandler:
+        return _TracingSession(self, _Session(arm=self.arm))
 
     def _shutdown(self) -> None:
         super()._shutdown()
         self.arm.stop_ticker()
+
+
+@dataclass(slots=True)
+class _TracingSession:
+    """Thin wrapper that surfaces rx/tx events on the bus."""
+
+    device: LineServerDevice
+    inner: SessionHandler
+
+    def handle(self, message: str) -> Reply:
+        self.device.emit("rx", line=message)
+        reply = self.inner.handle(message)
+        if reply is not None:
+            self.device.emit("tx", reply=reply if isinstance(reply, str) else list(reply))
+        return reply
 
 
 def _parse_floats(text: str, *, count: int) -> list[float]:
