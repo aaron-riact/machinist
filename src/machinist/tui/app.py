@@ -51,6 +51,8 @@ class MachinistApp(App[None]):
     #detail-pane { border: round #6e6cd1; }
     #detail-header { height: 3; padding: 0 1; }
     #signals { height: 1fr; }
+    #files { height: 40%; border-top: dashed #6e6cd1; }
+    #files.hidden { display: none; }
     RichLog#log { height: 30%; border: round #6e6cd1; padding: 0 1; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
     """
@@ -59,6 +61,7 @@ class MachinistApp(App[None]):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("e", "estop", "E-Stop selected"),
         Binding("r", "reset", "Reset selected"),
+        Binding("f", "toggle_files", "Files panel"),
     ]
 
     def __init__(self, world: World) -> None:
@@ -81,6 +84,10 @@ class MachinistApp(App[None]):
                 yield self.detail_header
                 self.signals = DataTable(id="signals", cursor_type="row", zebra_stripes=True)
                 yield self.signals
+                self.files = DataTable(
+                    id="files", cursor_type="row", zebra_stripes=True, classes="hidden",
+                )
+                yield self.files
         self.log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
         yield self.log
         self.cmd = Input(placeholder="◇ command (type 'help' for ideas)", id="cmd")
@@ -92,6 +99,7 @@ class MachinistApp(App[None]):
         self.sub_title = f"fleet of {len(self.world.devices)} device(s)"
         self.devices_table.add_columns("name", "kind", "endpoint", "state")
         self.signals.add_columns("signal", "value")
+        self.files.add_columns("program")
         self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
         self.set_interval(0.1, self._drain)
@@ -120,12 +128,15 @@ class MachinistApp(App[None]):
     # ----- selection / detail -------------------------------------------
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        # Only react to the *devices* table; the signals table is read-only.
-        if event.control is not self.devices_table:
+        if event.control is self.devices_table:
+            row = self.devices_table.get_row_at(event.cursor_row)
+            self._selected = str(row[0])
+            self._refresh_detail()
             return
-        row = self.devices_table.get_row_at(event.cursor_row)
-        self._selected = str(row[0])
-        self._refresh_detail()
+        if event.control is self.files:
+            program = str(self.files.get_row_at(event.cursor_row)[0])
+            _cmd_run(self, f"{self._selected or ''} {program}")
+            return
 
     def _refresh_devices_table(self) -> None:
         self.devices_table.clear()
@@ -139,6 +150,7 @@ class MachinistApp(App[None]):
         if device is None:
             self.detail_header.update("[dim]no device selected[/]")
             self.signals.clear()
+            self.files.clear()
             return
         self.detail_header.update(
             f"[bold]{device.name}[/]  [dim]({device.kind})[/]\n"
@@ -147,11 +159,19 @@ class MachinistApp(App[None]):
         )
         self.signals.clear()
         bank = getattr(device, "io", None)
-        if bank is None:
+        if bank is not None:
+            for sig in bank:
+                dot = "[green]●[/]" if sig.value else "[red]●[/]"
+                self.signals.add_row(f"{dot} {sig.name}", str(sig.value))
+        self._refresh_files(device)
+
+    def _refresh_files(self, device: Device) -> None:
+        self.files.clear()
+        programs = getattr(device, "programs", None)
+        if programs is None:
             return
-        for sig in bank:
-            dot = "[green]●[/]" if sig.value else "[red]●[/]"
-            self.signals.add_row(f"{dot} {sig.name}", str(sig.value))
+        for name in programs.list():
+            self.files.add_row(name)
 
     def _lookup(self, name: str | None) -> Device | None:
         if name is None:
@@ -199,6 +219,9 @@ class MachinistApp(App[None]):
     def action_reset(self) -> None:
         if self._selected is not None:
             self._with_arm(self._selected, lambda arm: arm.reset())
+
+    def action_toggle_files(self) -> None:
+        self.files.toggle_class("hidden")
 
 
 # --- stateless helpers --------------------------------------------------
