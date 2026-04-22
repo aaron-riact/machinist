@@ -22,6 +22,14 @@ devices:
     kind: haas_ngc             # MDC on TCP/5051
     options:
       doors: [main, sub]
+      dprint_port: 5052        # DPRINT log broadcast
+      mtconnect_port: 5080     # GET /probe + /current
+      program_folder: ./.machinist_programs/mill
+      # smb:                   # uncomment if impacket is installed
+      #   backend: impacket
+      #   port: 4445           # non-privileged test port
+      #   share: PROGRAMS
+      #   smb1: true
   #- name: lathe
   #  kind: mazak_840d           # S7 stub on TCP/102
   #  options:

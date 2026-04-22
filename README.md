@@ -25,15 +25,17 @@ expensive iron to a stand-still.
   PLC simulators, no vendor SDKs required for the core flow.
 * **Declarative YAML scenes** describing whole cells (robots, grippers,
   IO controllers, machines) including IO wiring between them.
-* **Tiny native protocol stacks** (Modbus/TCP, S7 stub, IO-Link HTTP,
-  generic line protocols) — heavy vendor libraries (`pymodbus`,
-  `python-snap7`, `aiohttp`, `smbprotocol`) remain *optional* extras.
+* **Tiny native protocol stacks** — the framework's core speaks line
+  protocols, Modbus/TCP and HTTP natively; S7 and SMB ship as thin
+  shims over lazily-imported back-ends (`python-snap7`, `impacket`,
+  `pysmb`, `smbprotocol`, `aiosmb`). No back-end is a hard dependency.
 * **One worker thread per device, agnostic to threads vs. asyncio vs.
   simpy**. Each device decides its own concurrency model.
-* **Pluggable kinematics** (`noop` ships; `pinocchio`, `pykdl`, `ik-geo`
-  plug in via `kinematics.api.register_backend`).
+* **Pluggable kinematics** — `RobotModel(DHParams | urdf_path)` picks
+  a back-end (`dh`, `pinocchio`, `pykdl`, `ik-geo`) lazily; same API
+  as tupleo. Every robot arm accepts an ``options.kinematics`` block.
 * **Live Textual TUI in a "Claude-code" style** — devices grid, signal
-  panel, event log, and a modal command bar.
+  panel, event log, program-file browser, and a modal command bar.
 * **Composable, not extendable**: the abstract base classes
   (`Device`, `LineServerDevice`, `RobotArm`, `MachineState`) own the
   cross-cutting behaviour; per-vendor modules are 50–100 LoC each.
@@ -97,8 +99,8 @@ When two devices want the same `host:port`, Machinist:
 | `motoman_nx100`     | TCP text (HSE)   | 80           | Yaskawa NX100/DX100 telnet         |
 | `dobot_dashboard`   | TCP text         | 29999        | Dobot Verb(args); reply pattern    |
 | `fanuc_r30ib`       | TCP text         | 18735        | fanucpy / FaRoC compatible verbs   |
-| `haas_ngc`          | TCP text (MDC)   | 5051         | Q-queries; DPRINT log              |
-| `mazak_840d`        | S7 (stub)        | 102          | Configurable DB/byte/bit mappings  |
+| `haas_ngc`          | MDC+DPRINT+MTC+SMB | 5051       | Multi-service CNC; program library    |
+| `mazak_840d`        | S7 (stub/snap7)  | 102          | Pluggable back-end, DB/byte/bit maps  |
 | `pneumatic_gripper` | IO only          | n/a          | open/close + limit switches        |
 | `onrobot_3fg25`     | Modbus/TCP       | 502          | Diameter, force, grip command      |
 | `zimmer_ged6000il`  | IO-Link HTTP     | 80           | Emulates IFM AL1350 master         |
@@ -119,11 +121,19 @@ machinist/
 │   └── world.py             ← WorldBuilder, World context manager
 ├── transport/
 │   ├── line_server.py        ← reusable threaded line protocol server
+│   ├── framing.py            ← Framer Protocol (newline/CRLF/paren)
 │   ├── modbus_server.py      ← native MBAP/TCP slave (FC 03/06/16)
-│   ├── s7_server.py          ← S7Store + stub listener
+│   ├── s7_server.py          ← S7Store + pluggable back-ends
+│   ├── broadcast.py          ← one-to-many line TCP (DPRINT)
+│   ├── mtconnect.py          ← /probe + /current XML
+│   ├── smb_share.py          ← SmbShare Protocol + lazy back-ends
 │   └── iolink_http_master.py ← stdlib HTTP gateway emulating AL1350
 ├── kinematics/
-│   └── api.py                ← Kinematics Protocol + NoOpKinematics
+│   ├── api.py                ← Kinematics Protocol + RobotModel + registry
+│   ├── dh_backend.py         ← pure-numpy DH FK + damped-LS IK
+│   ├── pinocchio_backend.py  ← lazy pinocchio wrapper
+│   ├── pykdl_backend.py      ← lazy PyKDL wrapper
+│   └── ikgeo_backend.py      ← lazy ik-geo wrapper
 ├── devices/
 │   ├── robots/        ← UR, Motoman, Dobot, Fanuc — all share arm.py
 │   ├── machines/      ← HAAS, Mazak — all share state.py + gcode.py
@@ -147,12 +157,9 @@ adopt the IO bank, and the TUI will show it.
 
 * 3D web visualiser (the architecture is intentionally event-driven so
   adding a websocket bridge is purely additive).
-* Full S7 wire protocol (current shipped server is a stub that parks
-  TCP connections; the `S7Store` already models bit-level R/W).
-* SMB share abstraction with `pysmb`/`smbprotocol`/`impacket`/`aiosmb`
-  back-ends.
-* MTConnect, DPRINT and HAAS SMB sub-services (HAAS NGC currently ships
-  the MDC interface only).
+* Grow the g-code interpreter beyond the emulation subset (G2/G3,
+  canned cycles, tool tables).
+* Expand the MTConnect agent to the full Streams schema with history.
 
 ## License
 
