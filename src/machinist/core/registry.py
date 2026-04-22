@@ -2,8 +2,10 @@
 
 Devices declare themselves via :func:`register`. The CLI/loader looks
 them up by ``kind`` and instantiates them with their per-device config.
-This keeps adding a new device a one-liner:
-``@register("ur_robot", default_port=29999)``.
+This keeps adding a new device a one-liner::
+
+    @register("ur_dashboard", default_port=29999)
+    def factory(name, endpoint, bus, options): ...
 """
 
 from __future__ import annotations

@@ -58,6 +58,7 @@ class WorldBuilder:
 
 
 def _absorb_io(device: Device, io_map: IOMap) -> None:
+    """Register a device's :class:`SignalBank` with the IO map, if any."""
     bank = getattr(device, "io", None)
     if isinstance(bank, SignalBank):
         io_map.adopt(bank)
@@ -65,6 +66,7 @@ def _absorb_io(device: Device, io_map: IOMap) -> None:
 
 @contextmanager
 def running(config: SystemConfig) -> Iterator[World]:
+    """Context manager: build, start, yield, stop."""
     world = WorldBuilder().build(config)
     world.start()
     try:

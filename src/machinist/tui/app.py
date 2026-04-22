@@ -68,8 +68,8 @@ class MachinistApp(App[None]):
             yield self.devices_table
             self.detail = Static(id="detail")
             yield self.detail
-        self._log = Log(id="log", highlight=True)
-        yield self._log
+        self.log = Log(id="log", highlight=True)
+        yield self.log
         self.cmd = Input(placeholder="◇ command (type 'help' for ideas)", id="cmd")
         yield self.cmd
         yield Footer()
@@ -99,7 +99,7 @@ class MachinistApp(App[None]):
                 event = self._events.get_nowait()
             except queue.Empty:
                 break
-            self._log.write_line(self._format(event))
+            self.log.write_line(self._format(event))
             if event.kind == "state":
                 self._refresh_devices_table()
             if event.device == self._selected:
@@ -167,7 +167,7 @@ class MachinistApp(App[None]):
         verb, _, rest = line.partition(" ")
         match verb:
             case "help":
-                self._log.write_line(
+                self.log.write_line(
                     "[bold]commands[/]  estop <device> | reset <device> | "
                     "set <device.signal> 0|1 | quit"
                 )
@@ -181,23 +181,23 @@ class MachinistApp(App[None]):
                 target, _, value = rest.partition(" ")
                 self._set_signal(target, value.strip() in ("1", "true", "on"))
             case _:
-                self._log.write_line(f"[red]unknown command[/]: {verb}")
+                self.log.write_line(f"[red]unknown command[/]: {verb}")
 
     def _with_arm(self, name: str, fn) -> None:  # type: ignore[no-untyped-def]
         d = self._lookup(name)
         arm = getattr(d, "arm", None)
         if arm is None:
-            self._log.write_line(f"[red]{name}[/] has no arm")
+            self.log.write_line(f"[red]{name}[/] has no arm")
             return
         fn(arm)
-        self._log.write_line(f"applied to [cyan]{name}[/]")
+        self.log.write_line(f"applied to [cyan]{name}[/]")
 
     def _set_signal(self, target: str, value: bool) -> None:
         try:
             self.world.io_map._resolve(target).set(value)  # noqa: SLF001
-            self._log.write_line(f"set [cyan]{target}[/] = {value}")
+            self.log.write_line(f"set [cyan]{target}[/] = {value}")
         except (KeyError, ValueError) as exc:
-            self._log.write_line(f"[red]error[/]: {exc}")
+            self.log.write_line(f"[red]error[/]: {exc}")
 
     # ----- bindings ---------------------------------------------------
 

@@ -1,15 +1,19 @@
 """The :class:`Device` abstract base class.
 
-Every emulated machine - robot arm, CNC, gripper, IO controller -
+Every emulated machine — robot arm, CNC, gripper, IO controller —
 implements this interface. The base class is intentionally thin: it owns
 *lifecycle* (start/stop) and *status reporting*, and delegates everything
 else to subclasses.
 
-We do not commit to threads vs. asyncio: the framework spins up each
-device in a worker thread and each device decides internally whether to
-run an asyncio loop, native sockets, simpy etc. This keeps the framework
-hospitable to any concurrency model without infecting devices with the
-choice of any other.
+Concurrency model: one worker thread per device. What the device runs
+*inside* that thread (threads, asyncio, simpy, …) is its own business.
+
+Two names are carefully distinguished:
+
+* ``lifecycle``  — the framework's DeviceState (created/starting/
+  running/stopping/stopped/faulted). Owned here.
+* ``state``      — reserved for the *domain* state of the device
+  (machine state, gripper state, …). Owned by subclasses, if at all.
 """
 
 from __future__ import annotations
@@ -23,15 +27,9 @@ from .types import DeviceState, Endpoint
 
 
 class Device(ABC):
-    """Abstract emulated device.
+    """Abstract emulated device."""
 
-    Subclasses implement :meth:`_run` (long-running listener) and
-    :meth:`_shutdown` (graceful teardown). They publish status updates
-    via :meth:`emit`. They mark themselves *RUNNING* by calling
-    :meth:`_mark_running` once their external listeners are bound.
-    """
-
-    #: Human-readable device kind (e.g. ``"ur_robot"``). Subclasses set this.
+    #: Human-readable kind (e.g. ``"ur_dashboard"``). Subclasses set this.
     kind: str = "device"
 
     def __init__(self, name: str, endpoint: Endpoint, bus: EventBus) -> None:
@@ -40,19 +38,20 @@ class Device(ABC):
         self._bus = bus
         self._lifecycle = DeviceState.CREATED
         self._lifecycle_lock = threading.Lock()
+        self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._ready = threading.Event()
 
     # ----- public API --------------------------------------------------
 
     @property
     def lifecycle(self) -> DeviceState:
-        """Current lifecycle state. Distinct from any *domain* state."""
+        """Framework-owned lifecycle phase (see :class:`DeviceState`)."""
         with self._lifecycle_lock:
             return self._lifecycle
 
     def start(self) -> None:
+        """Spawn the device worker thread."""
         with self._lifecycle_lock:
             if self._lifecycle is not DeviceState.CREATED:
                 raise RuntimeError(f"{self.name} already started ({self._lifecycle})")
@@ -62,11 +61,8 @@ class Device(ABC):
         )
         self._thread.start()
 
-    def wait_ready(self, timeout: float = 5.0) -> bool:
-        """Block until :meth:`_mark_running` has been called."""
-        return self._ready.wait(timeout=timeout)
-
     def stop(self, *, timeout: float = 5.0) -> None:
+        """Request shutdown and wait for the worker to exit."""
         with self._lifecycle_lock:
             if self._lifecycle in (DeviceState.STOPPED, DeviceState.CREATED):
                 return
@@ -76,24 +72,36 @@ class Device(ABC):
         if self._thread is not None:
             self._thread.join(timeout=timeout)
 
+    def wait_ready(self, *, timeout: float = 2.0) -> bool:
+        """Block until the device has bound its listener(s)."""
+        return self._ready.wait(timeout=timeout)
+
     def emit(self, kind: str, **payload: Any) -> None:
+        """Publish a status :class:`Event` for this device."""
         self._bus.publish(Event(device=self.name, kind=kind, payload=payload))
 
     # ----- subclass hooks ---------------------------------------------
 
     @abstractmethod
     def _run(self, stop: threading.Event) -> None:
-        """Long-running worker. Returns when ``stop`` is set."""
+        """Long-running worker; must return when ``stop`` is set.
+
+        Subclasses MUST call :meth:`_mark_running` once their listener
+        (TCP socket, HTTP server, …) is bound and accepting connections.
+        """
 
     def _shutdown(self) -> None:
         """Optional hook for releasing OS resources before joining."""
 
+    # ----- subclass helpers -------------------------------------------
+
     def _mark_running(self) -> None:
-        """Subclasses call this once external listeners are bound."""
+        """Announce that the device is fully operational."""
         with self._lifecycle_lock:
-            self._lifecycle = DeviceState.RUNNING
+            if self._lifecycle is DeviceState.STARTING:
+                self._lifecycle = DeviceState.RUNNING
         self._ready.set()
-        self.emit("state", state=DeviceState.RUNNING)
+        self.emit("state", state=str(self._lifecycle))
 
     # ----- internals ---------------------------------------------------
 
@@ -103,9 +111,10 @@ class Device(ABC):
         except Exception as exc:
             with self._lifecycle_lock:
                 self._lifecycle = DeviceState.FAULTED
-            self.emit("error", message=str(exc))
             self._ready.set()
+            self.emit("error", message=str(exc))
+            self.emit("state", state=str(self._lifecycle))
             return
         with self._lifecycle_lock:
             self._lifecycle = DeviceState.STOPPED
-        self.emit("state", state=DeviceState.STOPPED)
+        self.emit("state", state=str(self._lifecycle))
