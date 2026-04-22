@@ -66,7 +66,12 @@ class MazakSinumerik840D(Device):
         self.io.declare("door_is_closed")
         self.io.declare("cycle_running")
         self._store = S7Store()
-        self._server = S7Server(host=endpoint.host, port=endpoint.port, store=self._store)
+        self._server = S7Server(
+            host=endpoint.host,
+            port=endpoint.port,
+            store=self._store,
+            backend=options.get("s7_backend", "stub"),
+        )
         # Sync IO -> S7 store and back.
         self._wire_signals()
 

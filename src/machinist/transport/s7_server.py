@@ -1,18 +1,19 @@
-"""Minimal Siemens S7 store and server scaffolding.
+"""Minimal Siemens S7 store and back-end-pluggable server.
 
-Implementing the full S7 protocol (ISO-on-TCP / COTP / S7 PDU) is out of
-scope for the framework's first cut; ``python-snap7`` is the reference
-client and the *complete* spec is non-public. We provide:
+The S7 protocol is complex (ISO-on-TCP / COTP / S7 PDU negotiation)
+and the complete spec is non-public. Rather than implement it from
+scratch, we keep a tiny wire-agnostic store and select a *server
+back-end* at runtime:
 
-* :class:`S7Store` — a thread-safe model of S7 data blocks with
-  bit-level read/write and a publish/subscribe hook so devices can
-  observe writes from the wire.
-* :class:`S7Server` — a stub listener that accepts TCP connections on
-  port 102 and parks them. Replacing this with a true S7 backend is a
-  drop-in change because the *device* code only ever talks to the
-  store. This keeps the public surface honest while leaving room for
-  a richer implementation (e.g. wrapping the open-source ``snap7``
-  library's ``Srv`` class).
+* ``stub``  (default) — accepts and parks TCP connections so
+  integration tests can verify reachability. Use this when no S7
+  client is involved.
+* ``snap7`` — wraps ``python-snap7``'s ``snap7.server.Server``,
+  which speaks real S7 and shares memory with our :class:`S7Store`.
+  Requires the native libsnap7 library on the host.
+
+The device code only ever talks to the :class:`S7Store`. Swapping
+back-ends is a one-line change in the emulator config.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import socket
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 BitListener = Callable[[bool], None]
 
@@ -74,19 +76,31 @@ class S7Store:
             self._bit_subs.setdefault((db, byte, bit), []).append(listener)
 
 
-class S7Server:
-    """Stub S7 listener.
+# --- back-end protocol -------------------------------------------------
 
-    Accepts and parks TCP connections so that integration tests can
-    verify the device is reachable on its endpoint. A future commit can
-    replace this with a real S7 protocol speaker without touching the
-    device implementations (which talk only to :class:`S7Store`).
-    """
 
-    def __init__(self, *, host: str, port: int, store: S7Store) -> None:
+class S7Backend(Protocol):
+    def serve_forever(self, ready: threading.Event | None = None) -> None: ...
+    def shutdown(self) -> None: ...
+
+
+BackendFactory = Callable[[str, int, S7Store], S7Backend]
+_BACKENDS: dict[str, BackendFactory] = {}
+
+
+def register_backend(name: str, factory: BackendFactory) -> None:
+    _BACKENDS[name] = factory
+
+
+# --- stub back-end (default, always available) -------------------------
+
+
+class _StubBackend:
+    """Accept-and-park listener for reachability tests."""
+
+    def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
-        self.store = store
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
 
@@ -132,3 +146,72 @@ class S7Server:
                     return
         finally:
             client.close()
+
+
+register_backend("stub", lambda h, p, _store: _StubBackend(h, p))
+
+
+# --- snap7 back-end (lazy) ---------------------------------------------
+
+
+def _snap7_factory(host: str, port: int, store: S7Store) -> S7Backend:
+    try:
+        import snap7  # type: ignore[import-untyped]
+        from snap7.type import Area  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "snap7 S7 back-end requires python-snap7 and libsnap7: "
+            "`uv pip install python-snap7`"
+        ) from exc
+
+    class _Snap7Backend:
+        def __init__(self) -> None:
+            self._srv = snap7.server.Server()
+            # Pre-register any already-populated DBs; hot-growing DBs
+            # are registered on demand via the store's lock.
+            for db, block in store._blocks.items():
+                self._srv.register_area(Area.DB, db, block)
+
+        def serve_forever(self, ready: threading.Event | None = None) -> None:
+            self._srv.start_to(host, tcp_port=port)
+            if ready is not None:
+                ready.set()
+            # snap7.Server.start_to spawns its own worker thread;
+            # block until shutdown.
+            while True:
+                import time
+                time.sleep(0.1)
+
+        def shutdown(self) -> None:
+            self._srv.stop()
+
+    return _Snap7Backend()
+
+
+register_backend("snap7", _snap7_factory)
+
+
+# --- public façade -----------------------------------------------------
+
+
+class S7Server:
+    """Pluggable S7 server. Back-end picked via the ``backend`` arg."""
+
+    def __init__(
+        self, *, host: str, port: int, store: S7Store, backend: str = "stub",
+    ) -> None:
+        try:
+            factory = _BACKENDS[backend]
+        except KeyError as exc:
+            raise KeyError(
+                f"Unknown S7 back-end {backend!r}. Known: {sorted(_BACKENDS)}"
+            ) from exc
+        self.store = store
+        self._impl = factory(host, port, store)
+
+    def serve_forever(self, ready: threading.Event | None = None) -> None:
+        self._impl.serve_forever(ready)
+
+    def shutdown(self) -> None:
+        self._impl.shutdown()
+
