@@ -6,9 +6,8 @@
 #   uv run machinist run examples/scene.yaml
 
 devices:
-  - name: r1 
-    #kind: dobot_dashboard         # default port 29999
-    kind: motoman_nx100         # default port 80
+  - name: db1
+    kind: dobot_dashboard         # default port 29999
   - name: io1
     kind: weidmuller_ur20      # default port 502 -> moves to 127.0.0.2
     options:
