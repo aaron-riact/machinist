@@ -228,15 +228,41 @@ def _format_event(event: Event) -> str:
 _COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
     "help": lambda app, _: app.log.write(
         "[bold]commands[/]  estop <device> | reset <device> | "
-        "set <device.signal> 0|1 | quit"
+        "set <device.signal> 0|1 | ls <device> | run <device> <program> | quit"
     ),
     "quit": lambda app, _: app.exit(),
     "estop": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.estop()),
     "reset": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.reset()),
     "set": lambda app, rest: _cmd_set(app, rest),
+    "ls": lambda app, rest: _cmd_ls(app, rest),
+    "run": lambda app, rest: _cmd_run(app, rest),
 }
 
 
 def _cmd_set(app: MachinistApp, rest: str) -> None:
     target, _, value = rest.partition(" ")
     app._set_signal(target, value.strip() in ("1", "true", "on"))
+
+
+def _cmd_ls(app: MachinistApp, rest: str) -> None:
+    device = app._lookup(rest.strip() or app._selected)
+    programs = getattr(device, "programs", None)
+    if programs is None:
+        app.log.write(f"[red]{rest or 'selected'}[/] has no program library")
+        return
+    names = programs.list() or ["(empty)"]
+    app.log.write(f"[cyan]{device.name}[/] programs: {', '.join(names)}")
+
+
+def _cmd_run(app: MachinistApp, rest: str) -> None:
+    target, _, program = rest.partition(" ")
+    device = app._lookup(target.strip() or app._selected)
+    run_program = getattr(device, "run_program", None)
+    if run_program is None:
+        app.log.write(f"[red]{target or 'selected'}[/] cannot run programs")
+        return
+    try:
+        run_program(program.strip())
+        app.log.write(f"started [cyan]{program.strip()}[/] on {device.name}")
+    except (FileNotFoundError, RuntimeError) as exc:
+        app.log.write(f"[red]error[/]: {exc}")
