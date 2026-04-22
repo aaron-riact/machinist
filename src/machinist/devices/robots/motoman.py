@@ -19,6 +19,7 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...transport.framing import CRLF
 from .arm import ArmMode, RobotArm
 
 MOTOMAN_PORT = 80  # HSE web/console port on NX100
@@ -27,7 +28,7 @@ MOTOMAN_PORT = 80  # HSE web/console port on NX100
 class MotomanNX100(LineServerDevice):
     kind = "motoman_nx100"
     DEFAULT_PORT = MOTOMAN_PORT
-    TERMINATOR = "\r\n"
+    FRAMER = CRLF
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]

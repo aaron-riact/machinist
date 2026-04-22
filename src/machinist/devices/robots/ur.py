@@ -28,6 +28,7 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...transport.framing import NEWLINE
 from .arm import ArmMode, RobotArm
 
 UR_DASHBOARD_PORT = 29999
@@ -45,7 +46,8 @@ class URDashboardServer(LineServerDevice):
 
     kind = "ur_dashboard"
     DEFAULT_PORT = UR_DASHBOARD_PORT
-    TERMINATOR = "\n"
+    # UR Dashboard is newline-terminated ASCII.
+    FRAMER = NEWLINE
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]

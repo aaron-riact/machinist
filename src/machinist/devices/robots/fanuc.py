@@ -19,6 +19,7 @@ from ...core.io import SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...transport.framing import NEWLINE
 from .arm import RobotArm
 
 FANUC_PORT = 18735  # fanucpy default Karel port
@@ -27,7 +28,7 @@ FANUC_PORT = 18735  # fanucpy default Karel port
 class FanucKarelServer(LineServerDevice):
     kind = "fanuc_r30ib"
     DEFAULT_PORT = FANUC_PORT
-    TERMINATOR = "\n"
+    FRAMER = NEWLINE
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]

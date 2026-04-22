@@ -28,7 +28,8 @@ from ...core.events import EventBus
 from ...core.io import SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...transport.line_server import LineServer
+from ...transport.framing import CRLF
+from ...transport.line_server import LineServer, stateless
 from .gcode import Interpreter
 from .state import CycleState, MachineState
 
@@ -66,8 +67,8 @@ class HaasNGC(Device):
         self._mdc = LineServer(
             host=endpoint.host,
             port=endpoint.port,
-            handler=self._handle_mdc,
-            terminator="\r\n",
+            session_factory=stateless(self._handle_mdc),
+            framer=CRLF,
         )
         self._sub = _Subservers(mdc=self._mdc)
 

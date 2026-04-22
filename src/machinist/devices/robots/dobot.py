@@ -1,13 +1,19 @@
 """Dobot TCP/IP remote control protocol emulator.
 
-Reference: ``Dobot TCP_IP Remote Control Interface Guide V4.6.2`` PDF in
-the repo root. Two ports are exposed by real Dobots:
+Reference: *Dobot TCP/IP Remote Control Interface Guide V4.6.2*.
 
-* ``29999`` – dashboard (text commands, semicolon-terminated)
-* ``30003`` – feedback / RT data (binary)
+Dashboard port is ``29999``. A command on the wire is::
 
-We implement the dashboard text channel here. Every command has the
-form ``Verb(arg1,arg2,...)`` and replies are ``code,{value};`` strings.
+    MessageName(Param1,Param2,…)
+
+The message *ends at the closing paren* — there is no newline or any
+other terminator. Responses carry their own terminator, a semicolon::
+
+    0,{value1,…},MessageName(args);
+
+We therefore use :data:`PAREN` framing rather than trying to abuse a
+line-oriented server (``;`` only marks *reply* boundaries, never
+incoming-message boundaries).
 """
 
 from __future__ import annotations
@@ -19,15 +25,18 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...transport.framing import PAREN
 from .arm import RobotArm
 
 DOBOT_DASHBOARD_PORT = 29999
 
 
 class DobotDashboard(LineServerDevice):
+    """Emulated Dobot TCP/IP dashboard (port 29999)."""
+
     kind = "dobot_dashboard"
     DEFAULT_PORT = DOBOT_DASHBOARD_PORT
-    TERMINATOR = ";"
+    FRAMER = PAREN
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
@@ -37,47 +46,45 @@ class DobotDashboard(LineServerDevice):
         self.arm.start_ticker()
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
-        verb, args = _split(line.strip())
+        verb, args = _parse(line)
         s = self.arm.state.snapshot()
         match verb.lower():
             case "enablerobot":
-                self.arm.set_servo(True)
-                return "0,{};EnableRobot()"
+                self.arm.set_servo(True); return _ok(verb, args)
             case "disablerobot":
-                self.arm.set_servo(False)
-                return "0,{};DisableRobot()"
+                self.arm.set_servo(False); return _ok(verb, args)
             case "emergencystop":
-                self.arm.estop()
-                return "0,{};EmergencyStop()"
+                self.arm.estop(); return _ok(verb, args)
             case "clearerror":
-                self.arm.reset()
-                return "0,{};ClearError()"
+                self.arm.reset(); return _ok(verb, args)
             case "getpose":
-                return f"0,{{{','.join(f'{p:.4f}' for p in s.pose)}}};GetPose()"
+                return _ok(verb, args, value=",".join(f"{p:.4f}" for p in s.pose))
             case "getangle":
-                return f"0,{{{','.join(f'{j:.4f}' for j in s.joints)}}};GetAngle()"
+                return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
             case "movj":
-                joints = _parse_floats(args, count=len(s.joints))
-                self.arm.movej(tuple(joints))
-                return "0,{};MovJ()"
+                self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
+                return _ok(verb, args)
             case "movl":
-                pose = tuple(_parse_floats(args, count=6))
-                self.arm.movel(pose)  # type: ignore[arg-type]
-                return "0,{};MovL()"
+                self.arm.movel(tuple(_parse_floats(args, count=6)))  # type: ignore[arg-type]
+                return _ok(verb, args)
             case _:
-                return f"-1,{{}};{verb}() unknown"
+                return f"-10000,{{}},{verb}({args})"
 
     def _shutdown(self) -> None:
         super()._shutdown()
         self.arm.stop_ticker()
 
 
-def _split(line: str) -> tuple[str, str]:
-    if "(" not in line:
+# --- helpers ---------------------------------------------------------
+
+
+def _parse(line: str) -> tuple[str, str]:
+    """Split ``Verb(args)`` into ``(verb, args)``."""
+    line = line.strip()
+    if "(" not in line or not line.endswith(")"):
         return line, ""
     verb, rest = line.split("(", 1)
-    args = rest.rsplit(")", 1)[0]
-    return verb, args
+    return verb.strip(), rest[:-1]
 
 
 def _parse_floats(text: str, *, count: int) -> list[float]:
@@ -85,6 +92,10 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
     if len(parts) != count:
         raise ValueError(f"expected {count} floats, got {len(parts)}")
     return [float(p) for p in parts]
+
+
+def _ok(verb: str, args: str, *, value: str = "") -> str:
+    return f"0,{{{value}}},{verb}({args})"
 
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)

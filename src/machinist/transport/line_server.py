@@ -1,12 +1,17 @@
 """A minimal threaded TCP line-protocol server.
 
-Industrial protocols that we need to emulate (UR Dashboard, Yaskawa
-NX100 telnet, HAAS DPRINT, Dobot TCP) all boil down to "newline
-terminated text in, newline terminated text out". Centralising that
-pattern keeps device code trivial and easy to test.
+Responsibilities are split cleanly:
 
-Concurrency model: one accept thread + one thread per client. Industrial
-servers rarely see >1-2 simultaneous clients so this is plenty.
+* :class:`~machinist.transport.framing.Framer` owns byte ↔ message
+  framing (newlines, CRLF, Dobot's parens, …).
+* :class:`SessionHandler` owns **per-connection state**: anything that
+  has to survive across messages on one socket (e.g. Motoman's
+  ``CONNECT`` handshake gate).
+* :class:`LineServer` is a dumb accept loop: one thread per client.
+
+This separation kills the two worst foot-guns of the old design: a
+single terminator that had to serve both rx and tx, and a stateless
+handler that couldn't express multi-message handshakes.
 """
 
 from __future__ import annotations
@@ -14,43 +19,55 @@ from __future__ import annotations
 import socket
 import threading
 from collections.abc import Callable, Iterable
+from typing import Protocol
 
-#: A handler returns the lines to send back. Returning ``None`` for any
-#: line keeps the connection alive without a reply.
-LineHandler = Callable[[str], "Iterable[str] | str | None"]
+from .framing import Framer, TerminatorFramer
+
+Reply = Iterable[str] | str | None
+
+
+class SessionHandler(Protocol):
+    """Per-connection message handler."""
+
+    def handle(self, message: str) -> Reply: ...
+
+
+#: A factory that produces a fresh :class:`SessionHandler` per client.
+SessionFactory = Callable[[], SessionHandler]
+
+
+class _Stateless:
+    """Adapter: wrap a plain ``str -> Reply`` callable as a SessionHandler."""
+
+    __slots__ = ("_fn",)
+
+    def __init__(self, fn: Callable[[str], Reply]) -> None:
+        self._fn = fn
+
+    def handle(self, message: str) -> Reply:
+        return self._fn(message)
+
+
+def stateless(fn: Callable[[str], Reply]) -> SessionFactory:
+    """Wrap a stateless ``str -> Reply`` callable as a session factory."""
+    return lambda: _Stateless(fn)
 
 
 class LineServer:
-    """Threaded line-protocol TCP server.
-
-    Parameters
-    ----------
-    host, port:
-        Endpoint to bind.
-    handler:
-        Callable invoked with each received line (already stripped of
-        the terminator). Its return value is sent back to the client.
-    terminator:
-        Line terminator on the wire. Defaults to ``"\\n"``; some
-        protocols want ``"\\r\\n"``.
-    encoding:
-        Text encoding (defaults to ASCII for industrial robustness).
-    """
+    """Threaded line-protocol TCP server."""
 
     def __init__(
         self,
         host: str,
         port: int,
-        handler: LineHandler,
         *,
-        terminator: str = "\n",
-        encoding: str = "ascii",
+        session_factory: SessionFactory,
+        framer: Framer | None = None,
     ) -> None:
         self._host = host
         self._port = port
-        self._handler = handler
-        self._terminator = terminator
-        self._encoding = encoding
+        self._framer: Framer = framer or TerminatorFramer()
+        self._make_session = session_factory
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
         self._client_threads: list[threading.Thread] = []
@@ -91,8 +108,8 @@ class LineServer:
 
     def _serve_client(self, client: socket.socket) -> None:
         client.settimeout(0.25)
+        session = self._make_session()
         buf = bytearray()
-        term = self._terminator.encode(self._encoding)
         try:
             while not self._stop.is_set():
                 try:
@@ -102,17 +119,15 @@ class LineServer:
                 if not chunk:
                     return
                 buf.extend(chunk)
-                while term in buf:
-                    line, _, rest = buf.partition(term)
-                    buf[:] = rest
-                    self._dispatch(client, line.decode(self._encoding, errors="replace"))
+                for message in self._framer.decode(buf):
+                    self._dispatch(client, session, message)
         finally:
             client.close()
 
-    def _dispatch(self, client: socket.socket, line: str) -> None:
-        reply = self._handler(line)
+    def _dispatch(self, client: socket.socket, session: SessionHandler, msg: str) -> None:
+        reply = session.handle(msg)
         if reply is None:
             return
         lines = (reply,) if isinstance(reply, str) else tuple(reply)
-        out = "".join(f"{line}{self._terminator}" for line in lines)
-        client.sendall(out.encode(self._encoding))
+        out = b"".join(self._framer.encode(line) for line in lines)
+        client.sendall(out)

@@ -1,45 +1,60 @@
 """Convenient :class:`Device` subclass for line-protocol devices.
 
-Subclasses just implement :meth:`handle_line`.
+Subclasses either:
+
+* override :meth:`handle_line` for a stateless protocol, **or**
+* override :meth:`make_session` to return a fresh per-connection
+  :class:`SessionHandler` (useful for protocols with a handshake).
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable
 
+from ..transport.framing import Framer, TerminatorFramer
+from ..transport.line_server import LineServer, Reply, SessionHandler, stateless
 from .device import Device
 from .events import EventBus
 from .types import Endpoint
-from ..transport.line_server import LineServer
 
 
 class LineServerDevice(Device):
-    """A device whose external face is a TCP line protocol."""
+    """A device whose external face is a line-protocol TCP server."""
 
-    #: Wire-line terminator. Override per subclass (e.g. ``"\\r\\n"``).
-    TERMINATOR: str = "\n"
-    ENCODING: str = "ascii"
+    #: Per-subclass framing. Override with :class:`TerminatorFramer`,
+    #: :class:`ParenFramer`, or any custom :class:`Framer`.
+    FRAMER: Framer = TerminatorFramer()
 
     def __init__(self, name: str, endpoint: Endpoint, bus: EventBus) -> None:
         super().__init__(name, endpoint, bus)
         self._server = LineServer(
             endpoint.host,
             endpoint.port,
-            handler=self._wrapped_handle,
-            terminator=self.TERMINATOR,
-            encoding=self.ENCODING,
+            session_factory=self.make_session,
+            framer=self.FRAMER,
         )
 
-    def handle_line(self, line: str) -> Iterable[str] | str | None:
-        """Handle one received line; subclasses MUST override."""
+    # ----- subclass hooks --------------------------------------------
+
+    def handle_line(self, line: str) -> Reply:
+        """Handle one received message (stateless default)."""
         raise NotImplementedError
 
-    def _wrapped_handle(self, line: str) -> Iterable[str] | str | None:
+    def make_session(self) -> SessionHandler:
+        """Return a per-connection session handler.
+
+        The default implementation defers to :meth:`handle_line`, which
+        keeps every message independent. Override for handshakes.
+        """
+        return stateless(self._wrapped_handle)()
+
+    # ----- internals --------------------------------------------------
+
+    def _wrapped_handle(self, line: str) -> Reply:
         self.emit("rx", line=line)
         try:
             reply = self.handle_line(line)
-        except Exception as exc:  # pragma: no cover - exercised in tests
+        except Exception as exc:
             self.emit("error", message=str(exc), line=line)
             raise
         if reply is not None:
