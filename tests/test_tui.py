@@ -24,7 +24,7 @@ class _FakeApp:
         self._selected = device.name
         self._device = device
         self.writes: list[str] = []
-        self.log = SimpleNamespace(write=self.writes.append)
+        self._log = SimpleNamespace(write=self.writes.append)
 
     def _lookup(self, name):
         return self._device if (name in (None, self._device.name)) else None

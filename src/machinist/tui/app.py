@@ -88,8 +88,8 @@ class MachinistApp(App[None]):
                     id="files", cursor_type="row", zebra_stripes=True, classes="hidden",
                 )
                 yield self.files
-        self.log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
-        yield self.log
+        self._log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
+        yield self._log
         self.cmd = Input(placeholder="◇ command (type 'help' for ideas)", id="cmd")
         yield self.cmd
         yield Footer()
@@ -119,7 +119,7 @@ class MachinistApp(App[None]):
                 event = self._events.get_nowait()
             except queue.Empty:
                 return
-            self.log.write(_format_event(event))
+            self._log.write(_format_event(event))
             if event.kind == "state":
                 self._refresh_devices_table()
             if event.device == self._selected:
@@ -190,25 +190,25 @@ class MachinistApp(App[None]):
         verb, _, rest = line.partition(" ")
         handler = _COMMANDS.get(verb)
         if handler is None:
-            self.log.write(f"[red]unknown command[/]: {verb}")
+            self._log.write(f"[red]unknown command[/]: {verb}")
             return
         handler(self, rest)
 
     def _set_signal(self, target: str, value: bool) -> None:
         try:
             self.world.io_map._resolve(target).set(value)  # noqa: SLF001
-            self.log.write(f"set [cyan]{target}[/] = {value}")
+            self._log.write(f"set [cyan]{target}[/] = {value}")
         except (KeyError, ValueError) as exc:
-            self.log.write(f"[red]error[/]: {exc}")
+            self._log.write(f"[red]error[/]: {exc}")
 
     def _with_arm(self, name: str, fn: Callable) -> None:  # type: ignore[type-arg]
         device = self._lookup(name)
         arm = getattr(device, "arm", None)
         if arm is None:
-            self.log.write(f"[red]{name}[/] has no arm")
+            self._log.write(f"[red]{name}[/] has no arm")
             return
         fn(arm)
-        self.log.write(f"applied to [cyan]{name}[/]")
+        self._log.write(f"applied to [cyan]{name}[/]")
 
     # ----- keybindings --------------------------------------------------
 
@@ -249,7 +249,7 @@ def _format_event(event: Event) -> str:
 
 
 _COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
-    "help": lambda app, _: app.log.write(
+    "help": lambda app, _: app._log.write(
         "[bold]commands[/]  estop <device> | reset <device> | "
         "set <device.signal> 0|1 | ls <device> | run <device> <program> | quit"
     ),
@@ -271,10 +271,10 @@ def _cmd_ls(app: MachinistApp, rest: str) -> None:
     device = app._lookup(rest.strip() or app._selected)
     programs = getattr(device, "programs", None)
     if programs is None:
-        app.log.write(f"[red]{rest or 'selected'}[/] has no program library")
+        app._log.write(f"[red]{rest or 'selected'}[/] has no program library")
         return
     names = programs.list() or ["(empty)"]
-    app.log.write(f"[cyan]{device.name}[/] programs: {', '.join(names)}")
+    app._log.write(f"[cyan]{device.name}[/] programs: {', '.join(names)}")
 
 
 def _cmd_run(app: MachinistApp, rest: str) -> None:
@@ -282,10 +282,10 @@ def _cmd_run(app: MachinistApp, rest: str) -> None:
     device = app._lookup(target.strip() or app._selected)
     run_program = getattr(device, "run_program", None)
     if run_program is None:
-        app.log.write(f"[red]{target or 'selected'}[/] cannot run programs")
+        app._log.write(f"[red]{target or 'selected'}[/] cannot run programs")
         return
     try:
         run_program(program.strip())
-        app.log.write(f"started [cyan]{program.strip()}[/] on {device.name}")
+        app._log.write(f"started [cyan]{program.strip()}[/] on {device.name}")
     except (FileNotFoundError, RuntimeError) as exc:
-        app.log.write(f"[red]error[/]: {exc}")
+        app._log.write(f"[red]error[/]: {exc}")
