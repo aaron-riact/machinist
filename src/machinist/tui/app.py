@@ -1,34 +1,42 @@
-"""Claude-code styled Textual UI.
+"""Claude-code styled Textual UI for Machinist.
 
-Layout:
+Layout::
 
-    +-------------------------------------------------------------+
-    |  ◇ Machinist  ─ a fleet of N device(s)                      |
-    +---------------+---------------------------------------------+
-    | devices table |     selected device detail                  |
-    |               |     - endpoint, lifecycle                   |
-    |               |     - signals (live grid)                   |
-    |               |     - last events stream                    |
-    +---------------+---------------------------------------------+
-    | event log (all devices) — scrolling                         |
-    +-------------------------------------------------------------+
+    +------------------------------------------------------------+
+    |   ◇ Machinist                                              |
+    +---------------+--------------------------------------------+
+    | devices table | detail header (kind/endpoint/lifecycle)    |
+    |               +--------------------------------------------+
+    |               | signals grid (scrollable, multi-column)    |
+    +---------------+--------------------------------------------+
+    | event log (rich-formatted, auto-scrolls)                   |
+    +------------------------------------------------------------+
+    | ◇ command bar                                              |
+    +------------------------------------------------------------+
 
-Single-pane "command bar" at the bottom mirrors a CLI for power users
-(``estop ur1``, ``set io1.o5 1`` …). Updates are pushed onto an internal
-queue from the bus and drained on Textual's next tick so the UI never
-blocks publisher threads.
+Design decisions worth knowing:
+
+* **RichLog** (not ``Log``) for the event panel — it renders Rich
+  markup faithfully, whereas ``Log`` has highlighting quirks that
+  produced wide, ragged columns.
+* **Signals as DataTable** — natively scrollable and navigable; copes
+  with hundreds of IOs without blowing past the panel's bounds.
+* **Bounded queue + drain-per-tick** — publisher threads (from device
+  ``EventBus``) never block on the UI.
 """
 
 from __future__ import annotations
 
 import queue
+from collections.abc import Callable
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Footer, Header, Input, Log, Static
+from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
+from ..core.device import Device
 from ..core.events import Event
 from ..core.types import DeviceState
 from ..core.world import World
@@ -38,13 +46,13 @@ class MachinistApp(App[None]):
     """Live, interactive view of a Machinist :class:`World`."""
 
     CSS = """
-    Screen { layout: vertical; }
     #top { height: 60%; }
-    #devices { width: 40%; border: round #6e6cd1; }
-    #detail { width: 60%; border: round #6e6cd1; padding: 0 1; }
-    #log { height: 30%; border: round #6e6cd1; }
-    #cmd { dock: bottom; height: 3; }
-    Header { background: #16161e; color: #c0caf5; }
+    #devices { width: 36; border: round #6e6cd1; }
+    #detail-pane { border: round #6e6cd1; }
+    #detail-header { height: 3; padding: 0 1; }
+    #signals { height: 1fr; }
+    RichLog#log { height: 30%; border: round #6e6cd1; padding: 0 1; }
+    Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -61,14 +69,19 @@ class MachinistApp(App[None]):
             world.devices[0].name if world.devices else None
         )
 
+    # ----- widgets -----------------------------------------------------
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="top"):
             self.devices_table = DataTable(id="devices", cursor_type="row")
             yield self.devices_table
-            self.detail = Static(id="detail")
-            yield self.detail
-        self.log = Log(id="log", highlight=True)
+            with Vertical(id="detail-pane"):
+                self.detail_header = Static(id="detail-header")
+                yield self.detail_header
+                self.signals = DataTable(id="signals", cursor_type="row", zebra_stripes=True)
+                yield self.signals
+        self.log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
         yield self.log
         self.cmd = Input(placeholder="◇ command (type 'help' for ideas)", id="cmd")
         yield self.cmd
@@ -76,15 +89,15 @@ class MachinistApp(App[None]):
 
     def on_mount(self) -> None:
         self.title = "◇ Machinist"
-        self.sub_title = f"a fleet of {len(self.world.devices)} device(s)"
+        self.sub_title = f"fleet of {len(self.world.devices)} device(s)"
         self.devices_table.add_columns("name", "kind", "endpoint", "state")
-        for d in self.world.devices:
-            self.devices_table.add_row(d.name, d.kind, str(d.endpoint), str(d.lifecycle))
+        self.signals.add_columns("signal", "value")
+        self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
         self.set_interval(0.1, self._drain)
         self._refresh_detail()
 
-    # ----- bus -> UI ---------------------------------------------------
+    # ----- bus → UI -----------------------------------------------------
 
     def _enqueue(self, event: Event) -> None:
         try:
@@ -93,28 +106,23 @@ class MachinistApp(App[None]):
             pass
 
     def _drain(self) -> None:
-        drained = 0
-        while drained < 50:
+        for _ in range(50):
             try:
                 event = self._events.get_nowait()
             except queue.Empty:
-                break
-            self.log.write_line(self._format(event))
+                return
+            self.log.write(_format_event(event))
             if event.kind == "state":
                 self._refresh_devices_table()
             if event.device == self._selected:
                 self._refresh_detail()
-            drained += 1
 
-    @staticmethod
-    def _format(event: Event) -> str:
-        ts = f"[{event.timestamp:.3f}]"
-        payload = " ".join(f"{k}={v}" for k, v in event.payload.items())
-        return f"{ts} {event.device:>16} · {event.kind:<10} {payload}"
-
-    # ----- selection / detail ------------------------------------------
+    # ----- selection / detail -------------------------------------------
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # Only react to the *devices* table; the signals table is read-only.
+        if event.control is not self.devices_table:
+            return
         row = self.devices_table.get_row_at(event.cursor_row)
         self._selected = str(row[0])
         self._refresh_detail()
@@ -122,35 +130,30 @@ class MachinistApp(App[None]):
     def _refresh_devices_table(self) -> None:
         self.devices_table.clear()
         for d in self.world.devices:
-            self.devices_table.add_row(d.name, d.kind, str(d.endpoint), str(d.lifecycle))
+            self.devices_table.add_row(
+                d.name, d.kind, str(d.endpoint), _paint_lifecycle(d.lifecycle)
+            )
 
     def _refresh_detail(self) -> None:
-        d = self._lookup(self._selected)
-        if d is None:
-            self.detail.update("No device selected")
+        device = self._lookup(self._selected)
+        if device is None:
+            self.detail_header.update("[dim]no device selected[/]")
+            self.signals.clear()
             return
-        lines = [
-            f"[bold]{d.name}[/]  ({d.kind})",
-            f"endpoint:  [magenta]{d.endpoint}[/]",
-            f"lifecycle: {self._lifecycle_color(d.lifecycle)}",
-        ]
-        bank = getattr(d, "io", None)
-        if bank is not None:
-            lines.append("\n[bold]signals[/]")
-            for sig in bank:
-                color = "green" if sig.value else "red"
-                lines.append(f"  [{color}]●[/] {sig.name:<24} = {sig.value}")
-        self.detail.update("\n".join(lines))
+        self.detail_header.update(
+            f"[bold]{device.name}[/]  [dim]({device.kind})[/]\n"
+            f"endpoint [magenta]{device.endpoint}[/]   "
+            f"lifecycle {_paint_lifecycle(device.lifecycle)}"
+        )
+        self.signals.clear()
+        bank = getattr(device, "io", None)
+        if bank is None:
+            return
+        for sig in bank:
+            dot = "[green]●[/]" if sig.value else "[red]●[/]"
+            self.signals.add_row(f"{dot} {sig.name}", str(sig.value))
 
-    @staticmethod
-    def _lifecycle_color(state: DeviceState) -> str:
-        return {
-            DeviceState.RUNNING: f"[green]{state}[/]",
-            DeviceState.FAULTED: f"[red]{state}[/]",
-            DeviceState.STOPPED: f"[grey]{state}[/]",
-        }.get(state, str(state))
-
-    def _lookup(self, name: str | None):
+    def _lookup(self, name: str | None) -> Device | None:
         if name is None:
             return None
         return next((d for d in self.world.devices if d.name == name), None)
@@ -165,41 +168,29 @@ class MachinistApp(App[None]):
         if not line:
             return
         verb, _, rest = line.partition(" ")
-        match verb:
-            case "help":
-                self.log.write_line(
-                    "[bold]commands[/]  estop <device> | reset <device> | "
-                    "set <device.signal> 0|1 | quit"
-                )
-            case "quit":
-                self.exit()
-            case "estop":
-                self._with_arm(rest, lambda arm: arm.estop())
-            case "reset":
-                self._with_arm(rest, lambda arm: arm.reset())
-            case "set":
-                target, _, value = rest.partition(" ")
-                self._set_signal(target, value.strip() in ("1", "true", "on"))
-            case _:
-                self.log.write_line(f"[red]unknown command[/]: {verb}")
-
-    def _with_arm(self, name: str, fn) -> None:  # type: ignore[no-untyped-def]
-        d = self._lookup(name)
-        arm = getattr(d, "arm", None)
-        if arm is None:
-            self.log.write_line(f"[red]{name}[/] has no arm")
+        handler = _COMMANDS.get(verb)
+        if handler is None:
+            self.log.write(f"[red]unknown command[/]: {verb}")
             return
-        fn(arm)
-        self.log.write_line(f"applied to [cyan]{name}[/]")
+        handler(self, rest)
 
     def _set_signal(self, target: str, value: bool) -> None:
         try:
             self.world.io_map._resolve(target).set(value)  # noqa: SLF001
-            self.log.write_line(f"set [cyan]{target}[/] = {value}")
+            self.log.write(f"set [cyan]{target}[/] = {value}")
         except (KeyError, ValueError) as exc:
-            self.log.write_line(f"[red]error[/]: {exc}")
+            self.log.write(f"[red]error[/]: {exc}")
 
-    # ----- bindings ---------------------------------------------------
+    def _with_arm(self, name: str, fn: Callable) -> None:  # type: ignore[type-arg]
+        device = self._lookup(name)
+        arm = getattr(device, "arm", None)
+        if arm is None:
+            self.log.write(f"[red]{name}[/] has no arm")
+            return
+        fn(arm)
+        self.log.write(f"applied to [cyan]{name}[/]")
+
+    # ----- keybindings --------------------------------------------------
 
     def action_estop(self) -> None:
         if self._selected is not None:
@@ -208,3 +199,44 @@ class MachinistApp(App[None]):
     def action_reset(self) -> None:
         if self._selected is not None:
             self._with_arm(self._selected, lambda arm: arm.reset())
+
+
+# --- stateless helpers --------------------------------------------------
+
+
+_LIFECYCLE_COLOURS: dict[DeviceState, str] = {
+    DeviceState.RUNNING: "green",
+    DeviceState.FAULTED: "red",
+    DeviceState.STOPPED: "grey50",
+    DeviceState.STARTING: "yellow",
+}
+
+
+def _paint_lifecycle(state: DeviceState) -> str:
+    return f"[{_LIFECYCLE_COLOURS.get(state, 'white')}]{state}[/]"
+
+
+def _format_event(event: Event) -> str:
+    payload = " ".join(f"{k}={v}" for k, v in event.payload.items())
+    return (
+        f"[dim]{event.timestamp:12.3f}[/] "
+        f"[cyan]{event.device:<12}[/] "
+        f"[magenta]{event.kind:<6}[/] {payload}"
+    )
+
+
+_COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
+    "help": lambda app, _: app.log.write(
+        "[bold]commands[/]  estop <device> | reset <device> | "
+        "set <device.signal> 0|1 | quit"
+    ),
+    "quit": lambda app, _: app.exit(),
+    "estop": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.estop()),
+    "reset": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.reset()),
+    "set": lambda app, rest: _cmd_set(app, rest),
+}
+
+
+def _cmd_set(app: MachinistApp, rest: str) -> None:
+    target, _, value = rest.partition(" ")
+    app._set_signal(target, value.strip() in ("1", "true", "on"))
