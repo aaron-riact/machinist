@@ -13,6 +13,7 @@ Per-vendor modules expose this state through their wire protocol.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 
@@ -43,6 +44,7 @@ class MachineState:
     chucks: dict[str, Toggle] = field(default_factory=dict)
     variables: dict[str, float | str] = field(default_factory=dict)
     dprint_log: list[str] = field(default_factory=list)
+    dprint_subscribers: list[Callable[[str], None]] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def door(self, name: str) -> Toggle:
@@ -54,3 +56,6 @@ class MachineState:
     def dprint(self, text: str) -> None:
         with self._lock:
             self.dprint_log.append(text)
+            subs = list(self.dprint_subscribers)
+        for sub in subs:
+            sub(text)

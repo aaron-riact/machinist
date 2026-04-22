@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import socket
+import urllib.request
+
+import pytest
+
+from machinist.core.events import EventBus
+from machinist.core.types import Endpoint
+from machinist.devices.machines.haas_ngc import HaasNGC
+
+from ..conftest import free_port, wait_running
+
+
+def _make(tmp_path, **opts) -> HaasNGC:
+    opts.setdefault("program_folder", str(tmp_path))
+    bus = EventBus()
+    d = HaasNGC("haas1", Endpoint("127.0.0.1", free_port()), bus, opts)
+    d.start()
+    wait_running(d)
+    return d
+
+
+def _readline(sock: socket.socket, terminator: bytes = b"\r\n") -> bytes:
+    buf = b""
+    while terminator not in buf:
+        chunk = sock.recv(1024)
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+
+
+@pytest.fixture
+def haas(tmp_path):
+    d = _make(tmp_path)
+    try:
+        yield d
+    finally:
+        d.stop()
+
+
+def test_mdc_q100_returns_serial(haas: HaasNGC) -> None:
+    with socket.create_connection((haas.endpoint.host, haas.endpoint.port), timeout=2) as s:
+        s.sendall(b"Q100\r\n")
+        assert b"SERIAL NUMBER" in _readline(s)
+
+
+def test_program_library_roundtrip(haas: HaasNGC) -> None:
+    haas.programs.write("O0001.nc", "DPRINT[hello]\nM30\n")
+    assert "O0001.nc" in haas.programs.list()
+    assert "DPRINT" in haas.programs.read("O0001.nc")
+
+
+def test_dprint_broadcast_to_connected_clients(tmp_path) -> None:
+    import time
+    dprint_port = free_port()
+    d = _make(tmp_path, dprint_port=dprint_port)
+    try:
+        with socket.create_connection(("127.0.0.1", dprint_port), timeout=2) as s:
+            s.settimeout(2.0)
+            # Wait for the server's accept loop to register us.
+            assert d._dprint is not None
+            for _ in range(20):
+                with d._dprint._clients_lock:
+                    if d._dprint._clients:
+                        break
+                time.sleep(0.05)
+            d.state.dprint("PART COMPLETE")
+            line = _readline(s, terminator=b"\n")
+            assert b"PART COMPLETE" in line
+    finally:
+        d.stop()
+
+
+def test_mtconnect_probe_and_current(tmp_path) -> None:
+    mtc_port = free_port()
+    d = _make(tmp_path, mtconnect_port=mtc_port)
+    try:
+        probe = urllib.request.urlopen(
+            f"http://127.0.0.1:{mtc_port}/probe", timeout=2
+        ).read().decode()
+        assert "MTConnectDevices" in probe
+        assert 'id="door_main"' in probe
+        current = urllib.request.urlopen(
+            f"http://127.0.0.1:{mtc_port}/current", timeout=2
+        ).read().decode()
+        assert "MTConnectStreams" in current
+        assert "IDLE" in current
+    finally:
+        d.stop()
+
+
+def test_run_program_executes_dprint(haas: HaasNGC) -> None:
+    haas.programs.write("O0002.nc", "DPRINT[hi]\nM30\n")
+    haas.run_program("O0002.nc")
+    # wait for runner
+    if haas._runner is not None:
+        haas._runner.join(timeout=2)
+    assert "hi" in haas.state.dprint_log
