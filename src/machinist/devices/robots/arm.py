@@ -17,7 +17,7 @@ from enum import StrEnum, auto
 
 import math
 
-from ...kinematics.api import Kinematics, NoOpKinematics
+from ...kinematics.api import Kinematics, NoOpKinematics, RobotModel
 
 JOINT_COUNT_DEFAULT = 6
 Pose = tuple[float, float, float, float, float, float]  # x,y,z,rx,ry,rz
@@ -87,7 +87,9 @@ class RobotArm:
         kinematics: Kinematics | None = None,
     ) -> None:
         self.state = ArmState(joints=(0.0,) * joint_count)
-        self._kinematics: Kinematics = kinematics or NoOpKinematics(joint_count=joint_count)
+        self._kinematics: Kinematics = kinematics or NoOpKinematics(
+            RobotModel(joint_count=joint_count)
+        )
         self._tick_thread: threading.Thread | None = None
         self._stop = threading.Event()
 
@@ -167,3 +169,18 @@ def _lerp(a: float, b: float, t: float) -> float:
 
 def joints_almost_equal(a: Joints, b: Joints, *, tol: float = 1e-6) -> bool:
     return len(a) == len(b) and all(math.isclose(x, y, abs_tol=tol) for x, y in zip(a, b, strict=True))
+
+
+def arm_from_options(options: dict) -> RobotArm:
+    """Build a :class:`RobotArm` from a device's YAML ``options``.
+
+    Reads ``joint_count`` and an optional ``kinematics`` sub-dict
+    ({backend, urdf, dh_params, …}). Keeping this helper here means
+    every wire-protocol adapter (UR, Motoman, Dobot, Fanuc) shares
+    identical config semantics with zero duplication.
+    """
+    from ...kinematics.api import build_kinematics
+    joint_count = int(options.get("joint_count", 6))
+    kin_opts = options.get("kinematics") or {"backend": "noop"}
+    kin_opts.setdefault("joint_count", joint_count)
+    return RobotArm(joint_count=joint_count, kinematics=build_kinematics(kin_opts))

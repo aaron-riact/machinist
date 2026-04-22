@@ -29,7 +29,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
-from .arm import ArmMode, RobotArm
+from .arm import ArmMode, RobotArm, arm_from_options
 
 UR_DASHBOARD_PORT = 29999
 
@@ -53,7 +53,7 @@ class URDashboardServer(LineServerDevice):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = RobotArm(joint_count=int(options.get("joint_count", 6)))
+        self.arm = arm_from_options(options)
         self.arm.start_ticker()
         self._loaded = _LoadedProgram()
 

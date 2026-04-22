@@ -11,4 +11,14 @@ Heavy back-ends (pinocchio etc.) are loaded lazily so the framework
 remains importable without them installed.
 """
 
-from .api import Kinematics, NoOpKinematics, get_backend  # noqa: F401
+from .api import (  # noqa: F401
+    DHParams,
+    Joints,
+    Kinematics,
+    NoOpKinematics,
+    Pose,
+    RobotModel,
+    build_kinematics,
+    get_backend,
+    register_backend,
+)

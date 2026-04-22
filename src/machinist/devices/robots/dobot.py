@@ -26,7 +26,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import PAREN
-from .arm import RobotArm
+from .arm import RobotArm, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
 
@@ -42,7 +42,7 @@ class DobotDashboard(LineServerDevice):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = RobotArm(joint_count=int(options.get("joint_count", 6)))
+        self.arm = arm_from_options(options)
         self.arm.start_ticker()
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:

@@ -31,7 +31,7 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import CRLF
 from ...transport.line_server import Reply, SessionHandler
-from .arm import ArmMode, RobotArm
+from .arm import ArmMode, RobotArm, arm_from_options
 
 MOTOMAN_PORT = 80
 SERVER_BANNER = "OK: NX Information Server(Ver 1.10)."
@@ -132,7 +132,7 @@ class MotomanNX100(LineServerDevice):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = RobotArm(joint_count=int(options.get("joint_count", 6)))
+        self.arm = arm_from_options(options)
         self.arm.start_ticker()
 
     def make_session(self) -> SessionHandler:
