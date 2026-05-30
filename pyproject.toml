@@ -23,6 +23,7 @@ s7 = ["python-snap7>=2.0"]
 http = ["aiohttp>=3.9"]
 smb = ["smbprotocol>=1.13"]
 kinematics = ["numpy>=1.26"]
+opcua = ["asyncua>=1.1"]
 
 [project.scripts]
 machinist = "machinist.cli:app"

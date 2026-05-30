@@ -23,7 +23,7 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...srci import SrciServer
 from ...transport.message import FrameHandler, open_server
-from .arm import RobotArm, arm_from_options
+from .arm import RobotArm, arm_from_options, arm_readers
 
 #: Build a frame handler that drives an arm for a named protocol.
 ProtocolFactory = Callable[[RobotArm], FrameHandler]
@@ -60,6 +60,7 @@ class RobotDevice(Device):
         self.arm = arm_from_options(options)
         self._handler = factory(self.arm)
         self._server = open_server(transport, endpoint.host, endpoint.port)
+        self._opcua = _maybe_opcua(name, endpoint.host, options.get("opcua"), self.arm)
 
     def _run(self, stop: threading.Event) -> None:
         self.arm.start_ticker()
@@ -70,10 +71,27 @@ class RobotDevice(Device):
         thread.start()
         if not ready.wait(timeout=2.0):
             raise RuntimeError(f"{self.name} server failed to bind")
+        opcua_thread = self._start_opcua()
         self._mark_running()
         stop.wait()
         self._server.shutdown()
         thread.join(timeout=2.0)
+        if self._opcua is not None:
+            self._opcua.shutdown()
+        if opcua_thread is not None:
+            opcua_thread.join(timeout=2.0)
+
+    def _start_opcua(self) -> threading.Thread | None:
+        if self._opcua is None:
+            return None
+        ready = threading.Event()
+        thread = threading.Thread(
+            target=self._opcua.serve_forever, args=(ready,), daemon=True
+        )
+        thread.start()
+        ready.wait(timeout=5.0)
+        self.emit("opcua", state="ready")
+        return thread
 
     def _dispatch(self, frame: bytes) -> bytes:
         self.emit("rx", bytes=len(frame))
@@ -83,4 +101,23 @@ class RobotDevice(Device):
 
     def _shutdown(self) -> None:
         self._server.shutdown()
+        if self._opcua is not None:
+            self._opcua.shutdown()
         self.arm.stop_ticker()
+
+
+def _maybe_opcua(
+    name: str, host: str, config: object, arm: RobotArm
+):  # type: ignore[no-untyped-def]
+    """Build an OPC-UA server if the device config opts in, else None."""
+    if not config:
+        return None
+    from ...transport.opcua_server import OpcUaServer
+
+    opts = config if isinstance(config, dict) else {}
+    return OpcUaServer(
+        host,
+        int(opts.get("port", 4840)),
+        device_name=name,
+        readers=arm_readers(arm),
+    )

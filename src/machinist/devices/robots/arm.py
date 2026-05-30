@@ -10,12 +10,12 @@ parsing/formatting their wire protocol.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
-
-import math
 
 from ...kinematics.api import Kinematics, NoOpKinematics, RobotModel
 
@@ -186,3 +186,20 @@ def arm_from_options(options: dict) -> RobotArm:
     kin_opts = options.get("kinematics") or {"backend": "noop"}
     kin_opts.setdefault("joint_count", joint_count)
     return RobotArm(joint_count=joint_count, kinematics=build_kinematics(kin_opts))
+
+
+def arm_readers(arm: RobotArm) -> dict[str, Callable[[], object]]:
+    """Zero-arg readers exposing arm state (e.g. for an OPC-UA server).
+
+    Each value is read fresh from a snapshot, so callers — like the
+    OPC-UA publisher — stay oblivious to the arm's locking.
+    """
+    return {
+        "mode": lambda: str(arm.state.snapshot().mode),
+        "servo_on": lambda: arm.state.snapshot().servo_on,
+        "estopped": lambda: arm.state.snapshot().mode is ArmMode.ESTOPPED,
+        "moving": lambda: arm.state.snapshot().mode is ArmMode.MOVING,
+        "command": lambda: arm.state.snapshot().current_command or "none",
+        "joints": lambda: arm.state.snapshot().joints,
+        "pose": lambda: arm.state.snapshot().pose,
+    }
