@@ -33,13 +33,14 @@ expensive iron to a stand-still.
   simpy**. Each device decides its own concurrency model.
 * **Pluggable kinematics** — `RobotModel(DHParams | urdf_path)` picks
   a back-end (`dh`, `pinocchio`, `pykdl`, `ik-geo`) lazily; same API
-  as tupleo. Every robot arm accepts an ``options.kinematics`` block.
+  as tupleo. Every robot arm accepts either an ``options.kinematics``
+  block or top-level ``backend`` / ``dh_params`` / ``urdf`` keys.
 * **Generic `robot` + SRCI** — point the generic robot at a URDF (or DH
   params), set `protocol: srci`, and pick any `transport` (TCP, UDP, …).
   A standalone `SrciClient` and `srci` CLI talk to it over the same
   transport abstraction, so SRCI is reusable outside the emulator.
 * **OPC-UA** — robots and machines can publish live state
-  (joints/pose/mode, or cycle/spindle/tool/parts) over OPC-UA via the
+  (joints/pose/mode, or cycle/spindle/tool/parts/xyz) over OPC-UA via the
   optional `asyncua` back-end.
 * **Live Textual TUI in a "Claude-code" style** — devices grid, signal
   panel, event log, program-file browser, and a modal command bar.
