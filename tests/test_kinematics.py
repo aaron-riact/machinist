@@ -35,6 +35,12 @@ def test_dh_backend_fk_is_deterministic() -> None:
     assert p1 == p2
 
 
+def test_backend_is_inferred_from_dh_params() -> None:
+    kin = build_kinematics({"dh_params": _ur5_dh(), "joint_count": 6})
+    assert kin.joint_count == 6
+    assert any(abs(value) > 0.01 for value in kin.forward((0.0,) * 6)[:3])
+
+
 def test_dh_backend_ik_round_trip() -> None:
     kin = build_kinematics({"backend": "dh", "dh_params": _ur5_dh(), "joint_count": 6})
     target_joints = (0.1, -0.5, 0.3, -0.2, 0.7, 0.4)

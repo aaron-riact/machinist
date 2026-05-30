@@ -96,9 +96,17 @@ def get_backend(name: str, model: RobotModel) -> Kinematics:
 
 def build_kinematics(options: dict[str, Any]) -> Kinematics:
     """Construct a :class:`Kinematics` from a YAML-style config dict."""
-    backend = options.get("backend", "noop")
+    backend = options.get("backend") or _infer_backend(options)
     model = _model_from_options(options)
     return get_backend(backend, model)
+
+
+def _infer_backend(options: dict[str, Any]) -> str:
+    if options.get("dh_params") is not None:
+        return "dh"
+    if options.get("urdf") is not None:
+        return "pinocchio"
+    return "noop"
 
 
 def _model_from_options(options: dict[str, Any]) -> RobotModel:

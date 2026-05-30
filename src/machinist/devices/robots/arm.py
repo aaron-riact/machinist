@@ -100,9 +100,13 @@ class RobotArm:
         joint_count: int = JOINT_COUNT_DEFAULT,
         kinematics: Kinematics | None = None,
     ) -> None:
-        self.state = ArmState(joints=(0.0,) * joint_count)
+        home_joints = (0.0,) * joint_count
         self._kinematics: Kinematics = kinematics or NoOpKinematics(
             RobotModel(joint_count=joint_count)
+        )
+        self.state = ArmState(
+            joints=home_joints,
+            pose=self._kinematics.forward(home_joints),
         )
         self._tick_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -188,16 +192,30 @@ def joints_almost_equal(a: Joints, b: Joints, *, tol: float = 1e-6) -> bool:
 def arm_from_options(options: dict) -> RobotArm:
     """Build a :class:`RobotArm` from a device's YAML ``options``.
 
-    Reads ``joint_count`` and an optional ``kinematics`` sub-dict
-    ({backend, urdf, dh_params, …}). Keeping this helper here means
-    every wire-protocol adapter (UR, Motoman, Dobot, Fanuc) shares
-    identical config semantics with zero duplication.
+    Reads ``joint_count`` plus either a nested ``kinematics`` mapping or
+    top-level kinematics keys (``backend``, ``urdf``, ``dh_params``).
+    Keeping this helper here means every wire-protocol adapter (UR,
+    Motoman, Dobot, Fanuc, generic robot) shares identical config
+    semantics with zero duplication.
     """
     from ...kinematics.api import build_kinematics
+
     joint_count = int(options.get("joint_count", 6))
-    kin_opts = options.get("kinematics") or {"backend": "noop"}
+    kin_opts = _kinematics_options(options, joint_count=joint_count)
     kin_opts.setdefault("joint_count", joint_count)
     return RobotArm(joint_count=joint_count, kinematics=build_kinematics(kin_opts))
+
+
+def _kinematics_options(options: dict, *, joint_count: int) -> dict:
+    nested = options.get("kinematics")
+    if isinstance(nested, dict):
+        return {**nested, "joint_count": nested.get("joint_count", joint_count)}
+    top_level = {
+        key: value
+        for key, value in options.items()
+        if key in {"backend", "dh_params", "urdf"}
+    }
+    return {**top_level, "joint_count": joint_count}
 
 
 def arm_readers(arm: RobotArm) -> dict[str, Callable[[], object]]:
