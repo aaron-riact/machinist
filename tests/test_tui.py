@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 from types import SimpleNamespace
 
 from machinist.core.events import Event
@@ -8,8 +9,10 @@ from machinist.tui.app import (
     _arm_summary,
     _cmd_ls,
     _cmd_run,
+    _detail_header,
     _format_event,
     _machine_summary,
+    MachinistApp,
     _paint_lifecycle,
 )
 from machinist.devices.robots.arm import RobotArm
@@ -59,6 +62,36 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
     assert "T3" in out
     assert "parts 7" in out
     assert "main:" in out
+
+
+def test_detail_header_combines_static_and_dynamic_sections() -> None:
+    state = MachineState()
+    state.program = "O0001"
+    device = SimpleNamespace(
+        name="mill",
+        kind="haas_ngc",
+        endpoint="127.0.0.1:5051",
+        lifecycle=DeviceState.RUNNING,
+        state=state,
+    )
+    out = _detail_header(device)
+    assert "mill" in out
+    assert "haas_ngc" in out
+    assert "program" in out
+
+
+def test_drain_refreshes_selected_header_even_without_events() -> None:
+    calls: list[str] = []
+    app = SimpleNamespace(
+        _events=queue.Queue(),
+        _selected="robot1",
+        _log=SimpleNamespace(write=lambda _msg: None),
+        _refresh_devices_table=lambda: calls.append("table"),
+        _refresh_detail=lambda: calls.append("detail"),
+        _refresh_detail_header=lambda: calls.append("header"),
+    )
+    MachinistApp._drain(app)
+    assert calls == ["header"]
 
 
 class _FakeApp:

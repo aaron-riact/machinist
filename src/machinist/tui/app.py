@@ -128,12 +128,14 @@ class MachinistApp(App[None]):
             try:
                 event = self._events.get_nowait()
             except queue.Empty:
-                return
+                break
             self._log.write(_format_event(event))
             if event.kind == "state":
                 self._refresh_devices_table()
             if event.device == self._selected:
                 self._refresh_detail()
+                return
+        self._refresh_detail_header()
 
     # ----- selection / detail -------------------------------------------
 
@@ -163,13 +165,7 @@ class MachinistApp(App[None]):
             self.outputs.clear()
             self.files.clear()
             return
-        self.detail_header.update(
-            f"[bold]{device.name}[/]  [dim]({device.kind})[/]\n"
-            f"endpoint [magenta]{device.endpoint}[/]   "
-            f"lifecycle {_paint_lifecycle(device.lifecycle)}"
-            f"{_arm_summary(device)}"
-            f"{_machine_summary(device)}"
-        )
+        self._refresh_detail_header(device)
         self.inputs.clear()
         self.outputs.clear()
         bank = getattr(device, "io", None)
@@ -181,6 +177,13 @@ class MachinistApp(App[None]):
                 )
                 table.add_row(f"{dot} {sig.name}", str(sig.value))
         self._refresh_files(device)
+
+    def _refresh_detail_header(self, device: Device | None = None) -> None:
+        current = device or self._lookup(self._selected)
+        if current is None:
+            self.detail_header.update("[dim]no device selected[/]")
+            return
+        self.detail_header.update(_detail_header(current))
 
     def _refresh_files(self, device: Device) -> None:
         self.files.clear()
@@ -254,6 +257,16 @@ _LIFECYCLE_COLOURS: dict[DeviceState, str] = {
 
 def _paint_lifecycle(state: DeviceState) -> str:
     return f"[{_LIFECYCLE_COLOURS.get(state, 'white')}]{state}[/]"
+
+
+def _detail_header(device: Device) -> str:
+    return (
+        f"[bold]{device.name}[/]  [dim]({device.kind})[/]\n"
+        f"endpoint [magenta]{device.endpoint}[/]   "
+        f"lifecycle {_paint_lifecycle(device.lifecycle)}"
+        f"{_arm_summary(device)}"
+        f"{_machine_summary(device)}"
+    )
 
 
 def _arm_summary(device: Device) -> str:
