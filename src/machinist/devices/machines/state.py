@@ -59,3 +59,20 @@ class MachineState:
             subs = list(self.dprint_subscribers)
         for sub in subs:
             sub(text)
+
+
+def machine_readers(state: MachineState) -> dict[str, Callable[[], object]]:
+    """Zero-arg readers exposing machine state (e.g. for an OPC-UA server).
+
+    Doors and chucks are captured by name at call time, so the set of
+    nodes reflects whatever the machine declared; values stay live.
+    """
+    readers: dict[str, Callable[[], object]] = {
+        "cycle": lambda: str(state.cycle),
+        "program": lambda: state.program.splitlines()[0] if state.program else "",
+    }
+    for name in state.doors:
+        readers[f"door_{name}_open"] = lambda n=name: state.door(n).open
+    for name in state.chucks:
+        readers[f"chuck_{name}_open"] = lambda n=name: state.chuck(n).open
+    return readers

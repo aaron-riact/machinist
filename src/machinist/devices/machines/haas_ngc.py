@@ -30,7 +30,7 @@ from ...transport.line_server import LineServer, stateless
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from ...transport.smb_share import SmbConfig, build_share
 from .gcode import Interpreter
-from .state import MachineState, Toggle
+from .state import MachineState, Toggle, machine_readers
 
 
 @dataclass(slots=True)
@@ -101,6 +101,17 @@ class HaasNGC(Device):
             )
             self._smb = build_share(smb.get("backend", "impacket"), cfg)
 
+        self._opcua = None
+        if (opc := opts.get("opcua")) is not None:
+            from ...transport.opcua_server import OpcUaServer
+
+            self._opcua = OpcUaServer(
+                endpoint.host,
+                int(opc.get("port", 4840)),
+                device_name=name,
+                readers=machine_readers(self.state),
+            )
+
         self._runner: threading.Thread | None = None
         self._run_lock = threading.Lock()
 
@@ -148,12 +159,12 @@ class HaasNGC(Device):
 
     def _run(self, stop: threading.Event) -> None:
         threads = [_spawn(self._mdc.serve_forever)]
-        for sub in (self._dprint, self._mtc, self._smb):
+        for sub in (self._dprint, self._mtc, self._smb, self._opcua):
             if sub is not None:
                 threads.append(_spawn(sub.serve_forever))
         self._mark_running()
         stop.wait()
-        for sub in (self._mdc, self._dprint, self._mtc, self._smb):
+        for sub in (self._mdc, self._dprint, self._mtc, self._smb, self._opcua):
             if sub is not None:
                 sub.shutdown()
         for t in threads:
