@@ -82,6 +82,7 @@ class Interpreter:
             yield f"dwell {duration}s"
             return
         if any(w in words for w in ("G0", "G1")):
+            self._apply_position(words)
             yield " ".join(f"{k}{v}" for k, v in words.items())
             return
 
@@ -101,6 +102,13 @@ class Interpreter:
         elif "M5" in words:
             self.state.spindle_rpm = 0.0
             yield "spindle stop"
+
+    def _apply_position(self, words: dict[str, str]) -> None:
+        self.state.position.move_to(
+            x=float(words["X"]) if "X" in words else None,
+            y=float(words["Y"]) if "Y" in words else None,
+            z=float(words["Z"]) if "Z" in words else None,
+        )
 
 
 def _words(line: str) -> dict[str, str]:

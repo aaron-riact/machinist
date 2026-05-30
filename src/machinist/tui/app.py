@@ -299,12 +299,14 @@ def _machine_summary(device: Device) -> str:
         "green" if cycle == "running" else "yellow" if cycle == "paused" else "grey50"
     )
     program = state.program.splitlines()[0] if state.program else "[dim]none[/]"
+    xyz = f"{state.position.x:+.3f}  {state.position.y:+.3f}  {state.position.z:+.3f}"
     doors = "  ".join(
         f"{name}:{'[red]open[/]' if door.open else '[green]shut[/]'}"
         for name, door in state.doors.items()
     )
     return (
         f"\ncycle [{cycle_colour}]{cycle}[/]   program [cyan]{program}[/]\n"
+        f"xyz [yellow]{xyz}[/]\n"
         f"spindle [yellow]{state.spindle_rpm:g}[/] rpm   feed {state.feed:g}   "
         f"tool [magenta]T{state.tool}[/]   parts {state.parts}\n"
         f"doors  {doors or '[dim]none[/]'}"

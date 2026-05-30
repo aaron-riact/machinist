@@ -77,16 +77,22 @@ def test_mtconnect_probe_and_current(tmp_path) -> None:
     mtc_port = free_port()
     d = _make(tmp_path, mtconnect_port=mtc_port)
     try:
+        d.programs.write("O1000.nc", "G1 X12.5 Y3 Z-7\nM30\n")
+        d.run_program("O1000.nc")
+        if d._runner is not None:
+            d._runner.join(timeout=2)
         probe = urllib.request.urlopen(
             f"http://127.0.0.1:{mtc_port}/probe", timeout=2
         ).read().decode()
         assert "MTConnectDevices" in probe
         assert 'id="door_main"' in probe
+        assert 'id="x"' in probe
         current = urllib.request.urlopen(
             f"http://127.0.0.1:{mtc_port}/current", timeout=2
         ).read().decode()
         assert "MTConnectStreams" in current
         assert "IDLE" in current
+        assert '<Position dataItemId="x">12.5</Position>' in current
     finally:
         d.stop()
 

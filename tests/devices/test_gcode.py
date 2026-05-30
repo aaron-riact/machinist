@@ -60,3 +60,12 @@ def test_m_and_g_code_zero_padding_equivalent() -> None:
     interp = Interpreter(state)
     list(interp.run("M03 S1000\nM30"))
     assert state.spindle_rpm == 1000.0
+
+
+def test_motion_updates_xyz_position() -> None:
+    state = MachineState()
+    interp = Interpreter(state)
+    list(interp.run("G1 X10 Y20 Z30\nG0 X40\nM30"))
+    assert state.position.x == 40.0
+    assert state.position.y == 20.0
+    assert state.position.z == 30.0

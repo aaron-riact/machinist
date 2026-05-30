@@ -65,5 +65,7 @@ async def test_haas_publishes_state_over_opcua(tmp_path) -> None:  # type: ignor
             assert await cycle.read_value() == "idle"
             door = await machine.get_child([f"{idx}:door_main_open"])
             assert await door.read_value() is False
+            x = await machine.get_child([f"{idx}:x"])
+            assert await x.read_value() == 0.0
     finally:
         device.stop()

@@ -53,11 +53,15 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
     state = MachineState()
     state.doors["main"] = Toggle(name="main", open=True)
     state.program = "O0001\nG0 X0"
+    state.position.x = 12.0
+    state.position.y = -3.5
+    state.position.z = 8.25
     state.spindle_rpm = 1500.0
     state.tool = 3
     state.parts = 7
     out = _machine_summary(SimpleNamespace(state=state))
     assert "O0001" in out
+    assert "+12.000" in out
     assert "1500" in out
     assert "T3" in out
     assert "parts 7" in out

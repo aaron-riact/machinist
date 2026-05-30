@@ -49,7 +49,7 @@ class MTConnectAgent:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def log_message(self, format: str, *args) -> None:  # noqa: A002
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
                 pass
 
         self._server = ThreadingHTTPServer((self._host, self._port), _Handler)
@@ -76,6 +76,9 @@ def _render_probe(state) -> str:  # type: ignore[no-untyped-def]
         '<DataItem id="program" category="EVENT" type="PROGRAM"/>',
         '<DataItem id="tool" category="EVENT" type="TOOL_NUMBER"/>',
         '<DataItem id="parts" category="EVENT" type="PART_COUNT"/>',
+        '<DataItem id="x" category="SAMPLE" type="POSITION" subType="ACTUAL" units="MILLIMETER"/>',
+        '<DataItem id="y" category="SAMPLE" type="POSITION" subType="ACTUAL" units="MILLIMETER"/>',
+        '<DataItem id="z" category="SAMPLE" type="POSITION" subType="ACTUAL" units="MILLIMETER"/>',
         '<DataItem id="spindle" category="SAMPLE" type="ROTARY_VELOCITY"'
         ' units="REVOLUTION/MINUTE"/>',
         '<DataItem id="feed" category="SAMPLE" type="PATH_FEEDRATE"'
@@ -111,6 +114,9 @@ def _render_current(state) -> str:  # type: ignore[no-untyped-def]
         )
     events_xml = "".join(events)
     samples = (
+        f'<Position dataItemId="x">{state.position.x:g}</Position>'
+        f'<Position dataItemId="y">{state.position.y:g}</Position>'
+        f'<Position dataItemId="z">{state.position.z:g}</Position>'
         f'<RotaryVelocity dataItemId="spindle">{state.spindle_rpm:g}</RotaryVelocity>'
         f'<PathFeedrate dataItemId="feed">{state.feed:g}</PathFeedrate>'
     )

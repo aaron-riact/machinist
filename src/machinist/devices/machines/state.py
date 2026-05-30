@@ -37,6 +37,27 @@ class Toggle:
 
 
 @dataclass(slots=True)
+class CartesianPosition:
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+    def move_to(
+        self,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
+    ) -> None:
+        if x is not None:
+            self.x = x
+        if y is not None:
+            self.y = y
+        if z is not None:
+            self.z = z
+
+
+@dataclass(slots=True)
 class MachineState:
     cycle: CycleState = CycleState.IDLE
     program: str = ""
@@ -51,6 +72,7 @@ class MachineState:
     tool: int = 0
     tool_changes: int = 0
     parts: int = 0
+    position: CartesianPosition = field(default_factory=CartesianPosition)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def door(self, name: str) -> Toggle:
@@ -80,6 +102,9 @@ def machine_readers(state: MachineState) -> dict[str, Callable[[], object]]:
         "feed": lambda: state.feed,
         "tool": lambda: state.tool,
         "parts": lambda: state.parts,
+        "x": lambda: state.position.x,
+        "y": lambda: state.position.y,
+        "z": lambda: state.position.z,
     }
     for name in state.doors:
         readers[f"door_{name}_open"] = _toggle_reader(state.door, name)
