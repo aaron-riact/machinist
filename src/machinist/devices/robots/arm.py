@@ -62,6 +62,7 @@ class ArmState:
                 servo_on=self.servo_on,
                 program_running=self.program_running,
                 speed_fraction=self.speed_fraction,
+                current_command=self._move.kind if self._move else None,
             )
 
 
@@ -75,6 +76,7 @@ class ArmStateView:
     servo_on: bool
     program_running: bool
     speed_fraction: float
+    current_command: str | None = None
 
 
 class RobotArm:

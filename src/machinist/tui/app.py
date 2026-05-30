@@ -50,7 +50,7 @@ class MachinistApp(App[None]):
     #top { height: 60%; }
     #devices { width: 44; border: round #6e6cd1; }
     #detail-pane { border: round #6e6cd1; }
-    #detail-header { height: 3; padding: 0 1; }
+    #detail-header { height: auto; padding: 0 1; }
     #signals-row { height: 1fr; }
     #inputs, #outputs { width: 1fr; }
     #files { height: 40%; border-top: dashed #6e6cd1; }
@@ -167,6 +167,7 @@ class MachinistApp(App[None]):
             f"[bold]{device.name}[/]  [dim]({device.kind})[/]\n"
             f"endpoint [magenta]{device.endpoint}[/]   "
             f"lifecycle {_paint_lifecycle(device.lifecycle)}"
+            f"{_arm_summary(device)}"
         )
         self.inputs.clear()
         self.outputs.clear()
@@ -252,6 +253,26 @@ _LIFECYCLE_COLOURS: dict[DeviceState, str] = {
 
 def _paint_lifecycle(state: DeviceState) -> str:
     return f"[{_LIFECYCLE_COLOURS.get(state, 'white')}]{state}[/]"
+
+
+def _arm_summary(device: Device) -> str:
+    """One-line-per-fact robot status, or '' for non-robot devices."""
+    arm = getattr(device, "arm", None)
+    if arm is None:
+        return ""
+    s = arm.state.snapshot()
+    mode = s.mode
+    mode_colour = "red" if mode in ("estopped", "faulted") else "green"
+    joints = "  ".join(f"{j:+.3f}" for j in s.joints)
+    pose = "  ".join(f"{p:+.3f}" for p in s.pose)
+    command = s.current_command or "[dim]none[/]"
+    estop = "[red]ENGAGED[/]" if mode == "estopped" else "[green]clear[/]"
+    return (
+        f"\nmode [{mode_colour}]{mode}[/]   servo {'on' if s.servo_on else 'off'}   "
+        f"e-stop {estop}   command [cyan]{command}[/]\n"
+        f"joints [yellow]{joints}[/]\n"
+        f"pose   [magenta]{pose}[/]"
+    )
 
 
 def _format_event(event: Event) -> str:

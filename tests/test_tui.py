@@ -4,7 +4,14 @@ from types import SimpleNamespace
 
 from machinist.core.events import Event
 from machinist.core.types import DeviceState
-from machinist.tui.app import _cmd_ls, _cmd_run, _format_event, _paint_lifecycle
+from machinist.tui.app import (
+    _arm_summary,
+    _cmd_ls,
+    _cmd_run,
+    _format_event,
+    _paint_lifecycle,
+)
+from machinist.devices.robots.arm import RobotArm
 
 
 def test_format_event_is_compact_and_deterministic() -> None:
@@ -17,6 +24,19 @@ def test_format_event_is_compact_and_deterministic() -> None:
 def test_paint_lifecycle_uses_expected_colours() -> None:
     assert _paint_lifecycle(DeviceState.RUNNING).startswith("[green]")
     assert _paint_lifecycle(DeviceState.FAULTED).startswith("[red]")
+
+
+def test_arm_summary_is_empty_for_non_robot() -> None:
+    assert _arm_summary(SimpleNamespace(arm=None)) == ""
+
+
+def test_arm_summary_reports_estop_and_pose() -> None:
+    arm = RobotArm(joint_count=6)
+    arm.estop()
+    out = _arm_summary(SimpleNamespace(arm=arm))
+    assert "estopped" in out
+    assert "ENGAGED" in out
+    assert "joints" in out and "pose" in out
 
 
 class _FakeApp:
