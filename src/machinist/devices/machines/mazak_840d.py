@@ -18,7 +18,7 @@ from typing import Any
 
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.io import SignalBank
+from ...core.io import Direction, SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.s7_server import S7Server, S7Store
@@ -59,12 +59,12 @@ class MazakSinumerik840D(Device):
         self.state = MachineState()
         self.state.door("main")
         self.io = SignalBank(owner=name)
-        self.io.declare("door_open_cmd")
-        self.io.declare("door_close_cmd")
-        self.io.declare("cycle_start_cmd")
-        self.io.declare("door_is_open")
-        self.io.declare("door_is_closed")
-        self.io.declare("cycle_running")
+        self.io.declare("door_open_cmd", Direction.INPUT)
+        self.io.declare("door_close_cmd", Direction.INPUT)
+        self.io.declare("cycle_start_cmd", Direction.INPUT)
+        self.io.declare("door_is_open", Direction.OUTPUT)
+        self.io.declare("door_is_closed", Direction.OUTPUT)
+        self.io.declare("cycle_running", Direction.OUTPUT)
         self._store = S7Store()
         self._server = S7Server(
             host=endpoint.host,

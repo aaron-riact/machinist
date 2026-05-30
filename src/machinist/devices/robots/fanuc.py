@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from ...core.events import EventBus
-from ...core.io import SignalBank
+from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -40,9 +40,9 @@ class FanucKarelServer(LineServerDevice):
         self.arm.start_ticker()
         self.io = SignalBank(owner=name)
         for i in range(1, digital_outputs + 1):
-            self.io.declare(f"do{i}")
+            self.io.declare(f"do{i}", Direction.OUTPUT)
         for i in range(1, digital_inputs + 1):
-            self.io.declare(f"di{i}")
+            self.io.declare(f"di{i}", Direction.INPUT)
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
         verb, _, args = line.strip().partition(" ")

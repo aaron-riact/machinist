@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from machinist.core.io import IOMap
+from machinist.core.io import Direction, IOMap
 
 
 def test_link_propagates_value() -> None:
@@ -12,6 +12,14 @@ def test_link_propagates_value() -> None:
     io.link("ctrl.out_5", "machine.door_open_cmd")
     src.set(True)
     assert dst.value is True
+
+
+def test_signal_direction_defaults_to_input_and_is_recorded() -> None:
+    bank = IOMap().bank("ctrl")
+    cmd = bank.declare("door_open_cmd")
+    status = bank.declare("door_is_open", Direction.OUTPUT)
+    assert cmd.direction is Direction.INPUT
+    assert status.direction is Direction.OUTPUT
 
 
 def test_unknown_signal_raises() -> None:

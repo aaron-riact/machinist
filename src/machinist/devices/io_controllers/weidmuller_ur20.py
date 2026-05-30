@@ -14,7 +14,7 @@ from typing import Any
 
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.io import SignalBank
+from ...core.io import Direction, SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
@@ -40,9 +40,9 @@ class WeidmullerUR20(Device):
         self._cfg = _Config(**options)
         self.io = SignalBank(owner=name)
         for i in range(1, self._cfg.inputs + 1):
-            self.io.declare(f"i{i}")
+            self.io.declare(f"i{i}", Direction.INPUT)
         for i in range(1, self._cfg.outputs + 1):
-            sig = self.io.declare(f"o{i}")
+            sig = self.io.declare(f"o{i}", Direction.OUTPUT)
             sig.subscribe(lambda v, idx=i: self.emit("output", index=idx, value=v))
         self._server = HoldingRegisterServer(
             host=endpoint.host,

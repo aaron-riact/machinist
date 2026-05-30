@@ -17,7 +17,7 @@ from typing import Any
 
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.io import SignalBank
+from ...core.io import Direction, SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
 
@@ -36,10 +36,10 @@ class PneumaticGripper(Device):
         super().__init__(name, endpoint, bus)
         self._settings = _Settings(**options)
         self.io = SignalBank(owner=name)
-        self._cmd_open = self.io.declare("cmd_open")
-        self._cmd_close = self.io.declare("cmd_close")
-        self._is_open = self.io.declare("is_open")
-        self._is_closed = self.io.declare("is_closed")
+        self._cmd_open = self.io.declare("cmd_open", Direction.INPUT)
+        self._cmd_close = self.io.declare("cmd_close", Direction.INPUT)
+        self._is_open = self.io.declare("is_open", Direction.OUTPUT)
+        self._is_closed = self.io.declare("is_closed", Direction.OUTPUT)
         self._cmd_open.subscribe(lambda _: self._react())
         self._cmd_close.subscribe(lambda _: self._react())
         self._timer: threading.Timer | None = None

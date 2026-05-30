@@ -12,8 +12,23 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum, auto
 
 SignalListener = Callable[[bool], None]
+
+
+class Direction(StrEnum):
+    """Which way a signal flows, *from the owning device's view*.
+
+    ``INPUT``  — driven from outside (commands the device obeys).
+    ``OUTPUT`` — driven by the device (status it reports).
+
+    This is purely descriptive metadata: it never changes how a signal
+    behaves, but it lets the UI group IO and documents intent.
+    """
+
+    INPUT = auto()
+    OUTPUT = auto()
 
 
 @dataclass(slots=True)
@@ -25,6 +40,7 @@ class Signal:
     """
 
     name: str
+    direction: Direction = Direction.INPUT
     _value: bool = False
     _listeners: list[SignalListener] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -55,9 +71,9 @@ class SignalBank:
     owner: str
     _signals: dict[str, Signal] = field(default_factory=dict)
 
-    def declare(self, name: str) -> Signal:
+    def declare(self, name: str, direction: Direction = Direction.INPUT) -> Signal:
         if name not in self._signals:
-            self._signals[name] = Signal(name=name)
+            self._signals[name] = Signal(name=name, direction=direction)
         return self._signals[name]
 
     def __getitem__(self, name: str) -> Signal:

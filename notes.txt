@@ -1,0 +1,4 @@
+* support SCRI semantics
+* add state to resources (current target pose to robot & trajectory)
+* see if there is a standard for grippers similar to SCRI
+
