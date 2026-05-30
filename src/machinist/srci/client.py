@@ -28,7 +28,7 @@ class SrciClient:
     @classmethod
     def connect(
         cls, host: str, port: int, *, transport: str = "tcp", **kwargs: object
-    ) -> "SrciClient":
+    ) -> SrciClient:
         """Open a client over the named transport (``tcp`` | ``udp``)."""
         return cls(open_transport(transport, host, port, **kwargs))
 
@@ -58,7 +58,7 @@ class SrciClient:
     def close(self) -> None:
         self._transport.close()
 
-    def __enter__(self) -> "SrciClient":
+    def __enter__(self) -> SrciClient:
         return self
 
     def __exit__(self, *exc: object) -> None:

@@ -6,14 +6,14 @@ import pytest
 
 pytest.importorskip("asyncua")
 
-from asyncua import Client  # noqa: E402
+from asyncua import Client
 
-import machinist.devices  # noqa: E402,F401  (registers device kinds)
-from machinist.core.events import EventBus  # noqa: E402
-from machinist.core.registry import default_registry  # noqa: E402
-from machinist.core.types import Endpoint  # noqa: E402
+import machinist.devices  # noqa: F401  (registers device kinds)
+from machinist.core.events import EventBus
+from machinist.core.registry import default_registry
+from machinist.core.types import Endpoint
 
-from .conftest import free_port, wait_running  # noqa: E402
+from .conftest import free_port, wait_running
 
 
 async def test_robot_publishes_state_over_opcua() -> None:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...core.device import Device
 from ...core.events import EventBus
@@ -24,6 +24,9 @@ from ...core.types import Endpoint
 from ...srci import SrciServer
 from ...transport.message import FrameHandler, open_server
 from .arm import RobotArm, arm_from_options, arm_readers
+
+if TYPE_CHECKING:
+    from ...transport.opcua_server import OpcUaServer
 
 #: Build a frame handler that drives an arm for a named protocol.
 ProtocolFactory = Callable[[RobotArm], FrameHandler]
@@ -108,11 +111,11 @@ class RobotDevice(Device):
 
 def _maybe_opcua(
     name: str, host: str, config: object, arm: RobotArm
-):  # type: ignore[no-untyped-def]
+) -> "OpcUaServer | None":
     """Build an OPC-UA server if the device config opts in, else None."""
     if not config:
         return None
-    from ...transport.opcua_server import OpcUaServer
+    from ...transport.opcua_server import OpcUaServer  # noqa: PLC0415  (optional dep)
 
     opts = config if isinstance(config, dict) else {}
     return OpcUaServer(

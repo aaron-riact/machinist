@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+import machinist.devices  # noqa: F401  (registers device kinds)
 from machinist.core.events import EventBus
 from machinist.core.registry import default_registry
 from machinist.core.types import Endpoint
 from machinist.devices.robots.generic import protocols
 from machinist.srci import SrciClient, StatusFlag
-
-import machinist.devices  # noqa: F401  (registers device kinds)
 
 from ..conftest import free_port, wait_running
 

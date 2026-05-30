@@ -85,7 +85,7 @@ class CommandTelegram:
         return head + _pack_floats(self.args)
 
     @classmethod
-    def decode(cls, frame: bytes) -> "CommandTelegram":
+    def decode(cls, frame: bytes) -> CommandTelegram:
         try:
             magic, version, job_id, function, speed, argc = _CMD_HEAD.unpack_from(frame)
         except struct.error as exc:
@@ -99,7 +99,8 @@ class CommandTelegram:
         """Interpret ``args`` as a 6-DOF pose (raises if wrong length)."""
         if len(self.args) != 6:
             raise ValueError(f"expected 6 pose values, got {len(self.args)}")
-        return self.args  # type: ignore[return-value]
+        x, y, z, rx, ry, rz = self.args
+        return (x, y, z, rx, ry, rz)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +127,7 @@ class StatusTelegram:
         return head + _pack_floats(self.joints) + _POSE.pack(*self.pose)
 
     @classmethod
-    def decode(cls, frame: bytes) -> "StatusTelegram":
+    def decode(cls, frame: bytes) -> StatusTelegram:
         try:
             magic, version, job_id, flags, err, fn, jointc = _STATUS_HEAD.unpack_from(frame)
         except struct.error as exc:

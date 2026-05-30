@@ -16,7 +16,7 @@ from .conftest import free_port, wait_running
 runner = CliRunner()
 
 
-@pytest.fixture()
+@pytest.fixture
 def robot():  # type: ignore[no-untyped-def]
     port = free_port()
     device = default_registry.create(

@@ -15,6 +15,7 @@ nothing more.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 from collections.abc import Callable, Mapping
 
@@ -45,10 +46,8 @@ class OpcUaServer:
         self._stop = threading.Event()
 
     def serve_forever(self, ready: threading.Event | None = None) -> None:
-        try:
+        with contextlib.suppress(asyncio.CancelledError):  # clean shutdown
             asyncio.run(self._serve(ready))
-        except asyncio.CancelledError:  # pragma: no cover - clean shutdown
-            pass
 
     def shutdown(self) -> None:
         self._stop.set()
@@ -56,7 +55,7 @@ class OpcUaServer:
     # -----------------------------------------------------------------
 
     async def _serve(self, ready: threading.Event | None) -> None:
-        from asyncua import Server  # lazy: optional dependency
+        from asyncua import Server  # type: ignore[import-untyped]  # noqa: PLC0415  (optional dep)
 
         self._loop = asyncio.get_running_loop()
         server = Server()

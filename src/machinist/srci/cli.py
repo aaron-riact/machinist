@@ -38,7 +38,7 @@ def _client(host: str, port: int, transport: str) -> SrciClient:
 
 def _render(status: StatusTelegram) -> None:
     table = Table(show_header=False, box=None)
-    flags = ", ".join(f.name for f in StatusFlag if f and f in status.flags) or "NONE"
+    flags = ", ".join(f.name or "" for f in StatusFlag if f and f in status.flags) or "NONE"
     table.add_row("job", str(status.job_id))
     table.add_row("flags", flags)
     table.add_row("active", status.active_function.name)

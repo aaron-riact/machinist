@@ -21,6 +21,7 @@ no code change.
 
 from __future__ import annotations
 
+import contextlib
 import socket
 import struct
 import threading
@@ -149,10 +150,8 @@ class TcpMessageServer:
     def shutdown(self) -> None:
         self._stop.set()
         if self._sock is not None:
-            try:
+            with contextlib.suppress(OSError):
                 self._sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
 
 
 # --- UDP ----------------------------------------------------------------
@@ -214,11 +213,11 @@ class UdpMessageServer:
 
 # --- transport selection ------------------------------------------------
 
-_CLIENTS: dict[str, type[MessageTransport]] = {
+_CLIENTS: dict[str, Callable[..., MessageTransport]] = {
     "tcp": TcpMessageTransport,
     "udp": UdpMessageTransport,
 }
-_SERVERS: dict[str, type[MessageServer]] = {
+_SERVERS: dict[str, Callable[[str, int], MessageServer]] = {
     "tcp": TcpMessageServer,
     "udp": UdpMessageServer,
 }
@@ -235,7 +234,7 @@ def open_transport(name: str, host: str, port: int, **kwargs: object) -> Message
         factory = _CLIENTS[name]
     except KeyError:
         raise ValueError(f"unknown transport {name!r}; have {transports()}") from None
-    return factory(host, port, **kwargs)  # type: ignore[call-arg]
+    return factory(host, port, **kwargs)
 
 
 def open_server(name: str, host: str, port: int) -> MessageServer:
