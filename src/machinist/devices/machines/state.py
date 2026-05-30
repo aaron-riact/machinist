@@ -45,6 +45,12 @@ class MachineState:
     variables: dict[str, float | str] = field(default_factory=dict)
     dprint_log: list[str] = field(default_factory=list)
     dprint_subscribers: list[Callable[[str], None]] = field(default_factory=list)
+    # Spindle / tooling / production telemetry (generic across CNCs).
+    spindle_rpm: float = 0.0
+    feed: float = 0.0
+    tool: int = 0
+    tool_changes: int = 0
+    parts: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def door(self, name: str) -> Toggle:
@@ -70,9 +76,18 @@ def machine_readers(state: MachineState) -> dict[str, Callable[[], object]]:
     readers: dict[str, Callable[[], object]] = {
         "cycle": lambda: str(state.cycle),
         "program": lambda: state.program.splitlines()[0] if state.program else "",
+        "spindle_rpm": lambda: state.spindle_rpm,
+        "feed": lambda: state.feed,
+        "tool": lambda: state.tool,
+        "parts": lambda: state.parts,
     }
     for name in state.doors:
-        readers[f"door_{name}_open"] = lambda n=name: state.door(n).open
+        readers[f"door_{name}_open"] = _toggle_reader(state.door, name)
     for name in state.chucks:
-        readers[f"chuck_{name}_open"] = lambda n=name: state.chuck(n).open
+        readers[f"chuck_{name}_open"] = _toggle_reader(state.chuck, name)
     return readers
+
+
+def _toggle_reader(get: Callable[[str], Toggle], name: str) -> Callable[[], object]:
+    """Bind ``name`` so the reader stays a clean zero-arg closure."""
+    return lambda: get(name).open

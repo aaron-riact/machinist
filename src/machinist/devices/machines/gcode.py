@@ -8,9 +8,12 @@ but not simulated kinematically.
 Supported subset:
 
 * ``M0/M1``                program stop
-* ``M30``                  program end
+* ``M30``                  program end (increments the parts counter)
+* ``M3/M4 Sn``             spindle on clockwise/counter-clockwise at ``n`` RPM
+* ``M5``                   spindle stop
+* ``M6`` / ``Tn``          tool change (sets active tool, counts the change)
 * ``G4 Pn``                dwell ``n`` seconds
-* ``G0/G1 X Y Z``          movement (acknowledged)
+* ``G0/G1 X Y Z Fn``       movement (acknowledged; ``F`` sets feed rate)
 * ``#n=value``             variable assignment
 * ``DPRINT[...]``          append to DPRINT log
 
@@ -63,8 +66,10 @@ class Interpreter:
             yield f"#{m.group(1)} = {m.group(2)}"
             return
         words = _words(line)
+        yield from self._apply_tooling(words)
         if "M30" in words:
             self.state.cycle = CycleState.IDLE
+            self.state.parts += 1
             yield "M30 program end"
             return
         if any(w in words for w in ("M0", "M1")):
@@ -80,9 +85,30 @@ class Interpreter:
             yield " ".join(f"{k}{v}" for k, v in words.items())
             return
 
+    def _apply_tooling(self, words: dict[str, str]) -> Iterator[str]:
+        """Update spindle, feed and tool state from a parsed line."""
+        if "F" in words:
+            self.state.feed = float(words["F"])
+        if "T" in words:
+            self.state.tool = int(float(words["T"]))
+        if "M6" in words:
+            self.state.tool_changes += 1
+            yield f"tool change T{self.state.tool}"
+        if any(w in words for w in ("M3", "M4")):
+            self.state.spindle_rpm = float(words.get("S", self.state.spindle_rpm))
+            direction = "CW" if "M3" in words else "CCW"
+            yield f"spindle {direction} {self.state.spindle_rpm:g}"
+        elif "M5" in words:
+            self.state.spindle_rpm = 0.0
+            yield "spindle stop"
+
 
 def _words(line: str) -> dict[str, str]:
-    """Parse G-code line into a ``{letter: value}`` mapping."""
+    """Parse G-code line into a ``{letter: value}`` mapping.
+
+    M- and G-codes become canonical keys (``M03`` and ``M3`` both map to
+    ``M3``) so callers can match them without worrying about zero-padding.
+    """
     out: dict[str, str] = {}
     i = 0
     while i < len(line):
@@ -95,9 +121,20 @@ def _words(line: str) -> dict[str, str]:
         if m is None:
             out[ch] = ""
             continue
-        out[f"{ch}{m.group(0)}" if ch in "MG" else ch] = m.group(0)
+        if ch in "MG":
+            out[f"{ch}{_canonical(m.group(0))}"] = m.group(0)
+        else:
+            out[ch] = m.group(0)
         i = m.end()
     return out
+
+
+def _canonical(number: str) -> str:
+    """Strip zero-padding from an integer code (``03`` -> ``3``)."""
+    try:
+        return str(int(number))
+    except ValueError:
+        return number
 
 
 def _coerce(value: str) -> float | str:

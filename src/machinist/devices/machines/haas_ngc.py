@@ -123,12 +123,19 @@ class HaasNGC(Device):
             return []
         if line.startswith("Q100"):
             return [f"SERIAL NUMBER, {self.name.upper()}"]
+        if line.startswith("Q104"):
+            return [f"MODE, {self.state.cycle.value.upper()}"]
         if line.startswith("Q200"):
-            return ["TOOL CHANGES, 0"]
+            return [f"TOOL CHANGES, {self.state.tool_changes}"]
+        if line.startswith("Q201"):
+            return [f"USING TOOL, {self.state.tool}"]
+        if line.startswith("Q402"):
+            return [f"M30 #1, {self.state.parts}"]
         if line.startswith("Q500"):
             first = self.state.program.splitlines()[0] if self.state.program else "NONE"
             return [
-                f"PROGRAM, {first}, STATUS, {self.state.cycle.value.upper()}, PARTS, 0"
+                f"PROGRAM, {first}, {self.state.cycle.value.upper()}, "
+                f"PARTS, {self.state.parts}"
             ]
         if line.startswith("Q600"):
             _, _, var = line.partition(" ")

@@ -98,3 +98,21 @@ def test_run_program_executes_dprint(haas: HaasNGC) -> None:
     if haas._runner is not None:
         haas._runner.join(timeout=2)
     assert "hi" in haas.state.dprint_log
+
+
+def test_mdc_reports_program_telemetry(haas: HaasNGC) -> None:
+    haas.programs.write("O0003.nc", "T1 M06\nM03 S1200\nM30\n")
+    haas.run_program("O0003.nc")
+    if haas._runner is not None:
+        haas._runner.join(timeout=2)
+    with socket.create_connection((haas.endpoint.host, haas.endpoint.port), timeout=2) as s:
+        s.sendall(b"Q200\r\n")
+        assert b"TOOL CHANGES, 1" in _readline(s)
+        s.sendall(b"Q201\r\n")
+        assert b"USING TOOL, 1" in _readline(s)
+        s.sendall(b"Q500\r\n")
+        line = _readline(s)
+        assert b"PARTS, 1" in line
+        assert b"STATUS" not in line  # real HAAS has no literal STATUS field
+        s.sendall(b"Q402\r\n")
+        assert b"M30 #1, 1" in _readline(s)

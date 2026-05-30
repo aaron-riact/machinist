@@ -32,3 +32,31 @@ def test_dwell_pauses() -> None:
 def test_event_bus_unused() -> None:
     # Sanity: gcode interpreter has no dependency on EventBus.
     EventBus()
+
+
+def test_spindle_tool_feed_and_parts() -> None:
+    state = MachineState()
+    interp = Interpreter(state)
+    program = """
+    T1 M06
+    G1 F250
+    M03 S1500
+    M5
+    M30
+    """
+    log = list(interp.run(program))
+    assert state.tool == 1
+    assert state.tool_changes == 1
+    assert state.feed == 250.0
+    # Spindle ends stopped (M5 after M3).
+    assert state.spindle_rpm == 0.0
+    assert state.parts == 1
+    assert any("tool change T1" in line for line in log)
+    assert any("spindle CW 1500" in line for line in log)
+
+
+def test_m_and_g_code_zero_padding_equivalent() -> None:
+    state = MachineState()
+    interp = Interpreter(state)
+    list(interp.run("M03 S1000\nM30"))
+    assert state.spindle_rpm == 1000.0

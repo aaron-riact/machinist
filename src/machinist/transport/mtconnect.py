@@ -74,6 +74,12 @@ def _render_probe(state) -> str:  # type: ignore[no-untyped-def]
     items = [
         '<DataItem id="execution" category="EVENT" type="EXECUTION"/>',
         '<DataItem id="program" category="EVENT" type="PROGRAM"/>',
+        '<DataItem id="tool" category="EVENT" type="TOOL_NUMBER"/>',
+        '<DataItem id="parts" category="EVENT" type="PART_COUNT"/>',
+        '<DataItem id="spindle" category="SAMPLE" type="ROTARY_VELOCITY"'
+        ' units="REVOLUTION/MINUTE"/>',
+        '<DataItem id="feed" category="SAMPLE" type="PATH_FEEDRATE"'
+        ' units="MILLIMETER/MINUTE"/>',
     ]
     for name in state.doors:
         items.append(f'<DataItem id="door_{name}" category="EVENT" type="DOOR_STATE"/>')
@@ -94,6 +100,8 @@ def _render_current(state) -> str:  # type: ignore[no-untyped-def]
     events = [
         f'<Execution dataItemId="execution">{state.cycle.value.upper()}</Execution>',
         f'<Program dataItemId="program">{state.program or "NONE"}</Program>',
+        f'<ToolNumber dataItemId="tool">{state.tool}</ToolNumber>',
+        f'<PartCount dataItemId="parts">{state.parts}</PartCount>',
     ]
     for name, door in state.doors.items():
         events.append(
@@ -102,6 +110,10 @@ def _render_current(state) -> str:  # type: ignore[no-untyped-def]
             '</DoorState>'
         )
     events_xml = "".join(events)
+    samples = (
+        f'<RotaryVelocity dataItemId="spindle">{state.spindle_rpm:g}</RotaryVelocity>'
+        f'<PathFeedrate dataItemId="feed">{state.feed:g}</PathFeedrate>'
+    )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<MTConnectStreams>'
@@ -109,6 +121,7 @@ def _render_current(state) -> str:  # type: ignore[no-untyped-def]
         '<DeviceStream name="machinist">'
         '<ComponentStream component="Controller">'
         f'<Events>{events_xml}</Events>'
+        f'<Samples>{samples}</Samples>'
         '</ComponentStream>'
         '</DeviceStream>'
         '</Streams>'
