@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from typer.testing import CliRunner
 
@@ -64,3 +67,21 @@ def test_movel_requires_six_values(robot: int) -> None:
 def test_connect_failure_is_reported() -> None:
     result = runner.invoke(app, ["status", "--port", str(free_port())])
     assert result.exit_code == 1
+
+
+def test_srci_cli_and_device_registry_import_cleanly() -> None:
+    code = "\n".join(
+        [
+            "import machinist.devices",
+            "import machinist.srci.cli",
+            "from machinist.core.registry import default_registry",
+            "assert 'robot' in default_registry.kinds()",
+        ]
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

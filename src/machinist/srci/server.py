@@ -9,16 +9,50 @@ it with raw bytes.
 
 from __future__ import annotations
 
-from ..devices.robots.arm import ArmMode, RobotArm
+from typing import Protocol
+
 from .codec import CommandTelegram, Function, StatusFlag, StatusTelegram
 
 _MOVE_DURATION = 1.0
 
 
+class _ArmSnapshot(Protocol):
+    joints: tuple[float, ...]
+    pose: tuple[float, float, float, float, float, float]
+    servo_on: bool
+    current_command: str | None
+    moving: bool
+    estopped: bool
+    faulted: bool
+
+
+class _ArmState(Protocol):
+    def snapshot(self) -> _ArmSnapshot: ...
+
+
+class SrciArm(Protocol):
+    state: _ArmState
+
+    def set_servo(self, on: bool) -> None: ...
+
+    def estop(self) -> None: ...
+
+    def reset(self) -> None: ...
+
+    def movej(self, target: tuple[float, ...], *, duration: float = 1.0) -> None: ...
+
+    def movel(
+        self,
+        target_pose: tuple[float, float, float, float, float, float],
+        *,
+        duration: float = 1.0,
+    ) -> None: ...
+
+
 class SrciServer:
     """Execute SRCI command frames against a :class:`RobotArm`."""
 
-    def __init__(self, arm: RobotArm) -> None:
+    def __init__(self, arm: SrciArm) -> None:
         self._arm = arm
 
     def handle(self, frame: bytes) -> bytes:
@@ -60,13 +94,13 @@ class SrciServer:
         flags = StatusFlag.NONE
         if s.servo_on:
             flags |= StatusFlag.SERVO_ON
-        if s.mode is ArmMode.MOVING:
+        if s.moving:
             flags |= StatusFlag.BUSY
         else:
             flags |= StatusFlag.DONE
-        if s.mode is ArmMode.ESTOPPED:
+        if s.estopped:
             flags |= StatusFlag.ESTOP
-        if error_code or s.mode is ArmMode.FAULTED:
+        if error_code or s.faulted:
             flags |= StatusFlag.ERROR
         active = _COMMAND_TO_FUNCTION.get(s.current_command, Function.NOP)
         return StatusTelegram(

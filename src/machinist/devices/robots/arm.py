@@ -78,6 +78,18 @@ class ArmStateView:
     speed_fraction: float
     current_command: str | None = None
 
+    @property
+    def moving(self) -> bool:
+        return self.mode is ArmMode.MOVING
+
+    @property
+    def estopped(self) -> bool:
+        return self.mode is ArmMode.ESTOPPED
+
+    @property
+    def faulted(self) -> bool:
+        return self.mode is ArmMode.FAULTED
+
 
 class RobotArm:
     """Common robot-arm physics. Wire protocols compose this."""

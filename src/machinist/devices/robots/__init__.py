@@ -1,1 +1,1 @@
-from . import ur, motoman, dobot, fanuc, generic  # noqa: F401
+from . import dobot, fanuc, generic, motoman, ur  # noqa: F401
