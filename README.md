@@ -34,6 +34,13 @@ expensive iron to a stand-still.
 * **Pluggable kinematics** — `RobotModel(DHParams | urdf_path)` picks
   a back-end (`dh`, `pinocchio`, `pykdl`, `ik-geo`) lazily; same API
   as tupleo. Every robot arm accepts an ``options.kinematics`` block.
+* **Generic `robot` + SRCI** — point the generic robot at a URDF (or DH
+  params), set `protocol: srci`, and pick any `transport` (TCP, UDP, …).
+  A standalone `SrciClient` and `srci` CLI talk to it over the same
+  transport abstraction, so SRCI is reusable outside the emulator.
+* **OPC-UA** — robots and machines can publish live state
+  (joints/pose/mode, or cycle/spindle/tool/parts) over OPC-UA via the
+  optional `asyncua` back-end.
 * **Live Textual TUI in a "Claude-code" style** — devices grid, signal
   panel, event log, program-file browser, and a modal command bar.
 * **Composable, not extendable**: the abstract base classes
@@ -46,12 +53,39 @@ expensive iron to a stand-still.
 uv sync             # install runtime + dev deps
 uv run pytest -q    # run tests (sub-second)
 uv run machinist kinds   # list registered device kinds
+uv run srci --help       # drive a generic SRCI robot from the CLI
+```
+
+### Talking SRCI
+
+The generic `robot` device speaks **SRCI** (command/status telegrams)
+over a pluggable transport. Exercise one with the bundled CLI:
+
+```bash
+# in one shell: run a scene containing a `robot` device
+uv run machinist run examples/scene.yaml --no-tui
+
+# in another: drive it
+uv run srci --host 127.0.0.1 --port 15001 enable
+uv run srci --host 127.0.0.1 --port 15001 movej 0 -1.2 1.4 0 1.0 0
+uv run srci --host 127.0.0.1 --port 15001 status
+```
+
+In Python, the client is transport-agnostic and reusable:
+
+```python
+from machinist.srci import SrciClient
+
+with SrciClient.connect("127.0.0.1", 15001, transport="tcp") as c:
+    c.enable()
+    status = c.move_joint([0.0, -1.2, 1.4, 0.0, 1.0, 0.0])
+    print(status.joints, status.pose)
 ```
 
 Optional protocol back-ends:
 
 ```bash
-uv pip install -e ".[modbus,s7,http,smb,kinematics]"
+uv pip install -e ".[modbus,s7,http,smb,kinematics,opcua]"
 ```
 
 ## Running a scene
@@ -99,6 +133,7 @@ When two devices want the same `host:port`, Machinist:
 | `motoman_nx100`     | TCP text (HSE)   | 80           | Yaskawa NX100/DX100 telnet         |
 | `dobot_dashboard`   | TCP text         | 29999        | Dobot Verb(args); reply pattern    |
 | `fanuc_r30ib`       | TCP text         | 18735        | fanucpy / FaRoC compatible verbs   |
+| `robot`             | SRCI / TCP·UDP   | 15001        | Generic arm; URDF/DH + OPC-UA      |
 | `haas_ngc`          | MDC+DPRINT+MTC+SMB | 5051       | Multi-service CNC; program library    |
 | `mazak_840d`        | S7 (stub/snap7)  | 102          | Pluggable back-end, DB/byte/bit maps  |
 | `pneumatic_gripper` | IO only          | n/a          | open/close + limit switches        |
@@ -125,7 +160,9 @@ machinist/
 │   ├── modbus_server.py      ← native MBAP/TCP slave (FC 03/06/16)
 │   ├── s7_server.py          ← S7Store + pluggable back-ends
 │   ├── broadcast.py          ← one-to-many line TCP (DPRINT)
-│   ├── mtconnect.py          ← /probe + /current XML
+│   ├── message.py            ← MessageTransport/Server (TCP+UDP framing)
+│   ├── mtconnect.py          ← /probe + /current XML (incl. spindle/tool)
+│   ├── opcua_server.py       ← lazy asyncua server from node readers
 │   ├── smb_share.py          ← SmbShare Protocol + lazy back-ends
 │   └── iolink_http_master.py ← stdlib HTTP gateway emulating AL1350
 ├── kinematics/
@@ -135,10 +172,11 @@ machinist/
 │   ├── pykdl_backend.py      ← lazy PyKDL wrapper
 │   └── ikgeo_backend.py      ← lazy ik-geo wrapper
 ├── devices/
-│   ├── robots/        ← UR, Motoman, Dobot, Fanuc — all share arm.py
+│   ├── robots/        ← UR, Motoman, Dobot, Fanuc, generic — share arm.py
 │   ├── machines/      ← HAAS, Mazak — all share state.py + gcode.py
 │   ├── grippers/      ← OnRobot, Zimmer, Pneumatic
 │   └── io_controllers/← Weidmuller UR20
+├── srci/             ← transport-agnostic SRCI codec/client/server + CLI
 ├── tui/app.py         ← Textual UI, command bar, live signal panel
 └── cli.py             ← Typer CLI (run, kinds, version)
 ```

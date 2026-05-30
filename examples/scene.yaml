@@ -6,9 +6,18 @@
 #   uv run machinist run examples/scene.yaml
 
 devices:
-  - name: r1 
-    #kind: dobot_dashboard         # default port 29999
-    kind: motoman_nx100         # default port 80
+  - name: db1
+    kind: dobot_dashboard         # default port 29999
+  - name: arm1
+    kind: robot                   # generic arm: pick a protocol + transport
+    options:
+      protocol: srci              # SRCI command/status telegrams
+      transport: tcp              # any of: tcp, udp (profinet-style framing)
+      joint_count: 6
+      # Drive real FK/IK by adding a kinematics block, e.g.:
+      #   kinematics: {backend: dh, dh_params: [[0, 0.1, 0, 1.57], ...]}
+      # or a URDF: {backend: pinocchio, urdf: examples/cr20a.urdf}
+      opcua: {port: 4840}         # also publish live state over OPC-UA
   - name: io1
     kind: weidmuller_ur20      # default port 502 -> moves to 127.0.0.2
     options:
@@ -22,14 +31,8 @@ devices:
     kind: haas_ngc             # MDC on TCP/5051
     options:
       doors: [main, sub]
-      dprint_port: 5052        # DPRINT log broadcast
-      mtconnect_port: 5080     # GET /probe + /current
-      program_folder: ./.machinist_programs/mill
-      # smb:                   # uncomment if impacket is installed
-      #   backend: impacket
-      #   port: 4445           # non-privileged test port
-      #   share: PROGRAMS
-      #   smb1: true
+      mtconnect_port: 5052     # GET /probe and /current
+      opcua: {port: 4841}      # cycle/spindle/tool/parts over OPC-UA
   #- name: lathe
   #  kind: mazak_840d           # S7 stub on TCP/102
   #  options:
