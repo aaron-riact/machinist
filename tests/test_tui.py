@@ -9,9 +9,11 @@ from machinist.tui.app import (
     _cmd_ls,
     _cmd_run,
     _format_event,
+    _machine_summary,
     _paint_lifecycle,
 )
 from machinist.devices.robots.arm import RobotArm
+from machinist.devices.machines.state import MachineState, Toggle
 
 
 def test_format_event_is_compact_and_deterministic() -> None:
@@ -37,6 +39,26 @@ def test_arm_summary_reports_estop_and_pose() -> None:
     assert "estopped" in out
     assert "ENGAGED" in out
     assert "joints" in out and "pose" in out
+
+
+def test_machine_summary_is_empty_for_non_machine() -> None:
+    assert _machine_summary(SimpleNamespace(state=None)) == ""
+    assert _machine_summary(SimpleNamespace()) == ""
+
+
+def test_machine_summary_reports_cycle_and_tooling() -> None:
+    state = MachineState()
+    state.doors["main"] = Toggle(name="main", open=True)
+    state.program = "O0001\nG0 X0"
+    state.spindle_rpm = 1500.0
+    state.tool = 3
+    state.parts = 7
+    out = _machine_summary(SimpleNamespace(state=state))
+    assert "O0001" in out
+    assert "1500" in out
+    assert "T3" in out
+    assert "parts 7" in out
+    assert "main:" in out
 
 
 class _FakeApp:

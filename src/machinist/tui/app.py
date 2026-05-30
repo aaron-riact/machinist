@@ -168,6 +168,7 @@ class MachinistApp(App[None]):
             f"endpoint [magenta]{device.endpoint}[/]   "
             f"lifecycle {_paint_lifecycle(device.lifecycle)}"
             f"{_arm_summary(device)}"
+            f"{_machine_summary(device)}"
         )
         self.inputs.clear()
         self.outputs.clear()
@@ -272,6 +273,28 @@ def _arm_summary(device: Device) -> str:
         f"e-stop {estop}   command [cyan]{command}[/]\n"
         f"joints [yellow]{joints}[/]\n"
         f"pose   [magenta]{pose}[/]"
+    )
+
+
+def _machine_summary(device: Device) -> str:
+    """One-line CNC status (cycle/program/spindle/tool/parts), or '' otherwise."""
+    state = getattr(device, "state", None)
+    if state is None or not hasattr(state, "cycle"):
+        return ""
+    cycle = str(state.cycle)
+    cycle_colour = (
+        "green" if cycle == "running" else "yellow" if cycle == "paused" else "grey50"
+    )
+    program = state.program.splitlines()[0] if state.program else "[dim]none[/]"
+    doors = "  ".join(
+        f"{name}:{'[red]open[/]' if door.open else '[green]shut[/]'}"
+        for name, door in state.doors.items()
+    )
+    return (
+        f"\ncycle [{cycle_colour}]{cycle}[/]   program [cyan]{program}[/]\n"
+        f"spindle [yellow]{state.spindle_rpm:g}[/] rpm   feed {state.feed:g}   "
+        f"tool [magenta]T{state.tool}[/]   parts {state.parts}\n"
+        f"doors  {doors or '[dim]none[/]'}"
     )
 
 
