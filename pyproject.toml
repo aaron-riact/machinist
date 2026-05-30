@@ -26,6 +26,7 @@ kinematics = ["numpy>=1.26"]
 
 [project.scripts]
 machinist = "machinist.cli:app"
+srci = "machinist.srci.cli:app"
 
 [dependency-groups]
 dev = [
