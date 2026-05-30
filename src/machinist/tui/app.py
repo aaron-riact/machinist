@@ -38,6 +38,7 @@ from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ..core.device import Device
 from ..core.events import Event
+from ..core.io import Direction
 from ..core.types import DeviceState
 from ..core.world import World
 
@@ -47,13 +48,14 @@ class MachinistApp(App[None]):
 
     CSS = """
     #top { height: 60%; }
-    #devices { width: 36; border: round #6e6cd1; }
+    #devices { width: 44; border: round #6e6cd1; }
     #detail-pane { border: round #6e6cd1; }
     #detail-header { height: 3; padding: 0 1; }
-    #signals { height: 1fr; }
+    #signals-row { height: 1fr; }
+    #inputs, #outputs { width: 1fr; }
     #files { height: 40%; border-top: dashed #6e6cd1; }
     #files.hidden { display: none; }
-    RichLog#log { height: 30%; border: round #6e6cd1; padding: 0 1; }
+    RichLog#log { height: 1fr; border: round #6e6cd1; padding: 0 1; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
     """
 
@@ -82,8 +84,15 @@ class MachinistApp(App[None]):
             with Vertical(id="detail-pane"):
                 self.detail_header = Static(id="detail-header")
                 yield self.detail_header
-                self.signals = DataTable(id="signals", cursor_type="row", zebra_stripes=True)
-                yield self.signals
+                with Horizontal(id="signals-row"):
+                    self.inputs = DataTable(
+                        id="inputs", cursor_type="row", zebra_stripes=True,
+                    )
+                    yield self.inputs
+                    self.outputs = DataTable(
+                        id="outputs", cursor_type="row", zebra_stripes=True,
+                    )
+                    yield self.outputs
                 self.files = DataTable(
                     id="files", cursor_type="row", zebra_stripes=True, classes="hidden",
                 )
@@ -97,8 +106,9 @@ class MachinistApp(App[None]):
     def on_mount(self) -> None:
         self.title = "◇ Machinist"
         self.sub_title = f"fleet of {len(self.world.devices)} device(s)"
-        self.devices_table.add_columns("name", "kind", "endpoint", "state")
-        self.signals.add_columns("signal", "value")
+        self.devices_table.add_columns("name", "kind", "state")
+        self.inputs.add_columns("input", "value")
+        self.outputs.add_columns("output", "value")
         self.files.add_columns("program")
         self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
@@ -142,14 +152,15 @@ class MachinistApp(App[None]):
         self.devices_table.clear()
         for d in self.world.devices:
             self.devices_table.add_row(
-                d.name, d.kind, str(d.endpoint), _paint_lifecycle(d.lifecycle)
+                d.name, d.kind, _paint_lifecycle(d.lifecycle)
             )
 
     def _refresh_detail(self) -> None:
         device = self._lookup(self._selected)
         if device is None:
             self.detail_header.update("[dim]no device selected[/]")
-            self.signals.clear()
+            self.inputs.clear()
+            self.outputs.clear()
             self.files.clear()
             return
         self.detail_header.update(
@@ -157,12 +168,16 @@ class MachinistApp(App[None]):
             f"endpoint [magenta]{device.endpoint}[/]   "
             f"lifecycle {_paint_lifecycle(device.lifecycle)}"
         )
-        self.signals.clear()
+        self.inputs.clear()
+        self.outputs.clear()
         bank = getattr(device, "io", None)
         if bank is not None:
             for sig in bank:
                 dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                self.signals.add_row(f"{dot} {sig.name}", str(sig.value))
+                table = (
+                    self.outputs if sig.direction is Direction.OUTPUT else self.inputs
+                )
+                table.add_row(f"{dot} {sig.name}", str(sig.value))
         self._refresh_files(device)
 
     def _refresh_files(self, device: Device) -> None:
