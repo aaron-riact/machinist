@@ -16,4 +16,6 @@ Two layers, kept apart so the interesting logic stays trivially testable:
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from .server import WebServer, serve
+
+__all__ = ["WebServer", "serve"]
