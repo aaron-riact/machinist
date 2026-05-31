@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>◇ Machinist</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 30 16 16 30 2 16Z' fill='%2300f0c0'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <h1 class="brand"><span class="gem">◇</span> Machinist</h1>
+      <p class="tagline">fleet command deck</p>
+      <div class="status" data-conn="connecting">
+        <span class="dot"></span>
+        <span class="status-text">connecting…</span>
+        <span class="fleet-count" id="fleet-count">— devices</span>
+      </div>
+    </header>
+
+    <main class="deck">
+      <section class="panel devices" aria-label="Devices">
+        <h2 class="panel-title">Fleet</h2>
+        <device-list id="devices"></device-list>
+      </section>
+
+      <section class="panel detail" aria-label="Selected device">
+        <device-detail id="detail"></device-detail>
+      </section>
+
+      <section class="panel log" aria-label="Event log">
+        <h2 class="panel-title">Event stream</h2>
+        <event-log id="log"></event-log>
+      </section>
+    </main>
+
+    <command-bar id="cmd"></command-bar>
+
+    <template id="device-card-tpl">
+      <button class="card" type="button">
+        <span class="card-led"></span>
+        <span class="card-main">
+          <span class="card-name"></span>
+          <span class="card-kind"></span>
+        </span>
+        <span class="card-state"></span>
+      </button>
+    </template>
+  </body>
+</html>
