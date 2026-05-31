@@ -44,6 +44,11 @@ expensive iron to a stand-still.
   optional `asyncua` back-end.
 * **Live Textual TUI in a "Claude-code" style** — devices grid, signal
   panel, event log, program-file browser, and a modal command bar.
+* **Bold neon web UI (stdlib-only)** — the same fleet, in the browser:
+  live device grid, arm/CNC telemetry, an inputs/outputs signal grid, a
+  streaming event log and a command bar. Pushes updates over Server-Sent
+  Events (no websocket dependency) and renders with modern Chrome features
+  (OKLCH, container queries, `:has()`, View Transitions). `--web`.
 * **Composable, not extendable**: the abstract base classes
   (`Device`, `LineServerDevice`, `RobotArm`, `MachineState`) own the
   cross-cutting behaviour; per-vendor modules are 50–100 LoC each.
@@ -96,6 +101,29 @@ uv run machinist run examples/scene.yaml
 # or, for headless / CI:
 uv run machinist run examples/scene.yaml --no-tui
 ```
+
+### Web interface
+
+Prefer a browser? Add `--web` to serve a live, bold "command deck" web UI
+that mirrors the TUI — device grid, arm/CNC telemetry, an inputs/outputs
+signal grid, a streaming event log and a command bar:
+
+```bash
+# web UI alongside the terminal TUI
+uv run machinist run examples/scene.yaml --web
+
+# headless operator dashboard (no TUI), web only
+uv run machinist run examples/scene.yaml --no-tui --web \
+    --web-host 0.0.0.0 --web-port 8080
+```
+
+Then open <http://127.0.0.1:8080>. The server is **pure standard library**:
+state is a JSON snapshot (`GET /api/state`), commands POST to
+`/api/command` (the same verbs as the TUI: `estop` / `reset` / `servo` /
+`set` / `ls` / `run`), and live updates stream over **Server-Sent Events**
+(`GET /api/events`) — so the web UI adds no runtime dependency. The frontend
+is framework-free and leans on recent Chrome platform features (OKLCH colour,
+container queries, `:has()`, the View Transitions API).
 
 Override individual devices on the command line (handy for one-off
 testing without editing YAML):
@@ -179,6 +207,7 @@ machinist/
 │   └── io_controllers/← Weidmuller UR20
 ├── srci/             ← transport-agnostic SRCI codec/client/server + CLI
 ├── tui/app.py         ← Textual UI, command bar, live signal panel
+├── web/               ← stdlib web UI: api.py (pure) + server.py (SSE) + static/
 └── cli.py             ← Typer CLI (run, kinds, version)
 ```
 
@@ -194,8 +223,9 @@ adopt the IO bank, and the TUI will show it.
 
 ## Roadmap
 
-* 3D web visualiser (the architecture is intentionally event-driven so
-  adding a websocket bridge is purely additive).
+* 3D web visualiser — the browser UI already streams live state over
+  Server-Sent Events, so layering a WebGL scene on top of the existing
+  `/api/state` + `/api/events` feed is purely additive.
 * Grow the g-code interpreter beyond the emulation subset (G2/G3,
   canned cycles, tool tables).
 * Expand the MTConnect agent to the full Streams schema with history.
