@@ -44,3 +44,11 @@ def test_run_with_no_tui(tmp_path) -> None:  # type: ignore[no-untyped-def]
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
     assert "configs" in result.stdout.lower()
+
+
+def test_run_help_documents_web_options() -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    for flag in ("--web", "--web-host", "--web-port"):
+        assert flag in result.stdout

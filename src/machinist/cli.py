@@ -22,6 +22,7 @@ from . import __version__, devices  # noqa: F401  (devices import = registration
 from .core.config import DEFAULT_HOST, DeviceConfig, SystemConfig, load_config
 from .core.registry import default_registry
 from .core.world import WorldBuilder
+from .web.server import WebServer
 
 app = typer.Typer(help="Machinist - emulate fleets of industrial machines.")
 console = Console()
@@ -55,6 +56,9 @@ def run(
         ),
     ] = None,
     tui: Annotated[bool, typer.Option(help="Launch the Textual UI.")] = True,
+    web: Annotated[bool, typer.Option(help="Serve the live web UI.")] = False,
+    web_host: Annotated[str, typer.Option(help="Host the web UI binds to.")] = "127.0.0.1",
+    web_port: Annotated[int, typer.Option(help="Port the web UI binds to.")] = 8080,
 ) -> None:
     """Start a fleet of emulated devices from one or more YAML files."""
     config = _build_config(configs, inline=device or [])
@@ -65,6 +69,12 @@ def run(
             f"  [cyan]{d.name:>20}[/]  {d.kind:<24} [magenta]{d.endpoint}[/]"
         )
     world.start()
+
+    web_server = None
+    if web:
+        web_server = WebServer(world, host=web_host, port=web_port)
+        web_server.start()
+        console.print(f"[bold green]Web UI[/] on [link={web_server.url}]{web_server.url}[/]")
 
     stop_signal = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop_signal.set())
@@ -78,6 +88,8 @@ def run(
             stop_signal.wait()
     finally:
         console.print("[yellow]Shutting down…[/]")
+        if web_server is not None:
+            web_server.stop()
         world.stop()
 
 
