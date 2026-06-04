@@ -23,6 +23,7 @@ def test_kinds_lists_all_devices() -> None:
         "fanuc_r30ib",
         "haas_ngc",
         "mazak_840d",
+        "mazak_smoothx",
         "pneumatic_gripper",
         "onrobot_3fg25",
         "zimmer_ged6000il",
