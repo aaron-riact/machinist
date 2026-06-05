@@ -1,0 +1,45 @@
+# Mazak SmoothX robot-interface examples.
+#
+# Run with:
+#   uv run machinist run examples/mazak_smoothx.yaml --no-tui
+#
+# The real Mazak acts as the EtherNet/IP Scanner/Master. In machinist,
+# `mazak_smoothx` follows that model:
+#   - it does NOT listen for inbound EtherNet/IP connections
+#   - it opens an outbound Class 1 connection to the robot Adapter/Slave
+#   - the robot side must therefore listen on TCP/44818 and UDP/2222
+
+devices:
+  - name: smooth_io_only
+    kind: mazak_smoothx
+    options:
+      interfaces: [io]
+      mtconnect_port: 5053
+
+  - name: smooth_eip_only
+    kind: mazak_smoothx
+    options:
+      interfaces: [ethernetip]
+      ethernetip:
+        host: 192.168.90.20
+        port: 44818
+        originator_udp_port: 2222
+        target_udp_port: 2222
+        output_assembly_instance_id: 100
+        input_assembly_instance_id: 101
+        requested_packet_rate_ms: 20
+      mtconnect_port: 5054
+
+  - name: smooth_hybrid
+    kind: mazak_smoothx
+    options:
+      interfaces: [io, ethernetip]
+      ethernetip:
+        host: 192.168.90.21
+      mtconnect_port: 5055
+
+io_links:
+  # Native IO can still drive the SmoothX emulator when `io` is enabled.
+  # Example:
+  # - {source: io1.o1, target: smooth_hybrid.di107}   # door open command
+  # - {source: io1.o2, target: smooth_hybrid.di108}   # door close command

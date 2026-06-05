@@ -165,10 +165,44 @@ When two devices want the same `host:port`, Machinist:
 | `robot`             | SRCI / TCP·UDP   | 15001        | Generic arm; URDF/DH + OPC-UA      |
 | `haas_ngc`          | MDC+DPRINT+MTC+SMB | 5051       | Multi-service CNC; program library    |
 | `mazak_840d`        | S7 (stub/snap7)  | 102          | Pluggable back-end, DB/byte/bit maps  |
+| `mazak_smoothx`     | IO + EIP + MTC   | n/a          | Outbound EtherNet/IP scanner/master |
 | `pneumatic_gripper` | IO only          | n/a          | open/close + limit switches        |
 | `onrobot_3fg25`     | Modbus/TCP       | 502          | Diameter, force, grip command      |
 | `zimmer_ged6000il`  | IO-Link HTTP     | 80           | Emulates IFM AL1350 master         |
 | `weidmuller_ur20`   | Modbus/TCP       | 502          | Configurable I/O width             |
+
+## Mazak SmoothX config notes
+
+`mazak_smoothx` models the Mazak robot interface as the **machine** side of
+the cell. For EtherNet/IP that means it behaves as the **Scanner/Master**:
+
+* it **does not listen** on TCP/44818 or UDP/2222,
+* it opens an **outbound** Class 1 I/O connection to the robot
+  **Adapter/Slave** named in `options.ethernetip.host`,
+* if you want a purely local scene, use `interfaces: [io]`,
+* if you want both native machinist IO and EtherNet/IP active together, use
+  `interfaces: [io, ethernetip]`.
+
+```yaml
+devices:
+  - name: smooth
+    kind: mazak_smoothx
+    options:
+      interfaces: [io, ethernetip]
+      ethernetip:
+        host: 192.168.90.20        # remote robot adapter address
+        port: 44818
+        originator_udp_port: 2222
+        target_udp_port: 2222
+        output_assembly_instance_id: 100
+        input_assembly_instance_id: 101
+        requested_packet_rate_ms: 20
+      mtconnect_port: 5053
+```
+
+With `io` enabled, the emulator exposes named signals like `di107`, `di108`,
+`di109`, `do102`, `do103`, `do107`, and `do108` while still maintaining the
+full 100-byte Mazak input/output blocks internally.
 
 ## Architecture (one screenful)
 

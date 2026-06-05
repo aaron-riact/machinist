@@ -33,10 +33,31 @@ devices:
       doors: [main, sub]
       mtconnect_port: 5052     # GET /probe and /current (cycle/spindle/tool/xyz)
       opcua: {port: 4841}      # cycle/spindle/tool/parts/xyz over OPC-UA
-  #- name: lathe
-  #  kind: mazak_840d           # S7 stub on TCP/102
-  #  options:
-  #    mappings:
+  - name: smooth
+    kind: mazak_smoothx
+    options:
+      interfaces: [io]           # keeps the example self-contained
+      mtconnect_port: 5053
+      # Mazak SmoothX acts as the EtherNet/IP Scanner/Master.
+      # It does NOT listen on 44818/2222; instead it opens an outbound Class 1
+      # connection to the robot Adapter/Slave you name below.
+      #
+      # For EtherNet/IP only:
+      # interfaces: [ethernetip]
+      # ethernetip:
+      #   host: 192.168.90.20     # remote robot adapter address
+      #   port: 44818
+      #   originator_udp_port: 2222
+      #   target_udp_port: 2222
+      #
+      # To keep native machinist IO and EtherNet/IP active at the same time:
+      # interfaces: [io, ethernetip]
+      # ethernetip:
+      #   host: 192.168.90.20
+   #- name: lathe
+   #  kind: mazak_840d           # S7 stub on TCP/102
+   #  options:
+   #    mappings:
   #      door_open_cmd:  {db: 1, byte: 0, bit: 0}
   #      door_close_cmd: {db: 1, byte: 0, bit: 1}
 
