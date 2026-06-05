@@ -3,11 +3,10 @@
 # Run with:
 #   uv run machinist run examples/mazak_smoothx.yaml --no-tui
 #
-# The real Mazak acts as the EtherNet/IP Scanner/Master. In machinist,
-# `mazak_smoothx` follows that model:
-#   - it does NOT listen for inbound EtherNet/IP connections
-#   - it opens an outbound Class 1 connection to the robot Adapter/Slave
-#   - the robot side must therefore listen on TCP/44818 and UDP/2222
+# `mazak_smoothx` supports both EtherNet/IP roles.
+# The default is adapter mode, which listens for inbound TCP/44818 + UDP/2222
+# traffic from a scanner/client. Scanner mode stays available when you want the
+# emulator to initiate the Class 1 connection itself.
 
 devices:
   - name: smooth_io_only
@@ -16,27 +15,38 @@ devices:
       interfaces: [io]
       mtconnect_port: 5053
 
-  - name: smooth_eip_only
+  - name: smooth_eip_adapter
     kind: mazak_smoothx
     options:
       interfaces: [ethernetip]
       ethernetip:
-        host: 192.168.90.20
+        mode: adapter
+        udp_port: 2222
+      mtconnect_port: 5054
+
+  - name: smooth_eip_scanner
+    kind: mazak_smoothx
+    options:
+      interfaces: [ethernetip]
+      ethernetip:
+        mode: scanner
+        host: 192.168.90.21
         port: 44818
         originator_udp_port: 2222
         target_udp_port: 2222
         output_assembly_instance_id: 100
         input_assembly_instance_id: 101
         requested_packet_rate_ms: 20
-      mtconnect_port: 5054
+      mtconnect_port: 5055
 
   - name: smooth_hybrid
     kind: mazak_smoothx
     options:
       interfaces: [io, ethernetip]
       ethernetip:
-        host: 192.168.90.21
-      mtconnect_port: 5055
+        mode: adapter
+        udp_port: 2222
+      mtconnect_port: 5056
 
 io_links:
   # Native IO can still drive the SmoothX emulator when `io` is enabled.

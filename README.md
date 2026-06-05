@@ -165,7 +165,7 @@ When two devices want the same `host:port`, Machinist:
 | `robot`             | SRCI / TCP·UDP   | 15001        | Generic arm; URDF/DH + OPC-UA      |
 | `haas_ngc`          | MDC+DPRINT+MTC+SMB | 5051       | Multi-service CNC; program library    |
 | `mazak_840d`        | S7 (stub/snap7)  | 102          | Pluggable back-end, DB/byte/bit maps  |
-| `mazak_smoothx`     | IO + EIP + MTC   | n/a          | Outbound EtherNet/IP scanner/master |
+| `mazak_smoothx`     | IO + EIP + MTC   | 44818        | Mazak SmoothX with adapter+scanner EIP |
 | `pneumatic_gripper` | IO only          | n/a          | open/close + limit switches        |
 | `onrobot_3fg25`     | Modbus/TCP       | 502          | Diameter, force, grip command      |
 | `zimmer_ged6000il`  | IO-Link HTTP     | 80           | Emulates IFM AL1350 master         |
@@ -174,14 +174,16 @@ When two devices want the same `host:port`, Machinist:
 ## Mazak SmoothX config notes
 
 `mazak_smoothx` models the Mazak robot interface as the **machine** side of
-the cell. For EtherNet/IP that means it behaves as the **Scanner/Master**:
+the cell. The emulator supports both EtherNet/IP roles:
 
-* it **does not listen** on TCP/44818 or UDP/2222,
-* it opens an **outbound** Class 1 I/O connection to the robot
+* **adapter** (default): listens on the device endpoint, typically TCP/44818
+  plus UDP/2222, so an external scanner/client can connect inbound,
+* **scanner**: opens an outbound Class 1 I/O connection to the robot
   **Adapter/Slave** named in `options.ethernetip.host`,
-* if you want a purely local scene, use `interfaces: [io]`,
-* if you want both native machinist IO and EtherNet/IP active together, use
-  `interfaces: [io, ethernetip]`.
+* `interfaces: [io]` keeps the scene local and signal-driven,
+* `interfaces: [ethernetip]` enables only the 100-byte EtherNet/IP blocks,
+* `interfaces: [io, ethernetip]` runs the native signal bank and EtherNet/IP
+  together.
 
 ```yaml
 devices:
@@ -189,7 +191,23 @@ devices:
     kind: mazak_smoothx
     options:
       interfaces: [io, ethernetip]
+      # Default adapter mode: accept inbound EtherNet/IP sessions.
       ethernetip:
+        mode: adapter
+        udp_port: 2222
+      mtconnect_port: 5053
+```
+
+Use scanner mode when you want Machinist to initiate the connection instead:
+
+```yaml
+devices:
+  - name: smooth
+    kind: mazak_smoothx
+    options:
+      interfaces: [ethernetip]
+      ethernetip:
+        mode: scanner
         host: 192.168.90.20        # remote robot adapter address
         port: 44818
         originator_udp_port: 2222
@@ -197,12 +215,15 @@ devices:
         output_assembly_instance_id: 100
         input_assembly_instance_id: 101
         requested_packet_rate_ms: 20
-      mtconnect_port: 5053
 ```
 
 With `io` enabled, the emulator exposes named signals like `di107`, `di108`,
 `di109`, `do102`, `do103`, `do107`, and `do108` while still maintaining the
 full 100-byte Mazak input/output blocks internally.
+
+The TUI and web UI both decode those 100-byte blocks into named Mazak fields,
+showing raw packet hex, bit/word/string registers, and derived values such as
+the active program and current alarm.
 
 ## Architecture (one screenful)
 

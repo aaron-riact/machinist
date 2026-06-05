@@ -38,22 +38,27 @@ devices:
     options:
       interfaces: [io]           # keeps the example self-contained
       mtconnect_port: 5053
-      # Mazak SmoothX acts as the EtherNet/IP Scanner/Master.
-      # It does NOT listen on 44818/2222; instead it opens an outbound Class 1
-      # connection to the robot Adapter/Slave you name below.
+      # EtherNet/IP is optional here. If enabled with no mode override,
+      # SmoothX listens as an adapter on TCP/44818 + UDP/2222.
       #
-      # For EtherNet/IP only:
+      # For EtherNet/IP only, default adapter/listener mode:
       # interfaces: [ethernetip]
       # ethernetip:
+      #   mode: adapter
+      #   udp_port: 2222
+      #
+      # For outbound scanner mode instead:
+      # interfaces: [ethernetip]
+      # ethernetip:
+      #   mode: scanner
       #   host: 192.168.90.20     # remote robot adapter address
       #   port: 44818
-      #   originator_udp_port: 2222
-      #   target_udp_port: 2222
       #
-      # To keep native machinist IO and EtherNet/IP active at the same time:
+      # To keep native machinist IO and EtherNet/IP active at the same time
+      # while still listening as the Mazak endpoint:
       # interfaces: [io, ethernetip]
       # ethernetip:
-      #   host: 192.168.90.20
+      #   mode: adapter
    #- name: lathe
    #  kind: mazak_840d           # S7 stub on TCP/102
    #  options:
