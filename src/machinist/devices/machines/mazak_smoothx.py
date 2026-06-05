@@ -168,6 +168,7 @@ class MazakSmoothXEmulator(Device):
         self._work_search_seconds = float(opts.get("work_search_seconds", 0.1))
         self._heartbeat_interval = float(opts.get("heartbeat_interval_seconds", 0.1))
         self._heartbeat_timeout = float(opts.get("heartbeat_timeout_seconds", 0.5))
+        self._ethernetip_mode = _ethernetip_mode(opts)
         self._io_writable = "io" in _enabled_interfaces(opts)
         self._alarm_code: int | None = None
         self._alarm_message = ""
@@ -214,6 +215,10 @@ class MazakSmoothXEmulator(Device):
         return self.state.program
 
     @property
+    def ethernetip_mode(self) -> str:
+        return self._ethernetip_mode
+
+    @property
     def connection_up(self) -> bool:
         return self._connection_up
 
@@ -225,6 +230,71 @@ class MazakSmoothXEmulator(Device):
     def state_snapshot(self) -> dict[str, object]:
         with self._lock:
             return dict(self._state_snapshot)
+
+    def ethernetip_snapshot(self) -> dict[str, object]:
+        with self._lock:
+            input_block = bytes(self._input_block)
+            output_block = bytes(self._output_block)
+            alarm_code = self._alarm_code
+            alarm_message = self._alarm_message
+            connection_up = self._connection_up
+            active_program = self.state.program
+            transport = self._ethernetip
+        transport_ready = bool(getattr(transport, "connected", False))
+        peer_connected = bool(
+            getattr(transport, "peer_connected", transport_ready)
+        )
+        return {
+            "mode": self._ethernetip_mode,
+            "transport_ready": transport_ready,
+            "peer_connected": peer_connected,
+            "input_block_hex": input_block.hex(" "),
+            "output_block_hex": output_block.hex(" "),
+            "input_fields": _field_rows(
+                prefix="DI",
+                block=input_block,
+                bit_points=INPUT_SIGNAL_POINTS,
+                text_fields=INPUT_TEXT_FIELDS,
+                bit_fields={},
+            ),
+            "output_fields": _field_rows(
+                prefix="DO",
+                block=output_block,
+                bit_points=OUTPUT_SIGNAL_POINTS,
+                text_fields=OUTPUT_TEXT_FIELDS,
+                bit_fields=OUTPUT_BIT_FIELDS,
+            ),
+            "derived_fields": [
+                {
+                    "signal": "STATE",
+                    "name": "Active program",
+                    "offset": "-",
+                    "type": "string",
+                    "value": active_program or "",
+                },
+                {
+                    "signal": "STATE",
+                    "name": "Connection up",
+                    "offset": "-",
+                    "type": "bool",
+                    "value": "ON" if connection_up else "OFF",
+                },
+                {
+                    "signal": "STATE",
+                    "name": "Alarm code",
+                    "offset": "-",
+                    "type": "int",
+                    "value": "" if alarm_code is None else str(alarm_code),
+                },
+                {
+                    "signal": "STATE",
+                    "name": "Alarm message",
+                    "offset": "-",
+                    "type": "string",
+                    "value": alarm_message,
+                },
+            ],
+        }
 
     def write_input_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:
         chunk = bytes(data)
@@ -615,6 +685,69 @@ def _set_bit(block: bytearray, point: BitPoint, value: bool) -> bool:
 def _set_field(block: bytearray, field: BitField, value: int) -> None:
     mask = ((1 << field.width) - 1) << field.bit
     block[field.byte] = (block[field.byte] & ~mask) | ((value << field.bit) & mask)
+
+
+def _field_rows(
+    *,
+    prefix: str,
+    block: bytes,
+    bit_points: dict[int, BitPoint],
+    text_fields: dict[int, TextField],
+    bit_fields: dict[int, BitField],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    numbers = sorted(set(bit_points) | set(text_fields) | set(bit_fields))
+    for number in numbers:
+        if number in text_fields:
+            field = text_fields[number]
+            value = _read_text_from_bytes(block, field)
+            rows.append(
+                {
+                    "signal": f"{prefix}{number:03d}",
+                    "name": field.description,
+                    "offset": (
+                        f"bytes {field.offset}-{field.offset + field.length - 1}"
+                    ),
+                    "type": f"ascii[{field.length}]",
+                    "value": value,
+                }
+            )
+        if number in bit_points:
+            point = bit_points[number]
+            rows.append(
+                {
+                    "signal": f"{prefix}{number:03d}",
+                    "name": point.description,
+                    "offset": f"byte {point.byte} bit {point.bit}",
+                    "type": "bit",
+                    "value": "ON" if _get_bit(block, point) else "OFF",
+                }
+            )
+        if number in bit_fields:
+            field = bit_fields[number]
+            rows.append(
+                {
+                    "signal": f"{prefix}{number:03d}",
+                    "name": field.description,
+                    "offset": (
+                        f"byte {field.byte} bits "
+                        f"{field.bit}-{field.bit + field.width - 1}"
+                    ),
+                    "type": f"u{field.width}",
+                    "value": str(_get_field(block, field)),
+                }
+            )
+    return rows
+
+
+def _get_field(block: bytes | bytearray, field: BitField) -> int:
+    mask = (1 << field.width) - 1
+    return (block[field.byte] >> field.bit) & mask
+
+
+def _read_text_from_bytes(block: bytes, field: TextField) -> str:
+    raw = block[field.offset : field.offset + field.length]
+    return raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
 
 
 def _enabled_interfaces(options: dict[str, Any]) -> set[str]:

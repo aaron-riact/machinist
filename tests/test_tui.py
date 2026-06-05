@@ -5,24 +5,27 @@ from types import SimpleNamespace
 
 from machinist.core.events import Event
 from machinist.core.types import DeviceState
+from machinist.devices.machines.state import MachineState, Toggle
+from machinist.devices.robots.arm import RobotArm
 from machinist.tui.app import (
+    MachinistApp,
     _arm_summary,
     _cmd_ls,
     _cmd_run,
     _detail_header,
+    _ethernetip_summary,
     _format_event,
     _machine_summary,
-    MachinistApp,
     _paint_lifecycle,
 )
-from machinist.devices.robots.arm import RobotArm
-from machinist.devices.machines.state import MachineState, Toggle
 
 
 def test_format_event_is_compact_and_deterministic() -> None:
     ev = Event(device="ur1", kind="rx", payload={"line": "power on"}, timestamp=1234.567)
     out = _format_event(ev)
-    assert "ur1" in out and "rx" in out and "power on" in out
+    assert "ur1" in out
+    assert "rx" in out
+    assert "power on" in out
     assert "         rx" not in out
 
 
@@ -41,7 +44,8 @@ def test_arm_summary_reports_estop_and_pose() -> None:
     out = _arm_summary(SimpleNamespace(arm=arm))
     assert "estopped" in out
     assert "ENGAGED" in out
-    assert "joints" in out and "pose" in out
+    assert "joints" in out
+    assert "pose" in out
 
 
 def test_machine_summary_is_empty_for_non_machine() -> None:
@@ -82,6 +86,19 @@ def test_detail_header_combines_static_and_dynamic_sections() -> None:
     assert "mill" in out
     assert "haas_ngc" in out
     assert "program" in out
+
+
+def test_ethernetip_summary_reports_mode_and_link_state() -> None:
+    device = SimpleNamespace(
+        ethernetip_snapshot=lambda: {
+            "mode": "adapter",
+            "transport_ready": True,
+            "peer_connected": False,
+        }
+    )
+    out = _ethernetip_summary(device)
+    assert "adapter" in out
+    assert "waiting" in out
 
 
 def test_drain_refreshes_selected_header_even_without_events() -> None:

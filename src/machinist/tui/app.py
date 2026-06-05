@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import queue
 from collections.abc import Callable
+from contextlib import suppress
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
@@ -53,8 +54,9 @@ class MachinistApp(App[None]):
     #detail-header { height: auto; padding: 0 1; }
     #signals-row { height: 1fr; }
     #inputs, #outputs { width: 1fr; }
-    #files { height: 40%; border-top: dashed #6e6cd1; }
-    #files.hidden { display: none; }
+    #detail-lower { height: 40%; }
+    #files, #registers { width: 1fr; border-top: dashed #6e6cd1; }
+    #detail-lower.hidden { display: none; }
     RichLog#log { height: 1fr; border: round #6e6cd1; padding: 0 1; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
     """
@@ -93,10 +95,15 @@ class MachinistApp(App[None]):
                         id="outputs", cursor_type="row", zebra_stripes=True,
                     )
                     yield self.outputs
-                self.files = DataTable(
-                    id="files", cursor_type="row", zebra_stripes=True, classes="hidden",
-                )
-                yield self.files
+                with Horizontal(id="detail-lower"):
+                    self.files = DataTable(
+                        id="files", cursor_type="row", zebra_stripes=True,
+                    )
+                    yield self.files
+                    self.registers = DataTable(
+                        id="registers", cursor_type="row", zebra_stripes=True,
+                    )
+                    yield self.registers
         self._log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
         yield self._log
         self.cmd = Input(placeholder="◇ command (type 'help' for ideas)", id="cmd")
@@ -110,6 +117,7 @@ class MachinistApp(App[None]):
         self.inputs.add_columns("input", "value")
         self.outputs.add_columns("output", "value")
         self.files.add_columns("program")
+        self.registers.add_columns("dir", "field", "offset", "type", "value")
         self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
         self.set_interval(0.1, self._drain)
@@ -118,10 +126,8 @@ class MachinistApp(App[None]):
     # ----- bus → UI -----------------------------------------------------
 
     def _enqueue(self, event: Event) -> None:
-        try:
+        with suppress(queue.Full):  # pragma: no cover
             self._events.put_nowait(event)
-        except queue.Full:  # pragma: no cover
-            pass
 
     def _drain(self) -> None:
         for _ in range(50):
@@ -164,6 +170,7 @@ class MachinistApp(App[None]):
             self.inputs.clear()
             self.outputs.clear()
             self.files.clear()
+            self.registers.clear()
             return
         self._refresh_detail_header(device)
         self.inputs.clear()
@@ -177,6 +184,7 @@ class MachinistApp(App[None]):
                 )
                 table.add_row(f"{dot} {sig.name}", str(sig.value))
         self._refresh_files(device)
+        self._refresh_registers(device)
 
     def _refresh_detail_header(self, device: Device | None = None) -> None:
         current = device or self._lookup(self._selected)
@@ -192,6 +200,25 @@ class MachinistApp(App[None]):
             return
         for name in programs.list():
             self.files.add_row(name)
+
+    def _refresh_registers(self, device: Device) -> None:
+        self.registers.clear()
+        snapshot = _ethernetip_snapshot(device)
+        if snapshot is None:
+            return
+        for direction, fields in [
+            ("IN", snapshot["input_fields"]),
+            ("OUT", snapshot["output_fields"]),
+            ("DRV", snapshot["derived_fields"]),
+        ]:
+            for field in fields:
+                self.registers.add_row(
+                    direction,
+                    f"{field['signal']} {field['name']}",
+                    field["offset"],
+                    field["type"],
+                    field["value"],
+                )
 
     def _lookup(self, name: str | None) -> Device | None:
         if name is None:
@@ -216,7 +243,7 @@ class MachinistApp(App[None]):
 
     def _set_signal(self, target: str, value: bool) -> None:
         try:
-            self.world.io_map._resolve(target).set(value)  # noqa: SLF001
+            self.world.io_map._resolve(target).set(value)
             self._log.write(f"set [cyan]{target}[/] = {value}")
         except (KeyError, ValueError) as exc:
             self._log.write(f"[red]error[/]: {exc}")
@@ -241,7 +268,7 @@ class MachinistApp(App[None]):
             self._with_arm(self._selected, lambda arm: arm.reset())
 
     def action_toggle_files(self) -> None:
-        self.files.toggle_class("hidden")
+        self.query_one("#detail-lower").toggle_class("hidden")
 
 
 # --- stateless helpers --------------------------------------------------
@@ -266,6 +293,7 @@ def _detail_header(device: Device) -> str:
         f"lifecycle {_paint_lifecycle(device.lifecycle)}"
         f"{_arm_summary(device)}"
         f"{_machine_summary(device)}"
+        f"{_ethernetip_summary(device)}"
     )
 
 
@@ -313,6 +341,25 @@ def _machine_summary(device: Device) -> str:
     )
 
 
+def _ethernetip_summary(device: Device) -> str:
+    snapshot = _ethernetip_snapshot(device)
+    if snapshot is None:
+        return ""
+    peer = "peer up" if snapshot["peer_connected"] else "waiting"
+    ready = "ready" if snapshot["transport_ready"] else "offline"
+    return (
+        f"\neip mode [cyan]{snapshot['mode']}[/]   transport {ready}   "
+        f"link {peer}"
+    )
+
+
+def _ethernetip_snapshot(device: Device) -> dict[str, object] | None:
+    snapshot = getattr(device, "ethernetip_snapshot", None)
+    if snapshot is None or not callable(snapshot):
+        return None
+    return snapshot()
+
+
 def _format_event(event: Event) -> str:
     payload = " ".join(f"{k}={v}" for k, v in event.payload.items())
     return (
@@ -320,20 +367,6 @@ def _format_event(event: Event) -> str:
         f"[cyan]{event.device:<12}[/] "
         f"[magenta]{event.kind:<6}[/] {payload}"
     )
-
-
-_COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
-    "help": lambda app, _: app._log.write(
-        "[bold]commands[/]  estop <device> | reset <device> | "
-        "set <device.signal> 0|1 | ls <device> | run <device> <program> | quit"
-    ),
-    "quit": lambda app, _: app.exit(),
-    "estop": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.estop()),
-    "reset": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.reset()),
-    "set": lambda app, rest: _cmd_set(app, rest),
-    "ls": lambda app, rest: _cmd_ls(app, rest),
-    "run": lambda app, rest: _cmd_run(app, rest),
-}
 
 
 def _cmd_set(app: MachinistApp, rest: str) -> None:
@@ -363,3 +396,17 @@ def _cmd_run(app: MachinistApp, rest: str) -> None:
         app._log.write(f"started [cyan]{program.strip()}[/] on {device.name}")
     except (FileNotFoundError, RuntimeError) as exc:
         app._log.write(f"[red]error[/]: {exc}")
+
+
+_COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
+    "help": lambda app, _: app._log.write(
+        "[bold]commands[/]  estop <device> | reset <device> | "
+        "set <device.signal> 0|1 | ls <device> | run <device> <program> | quit"
+    ),
+    "quit": lambda app, _: app.exit(),
+    "estop": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.estop()),
+    "reset": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.reset()),
+    "set": _cmd_set,
+    "ls": _cmd_ls,
+    "run": _cmd_run,
+}

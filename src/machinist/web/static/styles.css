@@ -415,6 +415,52 @@ device-detail {
 
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
+.packet-hex {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.packet-hex span {
+  color: var(--neon);
+  display: inline-block;
+  min-width: 36px;
+}
+
+.packet-table-wrap {
+  overflow: auto;
+}
+
+.packet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.packet-table th,
+.packet-table td {
+  padding: 7px 8px;
+  border-top: 1px solid var(--glass-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.packet-table th {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.packet-table td:last-child {
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
 /* Event log --------------------------------------------------------------- */
 event-log {
   display: flex;

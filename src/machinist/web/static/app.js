@@ -78,6 +78,7 @@ class DeviceDetail extends HTMLElement {
     this.append(this._head(device));
     if (device.arm) this.append(this._arm(device.arm));
     if (device.machine) this.append(this._machine(device.machine));
+    if (device.ethernetip) this.append(this._ethernetip(device.ethernetip));
     if (device.signals) this.append(this._signals(device));
   }
 
@@ -153,6 +154,25 @@ class DeviceDetail extends HTMLElement {
       this._sigTile("Outputs", d.name, outputs, false),
     );
     return tiles;
+  }
+
+  _ethernetip(e) {
+    const summary = tile("EtherNet/IP", `
+      <dl class="kv">
+        <dt>mode</dt><dd>${esc(e.mode)}</dd>
+        <dt>transport</dt><dd class="${e.transport_ready ? "good" : "bad"}">${e.transport_ready ? "ready" : "offline"}</dd>
+        <dt>peer</dt><dd class="${e.peer_connected ? "good" : ""}">${e.peer_connected ? "connected" : "waiting"}</dd>
+      </dl>
+      <div class="packet-hex">
+        <div><span>IN</span> ${esc(e.input_block_hex)}</div>
+        <div><span>OUT</span> ${esc(e.output_block_hex)}</div>
+      </div>`);
+    const tables = el("div", "tiles split");
+    tables.append(
+      tile("Input packet fields", fieldTable(e.input_fields)),
+      tile("Output packet fields", fieldTable(e.output_fields)),
+    );
+    return frag(summary, tables, tile("Derived state", fieldTable(e.derived_fields)));
   }
 
   _sigTile(title, device, signals, clickable) {
@@ -256,6 +276,26 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
   );
+}
+function fieldTable(fields) {
+  if (!fields?.length) return `<p class="empty">none</p>`;
+  return `
+    <div class="packet-table-wrap">
+      <table class="packet-table">
+        <thead>
+          <tr><th>field</th><th>offset</th><th>type</th><th>value</th></tr>
+        </thead>
+        <tbody>
+          ${fields.map((f) => `
+            <tr>
+              <td><strong>${esc(f.signal)}</strong><br /><span>${esc(f.name)}</span></td>
+              <td>${esc(f.offset)}</td>
+              <td>${esc(f.type)}</td>
+              <td>${esc(f.value)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 /* ---- references ------------------------------------------------------- */

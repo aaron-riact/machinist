@@ -78,6 +78,29 @@ def test_snapshot_device_includes_machine_state() -> None:
     assert machine["position"]["x"] == 12.0
 
 
+def test_snapshot_device_includes_ethernetip_breakdown() -> None:
+    device = SimpleNamespace(
+        name="smooth",
+        kind="mazak_smoothx",
+        endpoint="127.0.0.1:44818",
+        lifecycle="running",
+        ethernetip_snapshot=lambda: {
+            "mode": "adapter",
+            "transport_ready": True,
+            "peer_connected": False,
+            "input_block_hex": "00 00",
+            "output_block_hex": "01 00",
+            "input_fields": [{"signal": "DI100", "name": "Target work number data"}],
+            "output_fields": [{"signal": "DO100", "name": "Current work number"}],
+            "derived_fields": [{"signal": "STATE", "name": "Alarm message"}],
+        },
+    )
+    snap = snapshot_device(device)
+    assert snap["ethernetip"]["mode"] == "adapter"
+    assert snap["ethernetip"]["input_fields"]
+    assert snap["ethernetip"]["input_fields"][0]["signal"] == "DI100"
+
+
 def test_snapshot_world_lists_signals_grouped_with_direction() -> None:
     world = _gripper_world()
     snap = snapshot_world(world)
