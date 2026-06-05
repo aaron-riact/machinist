@@ -12,7 +12,12 @@ from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...transport.ethernetip import EtherNetIPScanner, EtherNetIPScannerConfig
+from ...transport.ethernetip import (
+    EtherNetIPAdapter,
+    EtherNetIPAdapterConfig,
+    EtherNetIPScanner,
+    EtherNetIPScannerConfig,
+)
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from .state import CycleState, MachineState
 
@@ -187,13 +192,10 @@ class MazakSmoothXEmulator(Device):
 
         self._mtconnect = self._build_mtconnect(endpoint.host, opts)
 
-        self._ethernetip: EtherNetIPScanner | None = None
+        self._ethernetip: EtherNetIPAdapter | EtherNetIPScanner | None = None
         self._next_connect_attempt = 0.0
-        if (
-            "ethernetip" in _enabled_interfaces(opts)
-            and (cfg := opts.get("ethernetip")) is not None
-        ):
-            self._ethernetip = _build_scanner(cfg, opts)
+        if "ethernetip" in _enabled_interfaces(opts):
+            self._ethernetip = _build_ethernetip_transport(endpoint, opts)
 
         self._initialize_defaults()
 
@@ -343,7 +345,7 @@ class MazakSmoothXEmulator(Device):
             self._connection_up = False
             self.emit("ethernetip.error", message=str(exc))
             return
-        self._connection_up = True
+        self._connection_up = bool(getattr(transport, "peer_connected", transport.connected))
         self.write_input_block(incoming)
 
     def _scan_cycle(self, *, now: float) -> None:
@@ -616,7 +618,7 @@ def _set_field(block: bytearray, field: BitField, value: int) -> None:
 
 
 def _enabled_interfaces(options: dict[str, Any]) -> set[str]:
-    enabled = {"io"}
+    enabled = {"io", "ethernetip"}
     raw = options.get("interfaces")
     if isinstance(raw, str):
         enabled = {raw.strip().lower()}
@@ -640,6 +642,44 @@ def _mtconnect_port(options: dict[str, Any]) -> int | None:
     if (config := options.get("mtconnect")) is not None:
         return int(config.get("port", 0))
     return None
+
+
+def _ethernetip_mode(options: dict[str, Any]) -> str:
+    config = options.get("ethernetip")
+    if isinstance(config, dict) and "mode" in config:
+        return str(config["mode"]).strip().lower()
+    return "adapter"
+
+
+def _build_ethernetip_transport(
+    endpoint: Endpoint, options: dict[str, Any]
+) -> EtherNetIPAdapter | EtherNetIPScanner:
+    config = options.get("ethernetip")
+    if config is None:
+        config = {}
+    if not isinstance(config, dict):
+        raise ValueError("ethernetip options must be a mapping")
+    mode = _ethernetip_mode(options)
+    if mode == "scanner":
+        return _build_scanner(config, options)
+    if mode == "adapter":
+        return _build_adapter(endpoint, config)
+    raise ValueError("ethernetip.mode must be either 'adapter' or 'scanner'")
+
+
+def _build_adapter(endpoint: Endpoint, config: dict[str, Any]) -> EtherNetIPAdapter:
+    return EtherNetIPAdapter(
+        EtherNetIPAdapterConfig(
+            host=endpoint.host,
+            port=endpoint.port,
+            udp_port=int(config.get("udp_port", 2222)),
+            output_length=BLOCK_SIZE,
+            input_length=BLOCK_SIZE,
+            requested_packet_rate_ms=int(config.get("requested_packet_rate_ms", 20)),
+            o_t_realtime_format=str(config.get("o_t_realtime_format", "modeless")),
+            t_o_realtime_format=str(config.get("t_o_realtime_format", "modeless")),
+        )
+    )
 
 
 def _build_scanner(config: dict[str, Any], options: dict[str, Any]) -> EtherNetIPScanner:
@@ -676,6 +716,6 @@ def _build_scanner(config: dict[str, Any], options: dict[str, Any]) -> EtherNetI
     return transport_factory(scanner_config, client_factory=client_factory)
 
 
-@register("mazak_smoothx", default_port=0)
+@register("mazak_smoothx", default_port=44818)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     return MazakSmoothXEmulator(name, endpoint, bus, options)

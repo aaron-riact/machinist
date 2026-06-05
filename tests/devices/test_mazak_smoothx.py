@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import urllib.request
 
 import pytest
@@ -15,6 +16,7 @@ from machinist.devices.machines.mazak_smoothx import (
     OUTPUT_SIGNAL_POINTS,
     MazakSmoothXEmulator,
 )
+from machinist.transport.ethernetip import EtherNetIPScanner, EtherNetIPScannerConfig
 
 from ..conftest import free_port, wait_running
 
@@ -155,9 +157,56 @@ def test_world_builds_mazak_smoothx_device() -> None:
     assert isinstance(world.devices[0], MazakSmoothXEmulator)
 
 
-def test_ethernetip_host_must_be_remote_adapter_address() -> None:
+def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
+    tcp_port = free_port()
+    udp_port = free_port()
+    device = MazakSmoothXEmulator(
+        "mazak1",
+        Endpoint("127.0.0.1", tcp_port),
+        EventBus(),
+        {
+            "ethernetip": {"udp_port": udp_port},
+            "heartbeat_timeout_seconds": 1.0,
+            "heartbeat_interval_seconds": 0.05,
+        },
+    )
+    scanner = EtherNetIPScanner(
+        EtherNetIPScannerConfig(
+            host="127.0.0.1",
+            port=tcp_port,
+            originator_udp_port=free_port(),
+            target_udp_port=udp_port,
+            output_length=100,
+            input_length=100,
+            requested_packet_rate_ms=20,
+        )
+    )
+    device.start()
+    try:
+        wait_running(device)
+        for _ in range(20):
+            try:
+                scanner.open()
+                break
+            except Exception:
+                time.sleep(0.02)
+        scanner.write_output_block(b"\x5A\xA5")
+        for _ in range(30):
+            if device.input_block.startswith(b"\x5A\xA5"):
+                break
+            time.sleep(0.02)
+        assert device.input_block.startswith(b"\x5A\xA5")
+    finally:
+        scanner.close()
+        device.stop()
+
+
+def test_scanner_mode_requires_remote_adapter_address() -> None:
     with pytest.raises(ValueError, match="does not listen for inbound EtherNet/IP"):
-        _make(interfaces=["ethernetip"], ethernetip={"host": "0.0.0.0"})
+        _make(
+            interfaces=["ethernetip"],
+            ethernetip={"mode": "scanner", "host": "0.0.0.0"},
+        )
 
 
 def test_mtconnect_reports_live_machine_state() -> None:
