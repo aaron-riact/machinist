@@ -141,7 +141,7 @@ class MachinistApp(App[None]):
             if event.device == self._selected:
                 self._refresh_detail()
                 return
-        self._refresh_detail_header()
+        self._refresh_detail()
 
     # ----- selection / detail -------------------------------------------
 

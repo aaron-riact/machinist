@@ -265,6 +265,19 @@ class EtherNetIPAdapter:
         with self._lock:
             return bytes(self._input_block)
 
+    def drop_peer(self) -> None:
+        with self._lock:
+            client_socket = self._client_socket
+            self._client_socket = None
+            self._peer_connected = False
+            self._peer_udp = None
+            self._connection_id_o_t = 0
+            self._connection_id_t_o = 0
+        if client_socket is None:
+            return
+        with suppress(OSError):
+            client_socket.close()
+
     def _accept_loop(self) -> None:
         while not self._stop.is_set():
             tcp_socket = self._tcp_socket

@@ -101,7 +101,7 @@ def test_ethernetip_summary_reports_mode_and_link_state() -> None:
     assert "waiting" in out
 
 
-def test_drain_refreshes_selected_header_even_without_events() -> None:
+def test_drain_refreshes_selected_detail_even_without_events() -> None:
     calls: list[str] = []
     app = SimpleNamespace(
         _events=queue.Queue(),
@@ -112,7 +112,7 @@ def test_drain_refreshes_selected_header_even_without_events() -> None:
         _refresh_detail_header=lambda: calls.append("header"),
     )
     MachinistApp._drain(app)
-    assert calls == ["header"]
+    assert calls == ["detail"]
 
 
 class _FakeApp:

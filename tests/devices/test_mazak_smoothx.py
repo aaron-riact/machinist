@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import time
 import urllib.request
 
@@ -23,6 +24,7 @@ from ..conftest import free_port, wait_running
 
 def _make(**options: object) -> MazakSmoothXEmulator:
     defaults: dict[str, object] = {
+        "interfaces": ["io"],
         "heartbeat_timeout_seconds": 10.0,
         "heartbeat_interval_seconds": 0.05,
         "door_move_seconds": 0.05,
@@ -149,6 +151,11 @@ def test_heartbeat_timeout_raises_alarm_when_echo_does_not_follow() -> None:
     assert device.io["do004"].value is True
 
 
+def test_io_only_device_hides_ethernetip_snapshot() -> None:
+    device = _make(interfaces=["io"])
+    assert device.ethernetip_snapshot() is None
+
+
 def test_world_builds_mazak_smoothx_device() -> None:
     world = WorldBuilder().build(
         SystemConfig(devices=(DeviceConfig(name="m1", kind="mazak_smoothx"),))
@@ -198,6 +205,35 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
         assert device.input_block.startswith(b"\x5A\xA5")
     finally:
         scanner.close()
+        device.stop()
+
+
+def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
+    tcp_port = free_port()
+    udp_port = free_port()
+    device = MazakSmoothXEmulator(
+        "mazak1",
+        Endpoint("127.0.0.1", tcp_port),
+        EventBus(),
+        {
+            "interfaces": ["ethernetip"],
+            "ethernetip": {"udp_port": udp_port},
+            "heartbeat_timeout_seconds": 0.15,
+            "heartbeat_interval_seconds": 0.05,
+        },
+    )
+    device.start()
+    try:
+        wait_running(device)
+        time.sleep(0.4)
+        assert device.alarm_code is None
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(1.0)
+        try:
+            probe.connect(("127.0.0.1", tcp_port))
+        finally:
+            probe.close()
+    finally:
         device.stop()
 
 

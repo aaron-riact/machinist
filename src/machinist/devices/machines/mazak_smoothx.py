@@ -168,8 +168,9 @@ class MazakSmoothXEmulator(Device):
         self._work_search_seconds = float(opts.get("work_search_seconds", 0.1))
         self._heartbeat_interval = float(opts.get("heartbeat_interval_seconds", 0.1))
         self._heartbeat_timeout = float(opts.get("heartbeat_timeout_seconds", 0.5))
+        self._interfaces = _enabled_interfaces(opts)
         self._ethernetip_mode = _ethernetip_mode(opts)
-        self._io_writable = "io" in _enabled_interfaces(opts)
+        self._io_writable = "io" in self._interfaces
         self._alarm_code: int | None = None
         self._alarm_message = ""
         self._connection_up = False
@@ -195,7 +196,7 @@ class MazakSmoothXEmulator(Device):
 
         self._ethernetip: EtherNetIPAdapter | EtherNetIPScanner | None = None
         self._next_connect_attempt = 0.0
-        if "ethernetip" in _enabled_interfaces(opts):
+        if "ethernetip" in self._interfaces:
             self._ethernetip = _build_ethernetip_transport(endpoint, opts)
 
         self._initialize_defaults()
@@ -231,7 +232,9 @@ class MazakSmoothXEmulator(Device):
         with self._lock:
             return dict(self._state_snapshot)
 
-    def ethernetip_snapshot(self) -> dict[str, object]:
+    def ethernetip_snapshot(self) -> dict[str, object] | None:
+        if "ethernetip" not in self._interfaces:
+            return None
         with self._lock:
             input_block = bytes(self._input_block)
             output_block = bytes(self._output_block)
@@ -372,6 +375,8 @@ class MazakSmoothXEmulator(Device):
             mtconnect_thread.start()
             ready.wait(timeout=2.0)
 
+        if isinstance(self._ethernetip, EtherNetIPAdapter):
+            self._ethernetip.open()
         self._mark_running()
         while not stop.is_set():
             now = time.monotonic()
@@ -391,7 +396,9 @@ class MazakSmoothXEmulator(Device):
         if transport is None:
             self._connection_up = True
             return
-        if self._alarm_code == HEARTBEAT_ALARM:
+        if self._alarm_code == HEARTBEAT_ALARM and not isinstance(
+            transport, EtherNetIPAdapter
+        ):
             self._connection_up = False
             return
         if not transport.connected:
@@ -426,6 +433,10 @@ class MazakSmoothXEmulator(Device):
         self._refresh_outputs()
 
     def _update_heartbeat(self, now: float) -> None:
+        if self._ethernetip is not None and not self._connection_up:
+            self._heartbeat_expected_since = now
+            self._last_heartbeat_toggle_at = now
+            return
         input_echo = self._read_input_bit(0)
         output_state = self._read_output_bit(0)
         if (
@@ -433,9 +444,12 @@ class MazakSmoothXEmulator(Device):
             and now - self._heartbeat_expected_since > self._heartbeat_timeout
         ):
             self._set_alarm(HEARTBEAT_ALARM, "Robot Communication Error")
-            if self._ethernetip is not None:
+            if isinstance(self._ethernetip, EtherNetIPAdapter):
+                self._ethernetip.drop_peer()
+            elif self._ethernetip is not None:
                 self._ethernetip.close()
             self._connection_up = False
+            self._heartbeat_expected_since = now
             return
 
         if (

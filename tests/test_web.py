@@ -101,6 +101,18 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
     assert snap["ethernetip"]["input_fields"][0]["signal"] == "DI100"
 
 
+def test_snapshot_device_omits_ethernetip_when_snapshot_is_disabled() -> None:
+    device = SimpleNamespace(
+        name="smooth",
+        kind="mazak_smoothx",
+        endpoint="127.0.0.1:44818",
+        lifecycle="running",
+        ethernetip_snapshot=lambda: None,
+    )
+    snap = snapshot_device(device)
+    assert "ethernetip" not in snap
+
+
 def test_snapshot_world_lists_signals_grouped_with_direction() -> None:
     world = _gripper_world()
     snap = snapshot_world(world)
