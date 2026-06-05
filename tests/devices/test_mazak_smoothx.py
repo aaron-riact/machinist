@@ -68,6 +68,43 @@ def test_work_number_search_updates_active_program_and_output_field() -> None:
     assert device.io["do101"].value is False
 
 
+def test_write_input_block_emits_snapshot_event_once_per_change() -> None:
+    bus = EventBus()
+    events: list[tuple[str, dict[str, object]]] = []
+    bus.subscribe(lambda event: events.append((event.kind, event.payload)))
+    device = MazakSmoothXEmulator(
+        "mazak1",
+        Endpoint("127.0.0.1", 0),
+        bus,
+        {"interfaces": ["io"]},
+    )
+    events.clear()
+
+    device.write_input_block(b"\x01\x02", offset=12)
+    device.write_input_block(b"\x01\x02", offset=12)
+
+    snapshots = [payload for kind, payload in events if kind == "snapshot"]
+    assert snapshots == [{"interface": "ethernetip", "direction": "input"}]
+
+
+def test_internal_output_bit_changes_emit_snapshot_event() -> None:
+    bus = EventBus()
+    events: list[tuple[str, dict[str, object]]] = []
+    bus.subscribe(lambda event: events.append((event.kind, event.payload)))
+    device = MazakSmoothXEmulator(
+        "mazak1",
+        Endpoint("127.0.0.1", 0),
+        bus,
+        {"interfaces": ["io"]},
+    )
+    events.clear()
+
+    device._write_output_bit(107, True)
+
+    snapshots = [payload for kind, payload in events if kind == "snapshot"]
+    assert snapshots == [{"interface": "ethernetip", "direction": "output"}]
+
+
 def test_cycle_start_requires_enable_and_triggers_on_falling_edge() -> None:
     device = _make()
     device.set_input_bit(1, True)

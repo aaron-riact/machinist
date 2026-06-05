@@ -304,18 +304,26 @@ class MazakSmoothXEmulator(Device):
         if offset < 0 or offset + len(chunk) > BLOCK_SIZE:
             raise ValueError("input block write exceeds the 100-byte block")
         with self._lock:
+            current = bytes(self._input_block[offset : offset + len(chunk)])
+            if current == chunk:
+                return
             self._input_block[offset : offset + len(chunk)] = chunk
             snapshot = bytes(self._input_block)
         self._sync_input_signals(snapshot)
+        self._emit_snapshot_change("input")
 
     def write_output_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:
         chunk = bytes(data)
         if offset < 0 or offset + len(chunk) > BLOCK_SIZE:
             raise ValueError("output block write exceeds the 100-byte block")
         with self._lock:
+            current = bytes(self._output_block[offset : offset + len(chunk)])
+            if current == chunk:
+                return
             self._output_block[offset : offset + len(chunk)] = chunk
             snapshot = bytes(self._output_block)
         self._sync_output_signals(snapshot)
+        self._emit_snapshot_change("output")
 
     def set_input_bit(self, number: int, value: bool) -> None:
         self._write_input_bit(number, value, sync_signal=True)
@@ -639,6 +647,7 @@ class MazakSmoothXEmulator(Device):
             return
         if sync_signal:
             self.io[point.signal].set(value)
+        self._emit_snapshot_change("input")
 
     def _write_output_bit(self, number: int, value: bool) -> None:
         point = OUTPUT_SIGNAL_POINTS[number]
@@ -647,11 +656,14 @@ class MazakSmoothXEmulator(Device):
         if not changed:
             return
         self.io[point.signal].set(value)
+        self._emit_snapshot_change("output")
 
     def _write_output_field(self, number: int, value: int) -> None:
         field = OUTPUT_BIT_FIELDS[number]
         with self._lock:
-            _set_field(self._output_block, field, value)
+            changed = _set_field(self._output_block, field, value)
+        if changed:
+            self._emit_snapshot_change("output")
 
     def _sync_input_signals(self, snapshot: bytes) -> None:
         for point in INPUT_SIGNAL_POINTS.values():
@@ -668,12 +680,20 @@ class MazakSmoothXEmulator(Device):
         encoded = value.encode("ascii", "ignore")[: field.length]
         payload = encoded.ljust(field.length, b"\x00")
         with self._lock:
+            current = bytes(block[field.offset : field.offset + field.length])
+            if current == payload:
+                return
             block[field.offset : field.offset + field.length] = payload
+        direction = "input" if block is self._input_block else "output"
+        self._emit_snapshot_change(direction)
 
     def _read_text(self, block: bytearray, field: TextField) -> str:
         with self._lock:
             raw = bytes(block[field.offset : field.offset + field.length])
         return raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+
+    def _emit_snapshot_change(self, direction: str) -> None:
+        self.emit("snapshot", interface="ethernetip", direction=direction)
 
 
 def _bit_value(block: bytes | bytearray, byte: int, bit: int) -> bool:
@@ -696,9 +716,13 @@ def _set_bit(block: bytearray, point: BitPoint, value: bool) -> bool:
     return True
 
 
-def _set_field(block: bytearray, field: BitField, value: int) -> None:
+def _set_field(block: bytearray, field: BitField, value: int) -> bool:
     mask = ((1 << field.width) - 1) << field.bit
-    block[field.byte] = (block[field.byte] & ~mask) | ((value << field.bit) & mask)
+    next_value = (block[field.byte] & ~mask) | ((value << field.bit) & mask)
+    if block[field.byte] == next_value:
+        return False
+    block[field.byte] = next_value
+    return True
 
 
 def _field_rows(
