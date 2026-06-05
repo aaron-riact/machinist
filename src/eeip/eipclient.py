@@ -769,7 +769,12 @@ class EEIPClient:
             sock = socket.socket(socket.AF_INET,  # Internet
                                  socket.SOCK_DGRAM)  # UDP
 
-            self.__udp_server_socket.sendto(bytearray(message), (self.__ip_address, self.__target_udp_port))
+            try:
+                self.__udp_server_socket.sendto(
+                    bytearray(message), (self.__ip_address, self.__target_udp_port)
+                )
+            except OSError:
+                break
             time.sleep(float(self.__requested_packet_rate_o_t)/1000000.0)
 
 
@@ -1307,4 +1312,3 @@ if __name__ == "__main__":
     #time.sleep(5)
     #eeipclient.forward_close()
     #eeipclient.unregister_session()
-

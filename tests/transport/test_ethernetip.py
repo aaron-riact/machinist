@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from machinist.transport.ethernetip import EtherNetIPScanner, EtherNetIPScannerConfig
+import time
+
+from machinist.transport.ethernetip import (
+    EtherNetIPAdapter,
+    EtherNetIPAdapterConfig,
+    EtherNetIPScanner,
+    EtherNetIPScannerConfig,
+)
+
+from ..conftest import free_port
 
 
 class _FakeEEIPClient:
@@ -54,3 +63,52 @@ def test_scanner_configures_client_and_transfers_blocks() -> None:
     assert client.unregister_called is True
     assert client.o_t_iodata == [0x10, 0x20, 0x00, 0x00]
     assert payload == b"\x01\x02\x03\x00"
+
+
+def test_real_scanner_can_exchange_blocks_with_adapter() -> None:
+    tcp_port = free_port()
+    udp_port = free_port()
+    originator_udp_port = free_port()
+    adapter = EtherNetIPAdapter(
+        EtherNetIPAdapterConfig(
+            host="127.0.0.1",
+            port=tcp_port,
+            udp_port=udp_port,
+            output_length=4,
+            input_length=4,
+            requested_packet_rate_ms=20,
+        )
+    )
+    scanner = EtherNetIPScanner(
+        EtherNetIPScannerConfig(
+            host="127.0.0.1",
+            port=tcp_port,
+            originator_udp_port=originator_udp_port,
+            target_udp_port=udp_port,
+            output_length=4,
+            input_length=4,
+            requested_packet_rate_ms=20,
+        )
+    )
+    adapter.open()
+    try:
+        scanner.open()
+        scanner.write_output_block(b"\xAA\x55")
+        for _ in range(20):
+            if adapter.read_input_block().startswith(b"\xAA\x55"):
+                break
+            time.sleep(0.02)
+        assert adapter.peer_connected is True
+        assert adapter.read_input_block() == b"\xAA\x55\x00\x00"
+
+        adapter.write_output_block(b"\x11\x22\x33")
+        payload = b""
+        for _ in range(20):
+            payload = scanner.read_input_block()
+            if payload.startswith(b"\x11\x22\x33"):
+                break
+            time.sleep(0.02)
+        assert payload == b"\x11\x22\x33\x00"
+    finally:
+        scanner.close()
+        adapter.close()
