@@ -176,6 +176,7 @@ class MazakSmoothXEmulator(Device):
         self._prev_di102 = False
         self._prev_di107 = False
         self._prev_di108 = False
+        self._cycle_start_armed = False
         self._feed_hold = False
         self._machining_complete_latched = False
         self._heartbeat_expected_since = 0.0
@@ -391,6 +392,7 @@ class MazakSmoothXEmulator(Device):
         self._prev_di101 = di101
 
     def _handle_door_motion(self, now: float) -> None:
+        stop_request = self._read_input_bit(2)
         di107 = self._read_input_bit(107)
         di108 = self._read_input_bit(108)
         di109 = self._read_input_bit(109)
@@ -406,6 +408,16 @@ class MazakSmoothXEmulator(Device):
             self._door_motion_deadline = now + self._door_seconds
             self._write_output_bit(107, False)
             self._write_output_bit(108, False)
+
+        if not stop_request:
+            self._door_motion_deadline = None
+            self._door_target_open = None
+        elif self._door_motion_deadline is not None:
+            if (self._door_target_open and not di107) or (
+                self._door_target_open is False and (not di108 or not di109)
+            ):
+                self._door_motion_deadline = None
+                self._door_target_open = None
 
         if self._door_motion_deadline is not None and now >= self._door_motion_deadline:
             target_open = bool(self._door_target_open)
@@ -430,6 +442,7 @@ class MazakSmoothXEmulator(Device):
             self._feed_hold = True
             self.state.cycle = CycleState.PAUSED
             self._cycle_complete_deadline = None
+            self._cycle_start_armed = False
             self._write_output_bit(103, False)
         elif self._feed_hold and stop_request and self.state.cycle is CycleState.PAUSED:
             self._feed_hold = False
@@ -437,6 +450,7 @@ class MazakSmoothXEmulator(Device):
         if nc_reset:
             self.state.cycle = CycleState.IDLE
             self._cycle_complete_deadline = None
+            self._cycle_start_armed = False
             self._machining_complete_latched = False
             self._write_output_bit(103, False)
             self._write_output_bit(104, False)
@@ -451,12 +465,20 @@ class MazakSmoothXEmulator(Device):
         self._write_output_bit(102, can_cycle)
 
         if cycle_start and not self._prev_di102 and can_cycle:
+            self._cycle_start_armed = True
+        elif cycle_start and not can_cycle:
+            self._cycle_start_armed = False
+
+        if not cycle_start and self._prev_di102 and self._cycle_start_armed and can_cycle:
             self.state.cycle = CycleState.RUNNING
             self._cycle_complete_deadline = now + self._cycle_seconds
+            self._cycle_start_armed = False
             self._machining_complete_latched = False
             self._write_output_bit(103, True)
             self._write_output_bit(104, False)
             self.emit("cycle.start", program=self.state.program or self._pending_program)
+        elif not cycle_start and self._prev_di102:
+            self._cycle_start_armed = False
 
         if self._cycle_complete_deadline is not None and now >= self._cycle_complete_deadline:
             self._complete_cycle()
@@ -623,8 +645,15 @@ def _mtconnect_port(options: dict[str, Any]) -> int | None:
 def _build_scanner(config: dict[str, Any], options: dict[str, Any]) -> EtherNetIPScanner:
     transport_factory = options.get("_transport_factory", EtherNetIPScanner)
     client_factory = options.get("_eeip_client_factory")
+    host = str(config["host"]).strip()
+    if host in {"", "0.0.0.0", "::"}:
+        raise ValueError(
+            "ethernetip.host must be the remote robot adapter address; "
+            "mazak_smoothx acts as an outbound scanner and does not listen for inbound "
+            "EtherNet/IP connections"
+        )
     scanner_config = EtherNetIPScannerConfig(
-        host=str(config["host"]),
+        host=host,
         port=int(config.get("port", 44818)),
         originator_udp_port=int(config.get("originator_udp_port", 2222)),
         target_udp_port=int(config.get("target_udp_port", 2222)),

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import urllib.request
 
+import pytest
+
 from machinist.core.config import DeviceConfig, SystemConfig
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
@@ -62,7 +64,7 @@ def test_work_number_search_updates_active_program_and_output_field() -> None:
     assert device.io["do101"].value is False
 
 
-def test_cycle_start_requires_enable_and_only_triggers_once_per_edge() -> None:
+def test_cycle_start_requires_enable_and_triggers_on_falling_edge() -> None:
     device = _make()
     device.set_input_bit(1, True)
     device._scan_cycle(now=0.0)
@@ -71,10 +73,12 @@ def test_cycle_start_requires_enable_and_only_triggers_once_per_edge() -> None:
 
     device.set_input_bit(102, True)
     device._scan_cycle(now=0.01)
-    assert device.io["do103"].value is True
+    assert device.io["do103"].value is False
     assert device.state.parts == 0
 
+    device.set_input_bit(102, False)
     device._scan_cycle(now=0.02)
+    assert device.io["do103"].value is True
     assert device.state.parts == 0
 
     device._scan_cycle(now=0.07)
@@ -114,6 +118,19 @@ def test_door_close_requires_robot_clear() -> None:
     assert device.io["do108"].value is True
 
 
+def test_machine_stop_request_stops_door_motion() -> None:
+    device = _make()
+    device.set_input_bit(107, True)
+    device._scan_cycle(now=0.0)
+    device.set_input_bit(2, False)
+    device._scan_cycle(now=0.01)
+    device._scan_cycle(now=0.10)
+
+    assert device.state.door("main").open is False
+    assert device.io["do107"].value is False
+    assert device.io["do108"].value is False
+
+
 def test_heartbeat_timeout_raises_alarm_when_echo_does_not_follow() -> None:
     device = _make(heartbeat_timeout_seconds=0.15, heartbeat_interval_seconds=0.05)
 
@@ -136,6 +153,11 @@ def test_world_builds_mazak_smoothx_device() -> None:
     )
     assert len(world.devices) == 1
     assert isinstance(world.devices[0], MazakSmoothXEmulator)
+
+
+def test_ethernetip_host_must_be_remote_adapter_address() -> None:
+    with pytest.raises(ValueError, match="does not listen for inbound EtherNet/IP"):
+        _make(interfaces=["ethernetip"], ethernetip={"host": "0.0.0.0"})
 
 
 def test_mtconnect_reports_live_machine_state() -> None:
