@@ -326,9 +326,11 @@ function selectDevice(name) {
   else swap();
 }
 
-/* ---- polling + rendering --------------------------------------------- */
+/* ---- state refresh + rendering --------------------------------------- */
 let lastListSig = "";
 let lastDetailSig = "";
+let refreshQueued = false;
+let refreshRunning = false;
 
 function renderList(force) {
   const sig =
@@ -361,6 +363,29 @@ async function refresh() {
   renderDetail(false);
 }
 
+function shouldRefreshFromEvent(ev) {
+  if (ev.kind === "state" || ev.kind === "snapshot") return true;
+  return ev.device === store.selected && ev.kind !== "rx" && ev.kind !== "tx";
+}
+
+function requestRefresh() {
+  refreshQueued = true;
+  if (refreshRunning) return;
+  void drainRefreshQueue();
+}
+
+async function drainRefreshQueue() {
+  refreshRunning = true;
+  try {
+    while (refreshQueued) {
+      refreshQueued = false;
+      await refresh();
+    }
+  } finally {
+    refreshRunning = false;
+  }
+}
+
 function setConn(state) {
   statusEl.dataset.conn = state;
   statusEl.querySelector(".status-text").textContent =
@@ -383,11 +408,10 @@ function connectStream() {
   source.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     logEl.push(ev);
-    if (ev.kind === "state" || ev.device === store.selected) refresh();
+    if (shouldRefreshFromEvent(ev)) requestRefresh();
   };
 }
 
 /* ---- boot ------------------------------------------------------------- */
 await refresh();
 connectStream();
-setInterval(refresh, 250);
