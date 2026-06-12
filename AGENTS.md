@@ -56,4 +56,4 @@ A class constructor should be responsible for initializing the object, not for d
 * Enforce Keyword-Only Arguments (*): When you do have multiple configuration options, use the * syntax in your Python signatures. This forces developers to write Config(doors=X) instead of Config(X), making call sites self-documenting.
 * No Magic Fallbacks in Core Logic: If a default value is needed (like ["main"]), it belongs in the data schema definition, not buried inside a for loop or an if/else block deep in the code.
 
-
+* An object should either do work or wire things together, but never both.If a class does work (like managing machine states, managing doors, writing to files), its constructor should only accept ready-to-use dependencies. It should never call complex factory methods or use the new keyword/instantiation for heavy components.
