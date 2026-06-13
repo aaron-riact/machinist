@@ -33,6 +33,16 @@ from .gcode import Interpreter
 from .state import MachineState, Toggle, machine_readers
 
 
+@dataclass(frozen=True, slots=True)
+class HaasNGCOptions:
+    doors: tuple[str, ...] = ("main",)
+    program_folder: str | None = None
+    dprint_port: int | None = None
+    mtconnect_port: int | None = None
+    smb: dict[str, Any] | None = None
+    opcua: dict[str, Any] | None = None
+
+
 @dataclass(slots=True)
 class ProgramLibrary:
     """Directory of G-code files exposed to the TUI and SMB share."""
@@ -56,16 +66,14 @@ class HaasNGC(Device):
     kind = "haas_ngc"
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any],
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: HaasNGCOptions,
     ) -> None:
         super().__init__(name, endpoint, bus)
-        opts = options or {}
-
         self.state = MachineState()
-        for d in opts.get("doors") or ["main"]:
+        for d in options.doors or ("main",):
             self.state.doors[d] = Toggle(name=d)
 
-        folder = opts.get("program_folder")
+        folder = options.program_folder
         root = Path(folder).expanduser() if folder else (
             Path.cwd() / ".machinist_programs" / name
         )
@@ -79,19 +87,20 @@ class HaasNGC(Device):
         )
 
         self._dprint: BroadcastServer | None = None
-        if (p := opts.get("dprint_port")) is not None:
-            self._dprint = BroadcastServer(endpoint.host, int(p))
+        if options.dprint_port is not None:
+            self._dprint = BroadcastServer(endpoint.host, options.dprint_port)
             self.state.dprint_subscribers.append(self._dprint.broadcast)
 
         self._mtc: MTConnectAgent | None = None
-        if (p := opts.get("mtconnect_port")) is not None:
+        if options.mtconnect_port is not None:
             self._mtc = MTConnectAgent(
-                endpoint.host, int(p),
+                endpoint.host, options.mtconnect_port,
                 render=lambda endpoint: render_mtconnect(self.state, endpoint),
             )
 
         self._smb = None
-        if (smb := opts.get("smb")) is not None:
+        if options.smb is not None:
+            smb = options.smb
             cfg = SmbConfig(
                 host=endpoint.host,
                 port=int(smb.get("port", 445)),
@@ -102,7 +111,8 @@ class HaasNGC(Device):
             self._smb = build_share(smb.get("backend", "impacket"), cfg)
 
         self._opcua = None
-        if (opc := opts.get("opcua")) is not None:
+        if options.opcua is not None:
+            opc = options.opcua
             from ...transport.opcua_server import OpcUaServer
 
             self._opcua = OpcUaServer(
@@ -188,4 +198,7 @@ def _spawn(target) -> threading.Thread:
 
 @register("haas_ngc", default_port=5051)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return HaasNGC(name, endpoint, bus, options)
+    opts = dict(options)
+    if "doors" in opts:
+        opts["doors"] = tuple(opts["doors"])
+    return HaasNGC(name, endpoint, bus, HaasNGCOptions(**opts))

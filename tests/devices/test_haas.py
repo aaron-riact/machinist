@@ -7,15 +7,22 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.machines.haas_ngc import HaasNGC
+from machinist.devices.machines.haas_ngc import HaasNGC, HaasNGCOptions
 
 from ..conftest import free_port, wait_running
 
 
 def _make(tmp_path, **opts) -> HaasNGC:
-    opts.setdefault("program_folder", str(tmp_path))
+    otp = HaasNGCOptions(
+        doors=tuple(opts.pop("doors", ["main"])),
+        program_folder=opts.pop("program_folder", str(tmp_path)),
+        dprint_port=opts.pop("dprint_port", None),
+        mtconnect_port=opts.pop("mtconnect_port", None),
+        smb=opts.pop("smb", None),
+        opcua=opts.pop("opcua", None),
+    )
     bus = EventBus()
-    d = HaasNGC("haas1", Endpoint("127.0.0.1", free_port()), bus, opts)
+    d = HaasNGC("haas1", Endpoint("127.0.0.1", free_port()), bus, otp)
     d.start()
     wait_running(d)
     return d
