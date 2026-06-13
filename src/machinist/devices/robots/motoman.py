@@ -29,6 +29,7 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...transport.framing import CRLF
 from ...transport.line_server import Reply, SessionHandler
 from .arm import ArmOptions, ArmMode, RobotArm, arm_from_options
@@ -176,4 +177,7 @@ def _state_word(mode: ArmMode) -> str:
 
 @register("motoman_nx100", default_port=MOTOMAN_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return MotomanNX100(name, endpoint, bus, ArmOptions(**options))
+    raw = dict(options)
+    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
+    kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
+    return MotomanNX100(name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw))

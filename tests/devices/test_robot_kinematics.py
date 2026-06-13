@@ -11,21 +11,25 @@ pytest.importorskip("numpy")
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.robots.arm import ArmOptions, arm_from_options
+from machinist.devices.robots.arm import ArmOptions, DHParams, KinematicsOptions, arm_from_options
 from machinist.devices.robots.ur import URDashboardServer
+
+
+def _ur5_dh() -> DHParams:
+    return DHParams(
+        a=(0, -0.425, -0.3922, 0, 0, 0),
+        d=(0.089159, 0, 0, 0.10915, 0.09465, 0.0823),
+        alpha=(math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0),
+    )
 
 
 def test_robot_uses_configured_kinematics_backend() -> None:
     bus = EventBus()
     options = ArmOptions(
-        kinematics={
-            "backend": "dh",
-            "dh_params": {
-                "a": [0, -0.425, -0.3922, 0, 0, 0],
-                "d": [0.089159, 0, 0, 0.10915, 0.09465, 0.0823],
-                "alpha": [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0],
-            },
-        },
+        kinematics=KinematicsOptions(
+            backend="dh",
+            dh=_ur5_dh(),
+        ),
     )
     ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options)
     try:
@@ -40,11 +44,7 @@ def test_arm_accepts_top_level_dh_options() -> None:
     arm = arm_from_options(
         ArmOptions(
             joint_count=6,
-            dh_params={
-                "a": [0, -0.425, -0.3922, 0, 0, 0],
-                "d": [0.089159, 0, 0, 0.10915, 0.09465, 0.0823],
-                "alpha": [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0],
-            },
+            dh_params=_ur5_dh(),
         )
     )
     try:

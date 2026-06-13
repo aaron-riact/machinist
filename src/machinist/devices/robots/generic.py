@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.registry import register
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...core.types import Endpoint
 from ...srci import SrciServer
 from ...transport.message import FrameHandler, MessageServer, open_server
@@ -148,11 +149,13 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     raw_opcua = opts.pop("opcua", None)
     opcua_opts = OpcUaClientOptions(**raw_opcua) if raw_opcua else None
     opt = RobotDeviceOptions(opcua=opcua_opts, **opts)
+    dh = DHParams(**opt.dh_params) if opt.dh_params is not None else None
+    kin = KinematicsOptions(**opt.kinematics) if opt.kinematics is not None else None
     arm = arm_from_options(ArmOptions(
         joint_count=opt.joint_count,
-        kinematics=opt.kinematics,
+        kinematics=kin,
         backend=opt.backend,
-        dh_params=opt.dh_params,
+        dh_params=dh,
         urdf=opt.urdf,
     ))
     server = open_server(opt.transport, endpoint.host, endpoint.port)

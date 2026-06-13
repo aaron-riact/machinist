@@ -21,6 +21,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
+from ...kinematics.api import DHParams, KinematicsOptions
 from .arm import ArmOptions, RobotArm, arm_from_options
 
 FANUC_PORT = 18735  # fanucpy default Karel port
@@ -102,11 +103,13 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
 @register("fanuc_r30ib", default_port=FANUC_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
     opts = FanucKarelServerOptions(**options)
+    dh = DHParams(**opts.dh_params) if opts.dh_params is not None else None
+    kin = KinematicsOptions(**opts.kinematics) if opts.kinematics is not None else None
     arm = arm_from_options(ArmOptions(
         joint_count=opts.joint_count,
-        kinematics=opts.kinematics,
+        kinematics=kin,
         backend=opts.backend,
-        dh_params=opts.dh_params,
+        dh_params=dh,
         urdf=opts.urdf,
     ))
     return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name))

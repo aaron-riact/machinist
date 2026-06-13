@@ -25,6 +25,7 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...transport.framing import PAREN
 from .arm import ArmOptions, RobotArm, arm_from_options
 
@@ -100,4 +101,7 @@ def _ok(verb: str, args: str, *, value: str = "") -> str:
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return DobotDashboard(name, endpoint, bus, ArmOptions(**options))
+    raw = dict(options)
+    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
+    kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
+    return DobotDashboard(name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw))

@@ -17,7 +17,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from pathlib import Path
-from typing import Any
 
 from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
 
@@ -45,9 +44,9 @@ class ArmOptions:
     """
 
     joint_count: int = JOINT_COUNT_DEFAULT
-    kinematics: dict[str, Any] | None = None
+    kinematics: KinematicsOptions | None = None
     backend: str | None = None
-    dh_params: dict[str, list[float]] | None = None
+    dh_params: DHParams | None = None
     urdf: str | None = None
 Pose = tuple[float, float, float, float, float, float]  # x,y,z,rx,ry,rz
 Joints = tuple[float, ...]
@@ -226,32 +225,13 @@ def arm_from_options(options: ArmOptions) -> RobotArm:
     return RobotArm(joint_count=kin_opts.joint_count, kinematics=build_kinematics(kin_opts))
 
 
-def _parse_dh(raw: dict[str, list[float]]) -> DHParams:
-    return DHParams(
-        a=tuple(raw["a"]),
-        d=tuple(raw["d"]),
-        alpha=tuple(raw["alpha"]),
-        theta_offset=tuple(raw.get("theta_offset", ())),
-    )
-
-
 def _kinematics_options(options: ArmOptions) -> KinematicsOptions:
     if options.kinematics is not None:
-        d = options.kinematics
-        dh = _parse_dh(d["dh_params"]) if "dh_params" in d else None
-        urdf_path = Path(d["urdf"]) if "urdf" in d else None
-        return KinematicsOptions(
-            joint_count=d.get("joint_count", options.joint_count),
-            backend=d.get("backend"),
-            dh=dh,
-            urdf_path=urdf_path,
-            robot_type=d.get("robot_type"),
-        )
-    dh = _parse_dh(options.dh_params) if options.dh_params is not None else None
+        return options.kinematics
     return KinematicsOptions(
         joint_count=options.joint_count,
         backend=options.backend,
-        dh=dh,
+        dh=options.dh_params,
         urdf_path=Path(options.urdf) if options.urdf else None,
     )
 

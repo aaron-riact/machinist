@@ -24,6 +24,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from ...kinematics.api import DHParams, KinematicsOptions
+
 from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
@@ -114,4 +116,7 @@ class URDashboardServer(LineServerDevice):
 
 @register("ur_dashboard", default_port=UR_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return URDashboardServer(name, endpoint, bus, ArmOptions(**options))
+    raw = dict(options)
+    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
+    kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
+    return URDashboardServer(name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw))
