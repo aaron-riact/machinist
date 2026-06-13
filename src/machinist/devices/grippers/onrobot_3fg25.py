@@ -59,18 +59,13 @@ class OnRobot3FG25(Device):
     DEFAULT_PORT = 502
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: OnRobot3FG25Options
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: OnRobot3FG25Options,
+        *, state: _State,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._settings = options
-        self._state = _State(actual_tenths=int(self._settings.initial_diameter_mm * 10))
-        self._state.target_tenths = self._state.actual_tenths
-        self._server = HoldingRegisterServer(
-            host=endpoint.host,
-            port=endpoint.port,
-            on_read=self._on_read,
-            on_write=self._on_write,
-        )
+        self._state = state
+        self._server: HoldingRegisterServer | None = None
         self._mover: threading.Thread | None = None
 
     def _on_read(self, address: int) -> int:
@@ -138,4 +133,14 @@ class OnRobot3FG25(Device):
 
 @register("onrobot_3fg25", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return OnRobot3FG25(name, endpoint, bus, OnRobot3FG25Options(**options))
+    opts = OnRobot3FG25Options(**options)
+    state = _State(actual_tenths=int(opts.initial_diameter_mm * 10))
+    state.target_tenths = state.actual_tenths
+    device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
+    device._server = HoldingRegisterServer(
+        host=endpoint.host,
+        port=endpoint.port,
+        on_read=device._on_read,
+        on_write=device._on_write,
+    )
+    return device
