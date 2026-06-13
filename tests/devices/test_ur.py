@@ -19,7 +19,7 @@ def _send(host: str, port: int, msg: str) -> str:
 def test_dashboard_basic_commands() -> None:
     port = free_port()
     bus = EventBus()
-    device = URDashboardServer("ur1", Endpoint("127.0.0.1", port), bus, options=ArmOptions())
+    device = URDashboardServer("ur1", Endpoint("127.0.0.1", port), bus, ArmOptions())
     device.start()
     try:
         wait_running(device)

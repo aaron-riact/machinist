@@ -79,8 +79,8 @@ class HaasNGC(Device):
     kind = "haas_ngc"
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, *,
-        options: HaasNGCOptions, dprint: BroadcastServer,
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: HaasNGCOptions,
+        *, dprint: BroadcastServer | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.state = MachineState()
@@ -185,7 +185,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         opts["opcua"] = OpcUaDeviceOptions(**opts["opcua"]) if opts["opcua"] else None
     opt = HaasNGCOptions(**opts)
     dprint = BroadcastServer(endpoint.host, opt.dprint_port) if opt.dprint_port is not None else None
-    device = HaasNGC(name, endpoint, bus, options=opt, dprint=dprint)
+    device = HaasNGC(name, endpoint, bus, opt, dprint=dprint)
     if dprint is not None:
         device.state.dprint_subscribers.append(dprint.broadcast)
     device._mdc = LineServer(

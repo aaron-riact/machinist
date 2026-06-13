@@ -39,7 +39,7 @@ class DobotDashboard(LineServerDevice):
     FRAMER = PAREN
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, *, options: ArmOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
@@ -100,4 +100,4 @@ def _ok(verb: str, args: str, *, value: str = "") -> str:
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return DobotDashboard(name, endpoint, bus, options=ArmOptions(**options))
+    return DobotDashboard(name, endpoint, bus, ArmOptions(**options))

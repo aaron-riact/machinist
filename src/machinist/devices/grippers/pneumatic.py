@@ -31,8 +31,8 @@ class PneumaticGripper(Device):
     kind = "pneumatic_gripper"
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, *,
-        options: PneumaticGripperOptions, io: SignalBank,
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: PneumaticGripperOptions,
+        *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._settings = options
@@ -79,4 +79,4 @@ class PneumaticGripper(Device):
 @register("pneumatic_gripper", default_port=0)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = PneumaticGripperOptions(**options)
-    return PneumaticGripper(name, endpoint, bus, options=opts, io=SignalBank(owner=name))
+    return PneumaticGripper(name, endpoint, bus, opts, io=SignalBank(owner=name))

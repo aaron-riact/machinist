@@ -34,8 +34,8 @@ class WeidmullerUR20(Device):
     DEFAULT_PORT = 502
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, *,
-        options: WeidmullerUR20Options, io: SignalBank,
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: WeidmullerUR20Options,
+        *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._cfg = options
@@ -90,7 +90,7 @@ class WeidmullerUR20(Device):
 @register("weidmuller_ur20", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = WeidmullerUR20Options(**options)
-    device = WeidmullerUR20(name, endpoint, bus, options=opts, io=SignalBank(owner=name))
+    device = WeidmullerUR20(name, endpoint, bus, opts, io=SignalBank(owner=name))
     device._server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,

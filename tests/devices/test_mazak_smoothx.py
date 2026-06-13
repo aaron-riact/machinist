@@ -80,7 +80,7 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
         mtconnect=mtconnect_opts,
         **kw,
     )
-    device = MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), options=opts, io=SignalBank(owner="mazak1"))
+    device = MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts, io=SignalBank(owner="mazak1"))
     if "ethernetip" in device._interfaces:
         device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", 0), opts)
     if mtconnect_opts is not None:
@@ -132,7 +132,7 @@ def test_write_input_block_emits_snapshot_event_once_per_change() -> None:
         "mazak1",
         Endpoint("127.0.0.1", 0),
         bus,
-        options=MazakSmoothXOptions(interfaces=["io"]),
+        MazakSmoothXOptions(interfaces=["io"]),
         io=SignalBank(owner="mazak1"),
     )
     events.clear()
@@ -152,7 +152,7 @@ def test_internal_output_bit_changes_emit_snapshot_event() -> None:
         "mazak1",
         Endpoint("127.0.0.1", 0),
         bus,
-        options=MazakSmoothXOptions(interfaces=["io"]),
+        MazakSmoothXOptions(interfaces=["io"]),
         io=SignalBank(owner="mazak1"),
     )
     events.clear()
@@ -275,7 +275,7 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
-        options=opts,
+        opts,
         io=SignalBank(owner="mazak1"),
     )
     device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts)
@@ -327,7 +327,7 @@ def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
-        options=opts,
+        opts,
         io=SignalBank(owner="mazak1"),
     )
     device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts)

@@ -43,8 +43,8 @@ class FanucKarelServer(LineServerDevice):
     FRAMER = NEWLINE
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, *,
-        options: FanucKarelServerOptions, arm: RobotArm, io: SignalBank,
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: FanucKarelServerOptions,
+        *, arm: RobotArm, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm
@@ -109,4 +109,4 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         dh_params=opts.dh_params,
         urdf=opts.urdf,
     ))
-    return FanucKarelServer(name, endpoint, bus, options=opts, arm=arm, io=SignalBank(owner=name))
+    return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name))

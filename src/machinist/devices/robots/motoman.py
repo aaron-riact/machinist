@@ -129,7 +129,7 @@ class MotomanNX100(LineServerDevice):
     FRAMER = CRLF
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, *, options: ArmOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
@@ -176,4 +176,4 @@ def _state_word(mode: ArmMode) -> str:
 
 @register("motoman_nx100", default_port=MOTOMAN_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return MotomanNX100(name, endpoint, bus, options=ArmOptions(**options))
+    return MotomanNX100(name, endpoint, bus, ArmOptions(**options))
