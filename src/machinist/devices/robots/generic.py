@@ -43,6 +43,11 @@ def protocols() -> tuple[str, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class OpcUaClientOptions:
+    port: int = 4840
+
+
+@dataclass(frozen=True, slots=True)
 class RobotDeviceOptions:
     joint_count: int = 6
     kinematics: dict[str, Any] | None = None
@@ -51,7 +56,7 @@ class RobotDeviceOptions:
     urdf: str | None = None
     protocol: str = "srci"
     transport: str = "tcp"
-    opcua: dict[str, Any] | None = None
+    opcua: OpcUaClientOptions | None = None
 
 
 class RobotDevice(Device):
@@ -128,17 +133,16 @@ class RobotDevice(Device):
 
 
 def _maybe_opcua(
-    name: str, host: str, config: object, arm: RobotArm
+    name: str, host: str, config: OpcUaClientOptions | None, arm: RobotArm
 ) -> "OpcUaServer | None":
     """Build an OPC-UA server if the device config opts in, else None."""
     if not config:
         return None
     from ...transport.opcua_server import OpcUaServer  # noqa: PLC0415  (optional dep)
 
-    opts = config if isinstance(config, dict) else {}
     return OpcUaServer(
         host,
-        int(opts.get("port", 4840)),
+        config.port,
         device_name=name,
         readers=arm_readers(arm),
     )
@@ -146,4 +150,7 @@ def _maybe_opcua(
 
 @register("robot", default_port=15001)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return RobotDevice(name, endpoint, bus, RobotDeviceOptions(**options))
+    opts = dict(options)
+    raw_opcua = opts.pop("opcua", None)
+    opcua_opts = OpcUaClientOptions(**raw_opcua) if raw_opcua else None
+    return RobotDevice(name, endpoint, bus, RobotDeviceOptions(opcua=opcua_opts, **opts))
