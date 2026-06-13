@@ -8,6 +8,7 @@ import pytest
 
 from machinist.core.config import DeviceConfig, SystemConfig
 from machinist.core.events import EventBus
+from machinist.core.io import SignalBank
 from machinist.core.types import Endpoint
 from machinist.core.world import WorldBuilder
 from machinist.devices.machines.mazak_smoothx import (
@@ -19,12 +20,14 @@ from machinist.devices.machines.mazak_smoothx import (
     OUTPUT_SIGNAL_POINTS,
     MazakSmoothXEmulator,
     MazakSmoothXOptions,
+    _build_ethernetip_transport,
 )
 from machinist.transport.ethernetip import (
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
     EtherNetIPScannerConfig,
 )
+from machinist.transport.mtconnect import MTConnectAgent, render_mtconnect
 
 from ..conftest import free_port, wait_running
 
@@ -77,7 +80,15 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
         mtconnect=mtconnect_opts,
         **kw,
     )
-    return MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts)
+    device = MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts, io=SignalBank(owner="mazak1"))
+    if "ethernetip" in device._interfaces:
+        device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", 0), opts)
+    if mtconnect_opts is not None:
+        device._mtconnect = MTConnectAgent(
+            "127.0.0.1", mtconnect_opts.port,
+            render=lambda ep: render_mtconnect(device.state, ep),
+        )
+    return device
 
 
 def test_manual_bit_mapping_matches_manual_offsets() -> None:
@@ -122,6 +133,7 @@ def test_write_input_block_emits_snapshot_event_once_per_change() -> None:
         Endpoint("127.0.0.1", 0),
         bus,
         MazakSmoothXOptions(interfaces=["io"]),
+        io=SignalBank(owner="mazak1"),
     )
     events.clear()
 
@@ -141,6 +153,7 @@ def test_internal_output_bit_changes_emit_snapshot_event() -> None:
         Endpoint("127.0.0.1", 0),
         bus,
         MazakSmoothXOptions(interfaces=["io"]),
+        io=SignalBank(owner="mazak1"),
     )
     events.clear()
 
@@ -249,16 +262,23 @@ def test_world_builds_mazak_smoothx_device() -> None:
 def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
     tcp_port = free_port()
     udp_port = free_port()
+    opts = MazakSmoothXOptions(
+        ethernetip={"udp_port": udp_port},
+        ethernetip_adapter_config=EtherNetIPAdapterConfig(
+            host="127.0.0.1", port=tcp_port, udp_port=udp_port,
+            output_length=BLOCK_SIZE, input_length=BLOCK_SIZE,
+        ),
+        heartbeat_timeout_seconds=1.0,
+        heartbeat_interval_seconds=0.05,
+    )
     device = MazakSmoothXEmulator(
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
-        MazakSmoothXOptions(
-            ethernetip={"udp_port": udp_port},
-            heartbeat_timeout_seconds=1.0,
-            heartbeat_interval_seconds=0.05,
-        ),
+        opts,
+        io=SignalBank(owner="mazak1"),
     )
+    device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts)
     scanner = EtherNetIPScanner(
         EtherNetIPScannerConfig(
             host="127.0.0.1",
@@ -293,17 +313,24 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
 def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
     tcp_port = free_port()
     udp_port = free_port()
+    opts = MazakSmoothXOptions(
+        interfaces=["ethernetip"],
+        ethernetip={"udp_port": udp_port},
+        ethernetip_adapter_config=EtherNetIPAdapterConfig(
+            host="127.0.0.1", port=tcp_port, udp_port=udp_port,
+            output_length=BLOCK_SIZE, input_length=BLOCK_SIZE,
+        ),
+        heartbeat_timeout_seconds=0.15,
+        heartbeat_interval_seconds=0.05,
+    )
     device = MazakSmoothXEmulator(
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
-        MazakSmoothXOptions(
-            interfaces=["ethernetip"],
-            ethernetip={"udp_port": udp_port},
-            heartbeat_timeout_seconds=0.15,
-            heartbeat_interval_seconds=0.05,
-        ),
+        opts,
+        io=SignalBank(owner="mazak1"),
     )
+    device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts)
     device.start()
     try:
         wait_running(device)

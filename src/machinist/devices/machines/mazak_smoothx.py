@@ -176,6 +176,7 @@ class MazakSmoothXEmulator(Device):
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSmoothXOptions,
+        *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.state = MachineState()
@@ -212,15 +213,12 @@ class MazakSmoothXEmulator(Device):
         self._heartbeat_expected_since = 0.0
         self._last_heartbeat_toggle_at = -self._heartbeat_interval
 
-        self.io = SignalBank(owner=name)
+        self.io = io
         self._declare_signals()
 
-        self._mtconnect = self._build_mtconnect(endpoint.host, options)
-
+        self._mtconnect: MTConnectAgent | None = None
         self._ethernetip: EtherNetIPAdapter | EtherNetIPScanner | None = None
         self._next_connect_attempt = 0.0
-        if "ethernetip" in self._interfaces:
-            self._ethernetip = _build_ethernetip_transport(endpoint, options)
 
         self._initialize_defaults()
 
@@ -953,4 +951,14 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
                 o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )
-    return MazakSmoothXEmulator(name, endpoint, bus, MazakSmoothXOptions(**opts))
+    options_obj = MazakSmoothXOptions(**opts)
+    device = MazakSmoothXEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
+    if options_obj.mtconnect is not None:
+        device._mtconnect = MTConnectAgent(
+            endpoint.host,
+            options_obj.mtconnect.port,
+            render=lambda render_endpoint: render_mtconnect(device.state, render_endpoint),
+        )
+    if "ethernetip" in device._interfaces:
+        device._ethernetip = _build_ethernetip_transport(endpoint, options_obj)
+    return device
