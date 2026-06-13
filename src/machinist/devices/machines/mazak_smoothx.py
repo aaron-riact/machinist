@@ -907,6 +907,22 @@ def _build_scanner(
     return transport_factory(config, client_factory=client_factory)
 
 
+def make_device(
+    name: str, endpoint: Endpoint, bus: EventBus, options_obj: MazakSmoothXOptions,
+) -> MazakSmoothXEmulator:
+    """Build a :class:`MazakSmoothXEmulator` with full service wiring. Does NOT start services."""
+    device = MazakSmoothXEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
+    if options_obj.mtconnect is not None:
+        device._mtconnect = MTConnectAgent(
+            endpoint.host,
+            options_obj.mtconnect.port,
+            render=lambda render_endpoint: render_mtconnect(device.state, render_endpoint),
+        )
+    if "ethernetip" in device._interfaces:
+        device._ethernetip = _build_ethernetip_transport(endpoint, options_obj)
+    return device
+
+
 @register("mazak_smoothx", default_port=44818)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = dict(options)
@@ -952,13 +968,4 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )
     options_obj = MazakSmoothXOptions(**opts)
-    device = MazakSmoothXEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
-    if options_obj.mtconnect is not None:
-        device._mtconnect = MTConnectAgent(
-            endpoint.host,
-            options_obj.mtconnect.port,
-            render=lambda render_endpoint: render_mtconnect(device.state, render_endpoint),
-        )
-    if "ethernetip" in device._interfaces:
-        device._ethernetip = _build_ethernetip_transport(endpoint, options_obj)
-    return device
+    return make_device(name, endpoint, bus, options_obj)

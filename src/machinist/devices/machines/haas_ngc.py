@@ -174,6 +174,49 @@ def _spawn(target) -> threading.Thread:
     return t
 
 
+def make_device(
+    name: str,
+    endpoint: Endpoint,
+    bus: EventBus,
+    options: HaasNGCOptions,
+    *,
+    dprint: BroadcastServer | None = None,
+) -> HaasNGC:
+    """Build a :class:`HaasNGC` with full service wiring. Does NOT start services."""
+    device = HaasNGC(name, endpoint, bus, options, dprint=dprint)
+    if dprint is not None:
+        device.state.dprint_subscribers.append(dprint.broadcast)
+    device._mdc = LineServer(
+        endpoint.host, endpoint.port,
+        session_factory=stateless(device._handle_mdc),
+        framer=CRLF,
+    )
+    if options.mtconnect_port is not None:
+        device._mtc = MTConnectAgent(
+            endpoint.host, options.mtconnect_port,
+            render=lambda ep: render_mtconnect(device.state, ep),
+        )
+    if options.smb is not None:
+        smb_opts = options.smb
+        cfg = SmbConfig(
+            host=endpoint.host,
+            port=smb_opts.port,
+            share_name=smb_opts.share_name,
+            root=device.programs.root,
+            smb1=smb_opts.smb1,
+        )
+        device._smb = build_share(smb_opts.backend, cfg)
+    if options.opcua is not None:
+        from ...transport.opcua_server import OpcUaServer
+
+        device._opcua = OpcUaServer(
+            endpoint.host, options.opcua.port,
+            device_name=name,
+            readers=machine_readers(device.state),
+        )
+    return device
+
+
 @register("haas_ngc", default_port=5051)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = dict(options)
@@ -185,34 +228,4 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         opts["opcua"] = OpcUaDeviceOptions(**opts["opcua"]) if opts["opcua"] else None
     opt = HaasNGCOptions(**opts)
     dprint = BroadcastServer(endpoint.host, opt.dprint_port) if opt.dprint_port is not None else None
-    device = HaasNGC(name, endpoint, bus, opt, dprint=dprint)
-    if dprint is not None:
-        device.state.dprint_subscribers.append(dprint.broadcast)
-    device._mdc = LineServer(
-        endpoint.host, endpoint.port,
-        session_factory=stateless(device._handle_mdc),
-        framer=CRLF,
-    )
-    if opt.mtconnect_port is not None:
-        device._mtc = MTConnectAgent(
-            endpoint.host, opt.mtconnect_port,
-            render=lambda ep: render_mtconnect(device.state, ep),
-        )
-    if opt.smb is not None:
-        smb_opts = opt.smb
-        cfg = SmbConfig(
-            host=endpoint.host,
-            port=smb_opts.port,
-            share_name=smb_opts.share_name,
-            root=device.programs.root,
-            smb1=smb_opts.smb1,
-        )
-        device._smb = build_share(smb_opts.backend, cfg)
-    if opt.opcua is not None:
-        from ...transport.opcua_server import OpcUaServer
-        device._opcua = OpcUaServer(
-            endpoint.host, opt.opcua.port,
-            device_name=name,
-            readers=machine_readers(device.state),
-        )
-    return device
+    return make_device(name, endpoint, bus, opt, dprint=dprint)

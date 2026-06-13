@@ -21,14 +21,13 @@ from machinist.devices.machines.mazak_smoothx import (
     MazakSmoothXEmulator,
     MazakSmoothXOptions,
     _build_ethernetip_transport,
+    make_device,
 )
 from machinist.transport.ethernetip import (
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
     EtherNetIPScannerConfig,
 )
-from machinist.transport.mtconnect import MTConnectAgent, render_mtconnect
-
 from ..conftest import free_port, wait_running
 
 
@@ -80,15 +79,7 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
         mtconnect=mtconnect_opts,
         **kw,
     )
-    device = MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts, io=SignalBank(owner="mazak1"))
-    if "ethernetip" in device._interfaces:
-        device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", 0), opts)
-    if mtconnect_opts is not None:
-        device._mtconnect = MTConnectAgent(
-            "127.0.0.1", mtconnect_opts.port,
-            render=lambda ep: render_mtconnect(device.state, ep),
-        )
-    return device
+    return make_device("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts)
 
 
 def test_manual_bit_mapping_matches_manual_offsets() -> None:
