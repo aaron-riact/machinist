@@ -16,7 +16,7 @@ from ...core.device import Device
 from ...core.events import EventBus
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...transport.iolink_http_master import IOLinkHttpMaster, IOLinkPort
+from ...transport.iolink_http_master import IOLinkHttpMaster, IOLinkPort, ProcessData
 
 
 @dataclass(slots=True)
@@ -50,23 +50,21 @@ class ZimmerGED6000IL(Device, IOLinkPort):
 
     # ----- IOLinkPort protocol ---------------------------------------
 
-    def read_process_data(self) -> dict[str, Any]:
+    def read_process_data(self) -> ProcessData:
         with self._state_lock:
-            return {
-                "diameter_mm": self._state.diameter_mm,
-                "target_mm": self._state.target_mm,
-                "grip_force_n": self._state.grip_force_n,
-                "moving": self._state.moving,
-            }
+            return ProcessData(
+                diameter_mm=self._state.diameter_mm,
+                target_mm=self._state.target_mm,
+                grip_force_n=self._state.grip_force_n,
+                moving=self._state.moving,
+            )
 
-    def write_process_data(self, data: dict[str, Any]) -> None:
+    def write_process_data(self, data: ProcessData) -> None:
         with self._state_lock:
-            if "target_mm" in data:
-                self._state.target_mm = float(data["target_mm"])
-                self._state.moving = self._state.target_mm != self._state.diameter_mm
-            if "grip_force_n" in data:
-                self._state.grip_force_n = int(data["grip_force_n"])
-        self.emit("command", **data)
+            self._state.target_mm = data.target_mm
+            self._state.moving = data.target_mm != self._state.diameter_mm
+            self._state.grip_force_n = data.grip_force_n
+        self.emit("command", target_mm=data.target_mm, grip_force_n=data.grip_force_n)
         if self._state.moving:
             threading.Thread(target=self._settle, daemon=True).start()
 

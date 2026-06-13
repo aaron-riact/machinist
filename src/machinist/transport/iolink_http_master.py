@@ -16,13 +16,24 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
 
 
+@dataclass(frozen=True, slots=True)
+class ProcessData:
+    """Typed schema for IO-Link process data."""
+
+    diameter_mm: float = 0.0
+    target_mm: float = 0.0
+    grip_force_n: int = 0
+    moving: bool = False
+
+
 class IOLinkPort(Protocol):
-    def read_process_data(self) -> dict[str, Any]: ...
-    def write_process_data(self, data: dict[str, Any]) -> None: ...
+    def read_process_data(self) -> ProcessData: ...
+    def write_process_data(self, data: ProcessData) -> None: ...
 
 
 class IOLinkHttpMaster:
@@ -43,7 +54,13 @@ class IOLinkHttpMaster:
 
             def do_GET(self) -> None:  # noqa: N802 (stdlib API)
                 if self.path.endswith("/pd"):
-                    self._reply(200, device.read_process_data())
+                    pd = device.read_process_data()
+                    self._reply(200, {
+                        "diameter_mm": pd.diameter_mm,
+                        "target_mm": pd.target_mm,
+                        "grip_force_n": pd.grip_force_n,
+                        "moving": pd.moving,
+                    })
                 else:
                     self._reply(404, {"error": "not found"})
 
@@ -56,12 +73,12 @@ class IOLinkHttpMaster:
                     self._reply(400, {"error": "invalid json"})
                     return
                 if self.path.endswith("/pd"):
-                    device.write_process_data(data)
+                    device.write_process_data(ProcessData(**data))
                     self._reply(200, {"status": "ok"})
                 else:
                     self._reply(404, {"error": "not found"})
 
-            def _reply(self, status: int, payload: dict[str, Any]) -> None:
+            def _reply(self, status: int, payload: dict[str, object]) -> None:
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
