@@ -39,8 +39,8 @@ class ZimmerGED6000IL(Device, IOLinkPort):
     DEFAULT_PORT = 80
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: ZimmerGED6000ILOptions,
-        *, master: IOLinkHttpMaster | None = None,
+        self, name: str, endpoint: Endpoint, bus: EventBus, *,
+        options: ZimmerGED6000ILOptions, master: IOLinkHttpMaster | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._state = _State(diameter_mm=options.initial_diameter_mm)
@@ -93,6 +93,6 @@ class ZimmerGED6000IL(Device, IOLinkPort):
 @register("zimmer_ged6000il", default_port=80)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = ZimmerGED6000ILOptions(**options)
-    device = ZimmerGED6000IL(name, endpoint, bus, opts)
+    device = ZimmerGED6000IL(name, endpoint, bus, options=opts)
     device._master = IOLinkHttpMaster(host=endpoint.host, port=endpoint.port, port_device=device)
     return device

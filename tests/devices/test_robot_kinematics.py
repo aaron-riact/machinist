@@ -27,7 +27,7 @@ def test_robot_uses_configured_kinematics_backend() -> None:
             },
         },
     )
-    ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options)
+    ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options=options)
     try:
         pose = ur.arm._kinematics.forward((0.0,) * 6)  # noqa: SLF001
         # Non-identity pose because DH parameters are substantial.

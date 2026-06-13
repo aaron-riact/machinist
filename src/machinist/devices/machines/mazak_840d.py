@@ -64,8 +64,8 @@ class MazakSinumerik840D(Device):
     DEFAULT_PORT = 102
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSinumerik840DOptions,
-        *, io: SignalBank, store: S7Store, server: S7Server,
+        self, name: str, endpoint: Endpoint, bus: EventBus, *,
+        options: MazakSinumerik840DOptions, io: SignalBank, store: S7Store, server: S7Server,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._maps = options.mappings
@@ -162,4 +162,4 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     store = S7Store()
     io = SignalBank(owner=name)
     server = S7Server(host=endpoint.host, port=endpoint.port, store=store, backend=opt.s7_backend)
-    return MazakSinumerik840D(name, endpoint, bus, opt, io=io, store=store, server=server)
+    return MazakSinumerik840D(name, endpoint, bus, options=opt, io=io, store=store, server=server)

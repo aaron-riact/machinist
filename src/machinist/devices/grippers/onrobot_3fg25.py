@@ -59,8 +59,8 @@ class OnRobot3FG25(Device):
     DEFAULT_PORT = 502
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: OnRobot3FG25Options,
-        *, state: _State,
+        self, name: str, endpoint: Endpoint, bus: EventBus, *,
+        options: OnRobot3FG25Options, state: _State,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._settings = options
@@ -136,7 +136,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     opts = OnRobot3FG25Options(**options)
     state = _State(actual_tenths=int(opts.initial_diameter_mm * 10))
     state.target_tenths = state.actual_tenths
-    device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
+    device = OnRobot3FG25(name, endpoint, bus, options=opts, state=state)
     device._server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,

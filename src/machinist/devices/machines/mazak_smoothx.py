@@ -175,8 +175,8 @@ class MazakSmoothXEmulator(Device):
     output_text_fields = OUTPUT_TEXT_FIELDS
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSmoothXOptions,
-        *, io: SignalBank,
+        self, name: str, endpoint: Endpoint, bus: EventBus, *,
+        options: MazakSmoothXOptions, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.state = MachineState()
@@ -952,7 +952,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )
     options_obj = MazakSmoothXOptions(**opts)
-    device = MazakSmoothXEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
+    device = MazakSmoothXEmulator(name, endpoint, bus, options=options_obj, io=SignalBank(owner=name))
     if options_obj.mtconnect is not None:
         device._mtconnect = MTConnectAgent(
             endpoint.host,

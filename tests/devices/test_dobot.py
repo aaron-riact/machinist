@@ -15,7 +15,7 @@ from ..conftest import free_port, wait_running
 @pytest.fixture
 def dobot() -> DobotDashboard:
     bus = EventBus()
-    d = DobotDashboard("dobot1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions())
+    d = DobotDashboard("dobot1", Endpoint("127.0.0.1", free_port()), bus, options=ArmOptions())
     d.start()
     try:
         wait_running(d)

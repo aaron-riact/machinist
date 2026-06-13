@@ -15,7 +15,7 @@ from ..conftest import free_port, wait_running
 @pytest.fixture
 def motoman() -> MotomanNX100:
     bus = EventBus()
-    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions())
+    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, options=ArmOptions())
     m.start()
     try:
         wait_running(m)

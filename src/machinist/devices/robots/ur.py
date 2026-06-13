@@ -50,7 +50,7 @@ class URDashboardServer(LineServerDevice):
     FRAMER = NEWLINE
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, *, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
@@ -114,4 +114,4 @@ class URDashboardServer(LineServerDevice):
 
 @register("ur_dashboard", default_port=UR_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return URDashboardServer(name, endpoint, bus, ArmOptions(**options))
+    return URDashboardServer(name, endpoint, bus, options=ArmOptions(**options))

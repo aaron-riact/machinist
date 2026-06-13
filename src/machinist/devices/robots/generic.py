@@ -66,8 +66,9 @@ class RobotDevice(Device):
     DEFAULT_PORT = 15001
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: RobotDeviceOptions,
-        *, arm: RobotArm, server: MessageServer, opcua: OpcUaServer | None = None,
+        self, name: str, endpoint: Endpoint, bus: EventBus, *,
+        options: RobotOptions, arm: RobotArm, server: MessageServer | None = None,
+        opcua: OpcUaServer | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm
@@ -157,4 +158,4 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     ))
     server = open_server(opt.transport, endpoint.host, endpoint.port)
     opcua = _maybe_opcua(name, endpoint.host, opt.opcua, arm)
-    return RobotDevice(name, endpoint, bus, opt, arm=arm, server=server, opcua=opcua)
+    return RobotDevice(name, endpoint, bus, options=opt, arm=arm, server=server, opcua=opcua)

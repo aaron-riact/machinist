@@ -34,7 +34,7 @@ def _make(tmp_path, **opts) -> HaasNGC:
         opcua=raw_opcua,
     )
     bus = EventBus()
-    d = HaasNGC("haas1", Endpoint(host, port), bus, otp, dprint=dprint)
+    d = HaasNGC("haas1", Endpoint(host, port), bus, options=otp, dprint=dprint)
     if dprint is not None:
         d.state.dprint_subscribers.append(dprint.broadcast)
     d._mdc = LineServer(host, port, session_factory=stateless(d._handle_mdc), framer=CRLF)
