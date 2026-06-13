@@ -12,6 +12,9 @@ from threading import RLock
 from typing import Any
 
 from eeip import ConnectionType, EEIPClient, RealTimeFormat
+from typing import Any, Union
+
+_EnumValue = Union[RealTimeFormat, ConnectionType]
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,7 +407,7 @@ class EtherNetIPAdapter:
             self._stop.wait(interval)
 
 
-def _enum_value(mapping: dict[str, object], raw: str, field: str) -> object:
+def _enum_value(mapping: dict[str, _EnumValue], raw: str, field: str) -> _EnumValue:
     key = raw.strip().lower()
     try:
         return mapping[key]
