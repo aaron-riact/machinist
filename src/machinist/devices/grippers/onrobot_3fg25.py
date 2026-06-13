@@ -38,7 +38,7 @@ STATUS_GRIPPED = 0x02
 
 
 @dataclass(slots=True)
-class _Settings:
+class OnRobot3FG25Options:
     initial_diameter_mm: float = 75.0
     travel_mm_per_sec: float = 60.0
 
@@ -59,10 +59,10 @@ class OnRobot3FG25(Device):
     DEFAULT_PORT = 502
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: OnRobot3FG25Options
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self._settings = _Settings(**options)
+        self._settings = options
         self._state = _State(actual_tenths=int(self._settings.initial_diameter_mm * 10))
         self._state.target_tenths = self._state.actual_tenths
         self._server = HoldingRegisterServer(
@@ -138,4 +138,4 @@ class OnRobot3FG25(Device):
 
 @register("onrobot_3fg25", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return OnRobot3FG25(name, endpoint, bus, options)
+    return OnRobot3FG25(name, endpoint, bus, OnRobot3FG25Options(**options))
