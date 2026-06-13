@@ -31,11 +31,12 @@ class PneumaticGripper(Device):
     kind = "pneumatic_gripper"
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: PneumaticGripperOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: PneumaticGripperOptions,
+        *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._settings = options
-        self.io = SignalBank(owner=name)
+        self.io = io
         self._cmd_open = self.io.declare("cmd_open", Direction.INPUT)
         self._cmd_close = self.io.declare("cmd_close", Direction.INPUT)
         self._is_open = self.io.declare("is_open", Direction.OUTPUT)
@@ -77,4 +78,5 @@ class PneumaticGripper(Device):
 
 @register("pneumatic_gripper", default_port=0)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return PneumaticGripper(name, endpoint, bus, PneumaticGripperOptions(**options))
+    opts = PneumaticGripperOptions(**options)
+    return PneumaticGripper(name, endpoint, bus, opts, io=SignalBank(owner=name))
