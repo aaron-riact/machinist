@@ -24,7 +24,7 @@ REG_OUTPUTS = 0x0100
 
 
 @dataclass(slots=True)
-class _Config:
+class WeidmullerUR20Options:
     inputs: int = 16
     outputs: int = 16
 
@@ -34,10 +34,10 @@ class WeidmullerUR20(Device):
     DEFAULT_PORT = 502
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: WeidmullerUR20Options
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self._cfg = _Config(**options)
+        self._cfg = options
         self.io = SignalBank(owner=name)
         for i in range(1, self._cfg.inputs + 1):
             self.io.declare(f"i{i}", Direction.INPUT)
@@ -93,4 +93,4 @@ class WeidmullerUR20(Device):
 
 @register("weidmuller_ur20", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return WeidmullerUR20(name, endpoint, bus, options)
+    return WeidmullerUR20(name, endpoint, bus, WeidmullerUR20Options(**options))

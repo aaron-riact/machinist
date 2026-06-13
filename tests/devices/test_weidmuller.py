@@ -5,7 +5,7 @@ import struct
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.io_controllers.weidmuller_ur20 import WeidmullerUR20
+from machinist.devices.io_controllers.weidmuller_ur20 import WeidmullerUR20, WeidmullerUR20Options
 
 from ..conftest import free_port, wait_running
 
@@ -20,7 +20,7 @@ def _modbus_request(host: str, port: int, body: bytes) -> bytes:
 def test_write_then_read_outputs() -> None:
     port = free_port()
     device = WeidmullerUR20(
-        "io1", Endpoint("127.0.0.1", port), EventBus(), {"inputs": 8, "outputs": 8}
+        "io1", Endpoint("127.0.0.1", port), EventBus(), WeidmullerUR20Options(inputs=8, outputs=8)
     )
     device.start()
     try:
