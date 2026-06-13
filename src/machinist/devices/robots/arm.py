@@ -16,10 +16,38 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from typing import Any
 
 from ...kinematics.api import Kinematics, NoOpKinematics, RobotModel
 
 JOINT_COUNT_DEFAULT = 6
+
+
+@dataclass(frozen=True, slots=True)
+class ArmOptions:
+    """Typed schema for robot-arm YAML ``options`` section.
+
+    Supports both forms::
+
+        # All kinematics keys at the top level
+        joint_count: 6
+        backend: dh
+        dh_params:
+          a: [0, 0, …]
+
+        # Kinematics nested under the ``kinematics`` key
+        joint_count: 6
+        kinematics:
+          backend: dh
+          dh_params:
+            a: [0, 0, …]
+    """
+
+    joint_count: int = JOINT_COUNT_DEFAULT
+    kinematics: dict[str, Any] | None = None
+    backend: str | None = None
+    dh_params: dict[str, list[float]] | None = None
+    urdf: str | None = None
 Pose = tuple[float, float, float, float, float, float]  # x,y,z,rx,ry,rz
 Joints = tuple[float, ...]
 
@@ -189,32 +217,23 @@ def joints_almost_equal(a: Joints, b: Joints, *, tol: float = 1e-6) -> bool:
     return len(a) == len(b) and all(math.isclose(x, y, abs_tol=tol) for x, y in zip(a, b, strict=True))
 
 
-def arm_from_options(options: dict) -> RobotArm:
-    """Build a :class:`RobotArm` from a device's YAML ``options``.
-
-    Reads ``joint_count`` plus either a nested ``kinematics`` mapping or
-    top-level kinematics keys (``backend``, ``urdf``, ``dh_params``).
-    Keeping this helper here means every wire-protocol adapter (UR,
-    Motoman, Dobot, Fanuc, generic robot) shares identical config
-    semantics with zero duplication.
-    """
+def arm_from_options(options: ArmOptions) -> RobotArm:
+    """Build a :class:`RobotArm` from typed arm options."""
     from ...kinematics.api import build_kinematics
 
-    joint_count = int(options.get("joint_count", 6))
+    joint_count = options.joint_count
     kin_opts = _kinematics_options(options, joint_count=joint_count)
-    kin_opts.setdefault("joint_count", joint_count)
     return RobotArm(joint_count=joint_count, kinematics=build_kinematics(kin_opts))
 
 
-def _kinematics_options(options: dict, *, joint_count: int) -> dict:
-    nested = options.get("kinematics")
-    if isinstance(nested, dict):
-        return {**nested, "joint_count": nested.get("joint_count", joint_count)}
-    top_level = {
-        key: value
-        for key, value in options.items()
-        if key in {"backend", "dh_params", "urdf"}
-    }
+def _kinematics_options(options: ArmOptions, *, joint_count: int) -> dict[str, Any]:
+    if options.kinematics is not None:
+        return {**options.kinematics, "joint_count": options.kinematics.get("joint_count", joint_count)}
+    top_level: dict[str, Any] = {}
+    for key in ("backend", "dh_params", "urdf"):
+        value = getattr(options, key)
+        if value is not None:
+            top_level[key] = value
     return {**top_level, "joint_count": joint_count}
 
 

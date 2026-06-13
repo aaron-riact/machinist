@@ -4,6 +4,7 @@ import socket
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
+from machinist.devices.robots.arm import ArmOptions
 from machinist.devices.robots.ur import URDashboardServer
 
 from ..conftest import free_port, wait_running
@@ -18,7 +19,7 @@ def _send(host: str, port: int, msg: str) -> str:
 def test_dashboard_basic_commands() -> None:
     port = free_port()
     bus = EventBus()
-    device = URDashboardServer("ur1", Endpoint("127.0.0.1", port), bus, {})
+    device = URDashboardServer("ur1", Endpoint("127.0.0.1", port), bus, ArmOptions())
     device.start()
     try:
         wait_running(device)

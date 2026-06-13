@@ -11,14 +11,14 @@ pytest.importorskip("numpy")
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.robots.arm import arm_from_options
+from machinist.devices.robots.arm import ArmOptions, arm_from_options
 from machinist.devices.robots.ur import URDashboardServer
 
 
 def test_robot_uses_configured_kinematics_backend() -> None:
     bus = EventBus()
-    options = {
-        "kinematics": {
+    options = ArmOptions(
+        kinematics={
             "backend": "dh",
             "dh_params": {
                 "a": [0, -0.425, -0.3922, 0, 0, 0],
@@ -26,7 +26,7 @@ def test_robot_uses_configured_kinematics_backend() -> None:
                 "alpha": [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0],
             },
         },
-    }
+    )
     ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options)
     try:
         pose = ur.arm._kinematics.forward((0.0,) * 6)  # noqa: SLF001
@@ -38,14 +38,14 @@ def test_robot_uses_configured_kinematics_backend() -> None:
 
 def test_arm_accepts_top_level_dh_options() -> None:
     arm = arm_from_options(
-        {
-            "joint_count": 6,
-            "dh_params": {
+        ArmOptions(
+            joint_count=6,
+            dh_params={
                 "a": [0, -0.425, -0.3922, 0, 0, 0],
                 "d": [0.089159, 0, 0, 0.10915, 0.09465, 0.0823],
                 "alpha": [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0],
             },
-        }
+        )
     )
     try:
         home = arm.state.snapshot()

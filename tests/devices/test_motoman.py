@@ -6,6 +6,7 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
+from machinist.devices.robots.arm import ArmOptions
 from machinist.devices.robots.motoman import MotomanNX100
 
 from ..conftest import free_port, wait_running
@@ -14,7 +15,7 @@ from ..conftest import free_port, wait_running
 @pytest.fixture
 def motoman() -> MotomanNX100:
     bus = EventBus()
-    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, {})
+    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions())
     m.start()
     try:
         wait_running(m)

@@ -26,7 +26,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import PAREN
-from .arm import RobotArm, arm_from_options
+from .arm import ArmOptions, RobotArm, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
 
@@ -39,7 +39,7 @@ class DobotDashboard(LineServerDevice):
     FRAMER = PAREN
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
@@ -100,4 +100,4 @@ def _ok(verb: str, args: str, *, value: str = "") -> str:
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return DobotDashboard(name, endpoint, bus, options)
+    return DobotDashboard(name, endpoint, bus, ArmOptions(**options))

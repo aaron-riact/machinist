@@ -29,7 +29,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
-from .arm import ArmMode, RobotArm, arm_from_options
+from .arm import ArmOptions, ArmMode, RobotArm, arm_from_options
 
 UR_DASHBOARD_PORT = 29999
 
@@ -50,7 +50,7 @@ class URDashboardServer(LineServerDevice):
     FRAMER = NEWLINE
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
@@ -114,4 +114,4 @@ class URDashboardServer(LineServerDevice):
 
 @register("ur_dashboard", default_port=UR_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return URDashboardServer(name, endpoint, bus, options)
+    return URDashboardServer(name, endpoint, bus, ArmOptions(**options))
