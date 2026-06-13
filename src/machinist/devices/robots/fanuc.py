@@ -43,27 +43,16 @@ class FanucKarelServer(LineServerDevice):
     FRAMER = NEWLINE
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: FanucKarelServerOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: FanucKarelServerOptions,
+        *, arm: RobotArm, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = arm_from_options(ArmOptions(
-            joint_count=options.joint_count,
-            kinematics=options.kinematics,
-            backend=options.backend,
-            dh_params=options.dh_params,
-            urdf=options.urdf,
-        ))
+        self.arm = arm
         self.arm.start_ticker()
-        self.io = SignalBank(owner=name)
+        self.io = io
         for i in range(1, options.digital_outputs + 1):
             self.io.declare(f"do{i}", Direction.OUTPUT)
         for i in range(1, options.digital_inputs + 1):
-            self.io.declare(f"di{i}", Direction.INPUT)
-        self.arm.start_ticker()
-        self.io = SignalBank(owner=name)
-        for i in range(1, digital_outputs + 1):
-            self.io.declare(f"do{i}", Direction.OUTPUT)
-        for i in range(1, digital_inputs + 1):
             self.io.declare(f"di{i}", Direction.INPUT)
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
@@ -112,4 +101,12 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
 
 @register("fanuc_r30ib", default_port=FANUC_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return FanucKarelServer(name, endpoint, bus, FanucKarelServerOptions(**options))
+    opts = FanucKarelServerOptions(**options)
+    arm = arm_from_options(ArmOptions(
+        joint_count=opts.joint_count,
+        kinematics=opts.kinematics,
+        backend=opts.backend,
+        dh_params=opts.dh_params,
+        urdf=opts.urdf,
+    ))
+    return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name))
