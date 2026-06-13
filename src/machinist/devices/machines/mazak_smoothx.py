@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.device import Device
@@ -142,6 +142,23 @@ OUTPUT_BIT_FIELDS = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class MazakSmoothXOptions:
+    scan_interval_seconds: float = 0.02
+    door_move_seconds: float = 2.0
+    cycle_duration_seconds: float = 1.0
+    work_search_seconds: float = 0.1
+    heartbeat_interval_seconds: float = 0.1
+    heartbeat_timeout_seconds: float = 0.5
+    interfaces: Any = None
+    main_interface: Any = None
+    ethernetip: dict[str, Any] | None = None
+    mtconnect_port: int | None = None
+    mtconnect: dict[str, Any] | None = None
+    _transport_factory: Any = None
+    _eeip_client_factory: Any = None
+
+
 class MazakSmoothXEmulator(Device):
     kind = "mazak_smoothx"
 
@@ -151,10 +168,9 @@ class MazakSmoothXEmulator(Device):
     output_text_fields = OUTPUT_TEXT_FIELDS
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any],
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSmoothXOptions,
     ) -> None:
         super().__init__(name, endpoint, bus)
-        opts = options or {}
         self.state = MachineState()
         self.state.door("main").set(open=False)
 
@@ -162,14 +178,14 @@ class MazakSmoothXEmulator(Device):
         self._input_block = bytearray(BLOCK_SIZE)
         self._output_block = bytearray(BLOCK_SIZE)
         self._state_snapshot: dict[str, object] = {}
-        self._scan_interval = float(opts.get("scan_interval_seconds", 0.02))
-        self._door_seconds = float(opts.get("door_move_seconds", 2.0))
-        self._cycle_seconds = float(opts.get("cycle_duration_seconds", 1.0))
-        self._work_search_seconds = float(opts.get("work_search_seconds", 0.1))
-        self._heartbeat_interval = float(opts.get("heartbeat_interval_seconds", 0.1))
-        self._heartbeat_timeout = float(opts.get("heartbeat_timeout_seconds", 0.5))
-        self._interfaces = _enabled_interfaces(opts)
-        self._ethernetip_mode = _ethernetip_mode(opts)
+        self._scan_interval = options.scan_interval_seconds
+        self._door_seconds = options.door_move_seconds
+        self._cycle_seconds = options.cycle_duration_seconds
+        self._work_search_seconds = options.work_search_seconds
+        self._heartbeat_interval = options.heartbeat_interval_seconds
+        self._heartbeat_timeout = options.heartbeat_timeout_seconds
+        self._interfaces = _enabled_interfaces(options)
+        self._ethernetip_mode = _ethernetip_mode(options)
         self._io_writable = "io" in self._interfaces
         self._alarm_code: int | None = None
         self._alarm_message = ""
@@ -192,12 +208,12 @@ class MazakSmoothXEmulator(Device):
         self.io = SignalBank(owner=name)
         self._declare_signals()
 
-        self._mtconnect = self._build_mtconnect(endpoint.host, opts)
+        self._mtconnect = self._build_mtconnect(endpoint.host, options)
 
         self._ethernetip: EtherNetIPAdapter | EtherNetIPScanner | None = None
         self._next_connect_attempt = 0.0
         if "ethernetip" in self._interfaces:
-            self._ethernetip = _build_ethernetip_transport(endpoint, opts)
+            self._ethernetip = _build_ethernetip_transport(endpoint, options)
 
         self._initialize_defaults()
 
@@ -353,7 +369,7 @@ class MazakSmoothXEmulator(Device):
             self.io.declare(point.signal, Direction.OUTPUT)
 
     def _build_mtconnect(
-        self, host: str, options: dict[str, Any]
+        self, host: str, options: MazakSmoothXOptions
     ) -> MTConnectAgent | None:
         mtconnect_port = _mtconnect_port(options)
         if mtconnect_port is None:
@@ -788,44 +804,44 @@ def _read_text_from_bytes(block: bytes, field: TextField) -> str:
     return raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
 
 
-def _enabled_interfaces(options: dict[str, Any]) -> set[str]:
+def _enabled_interfaces(options: MazakSmoothXOptions) -> set[str]:
     enabled = {"io", "ethernetip"}
-    raw = options.get("interfaces")
+    raw = options.interfaces
     if isinstance(raw, str):
         enabled = {raw.strip().lower()}
     elif isinstance(raw, dict):
         enabled = {name.strip().lower() for name, flag in raw.items() if flag}
     elif raw is not None:
         enabled = {str(item).strip().lower() for item in raw}
-    main_interface = options.get("main_interface")
+    main_interface = options.main_interface
     if isinstance(main_interface, str):
         enabled.add(main_interface.strip().lower())
     elif isinstance(main_interface, (list, tuple, set)):
         enabled.update(str(item).strip().lower() for item in main_interface)
-    if options.get("ethernetip") is not None:
+    if options.ethernetip is not None:
         enabled.add("ethernetip")
     return enabled
 
 
-def _mtconnect_port(options: dict[str, Any]) -> int | None:
-    if (port := options.get("mtconnect_port")) is not None:
-        return int(port)
-    if (config := options.get("mtconnect")) is not None:
-        return int(config.get("port", 0))
+def _mtconnect_port(options: MazakSmoothXOptions) -> int | None:
+    if options.mtconnect_port is not None:
+        return options.mtconnect_port
+    if options.mtconnect is not None:
+        return int(options.mtconnect.get("port", 0))
     return None
 
 
-def _ethernetip_mode(options: dict[str, Any]) -> str:
-    config = options.get("ethernetip")
+def _ethernetip_mode(options: MazakSmoothXOptions) -> str:
+    config = options.ethernetip
     if isinstance(config, dict) and "mode" in config:
         return str(config["mode"]).strip().lower()
     return "adapter"
 
 
 def _build_ethernetip_transport(
-    endpoint: Endpoint, options: dict[str, Any]
+    endpoint: Endpoint, options: MazakSmoothXOptions
 ) -> EtherNetIPAdapter | EtherNetIPScanner:
-    config = options.get("ethernetip")
+    config = options.ethernetip
     if config is None:
         config = {}
     if not isinstance(config, dict):
@@ -853,9 +869,9 @@ def _build_adapter(endpoint: Endpoint, config: dict[str, Any]) -> EtherNetIPAdap
     )
 
 
-def _build_scanner(config: dict[str, Any], options: dict[str, Any]) -> EtherNetIPScanner:
-    transport_factory = options.get("_transport_factory", EtherNetIPScanner)
-    client_factory = options.get("_eeip_client_factory")
+def _build_scanner(config: dict[str, Any], options: MazakSmoothXOptions) -> EtherNetIPScanner:
+    transport_factory = options._transport_factory or EtherNetIPScanner
+    client_factory = options._eeip_client_factory
     host = str(config["host"]).strip()
     if host in {"", "0.0.0.0", "::"}:
         raise ValueError(
@@ -889,4 +905,4 @@ def _build_scanner(config: dict[str, Any], options: dict[str, Any]) -> EtherNetI
 
 @register("mazak_smoothx", default_port=44818)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return MazakSmoothXEmulator(name, endpoint, bus, options)
+    return MazakSmoothXEmulator(name, endpoint, bus, MazakSmoothXOptions(**options))

@@ -16,23 +16,24 @@ from machinist.devices.machines.mazak_smoothx import (
     INPUT_TEXT_FIELDS,
     OUTPUT_SIGNAL_POINTS,
     MazakSmoothXEmulator,
+    MazakSmoothXOptions,
 )
 from machinist.transport.ethernetip import EtherNetIPScanner, EtherNetIPScannerConfig
 
 from ..conftest import free_port, wait_running
 
 
-def _make(**options: object) -> MazakSmoothXEmulator:
-    defaults: dict[str, object] = {
-        "interfaces": ["io"],
-        "heartbeat_timeout_seconds": 10.0,
-        "heartbeat_interval_seconds": 0.05,
-        "door_move_seconds": 0.05,
-        "cycle_duration_seconds": 0.05,
-        "work_search_seconds": 0.01,
-    }
-    defaults.update(options)
-    return MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), defaults)
+def _make(**kw: object) -> MazakSmoothXEmulator:
+    opts = MazakSmoothXOptions(
+        interfaces=kw.pop("interfaces", ["io"]),
+        heartbeat_timeout_seconds=kw.pop("heartbeat_timeout_seconds", 10.0),
+        heartbeat_interval_seconds=kw.pop("heartbeat_interval_seconds", 0.05),
+        door_move_seconds=kw.pop("door_move_seconds", 0.05),
+        cycle_duration_seconds=kw.pop("cycle_duration_seconds", 0.05),
+        work_search_seconds=kw.pop("work_search_seconds", 0.01),
+        **kw,
+    )
+    return MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts)
 
 
 def test_manual_bit_mapping_matches_manual_offsets() -> None:
@@ -76,7 +77,7 @@ def test_write_input_block_emits_snapshot_event_once_per_change() -> None:
         "mazak1",
         Endpoint("127.0.0.1", 0),
         bus,
-        {"interfaces": ["io"]},
+        MazakSmoothXOptions(interfaces=["io"]),
     )
     events.clear()
 
@@ -95,7 +96,7 @@ def test_internal_output_bit_changes_emit_snapshot_event() -> None:
         "mazak1",
         Endpoint("127.0.0.1", 0),
         bus,
-        {"interfaces": ["io"]},
+        MazakSmoothXOptions(interfaces=["io"]),
     )
     events.clear()
 
@@ -208,11 +209,11 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
-        {
-            "ethernetip": {"udp_port": udp_port},
-            "heartbeat_timeout_seconds": 1.0,
-            "heartbeat_interval_seconds": 0.05,
-        },
+        MazakSmoothXOptions(
+            ethernetip={"udp_port": udp_port},
+            heartbeat_timeout_seconds=1.0,
+            heartbeat_interval_seconds=0.05,
+        ),
     )
     scanner = EtherNetIPScanner(
         EtherNetIPScannerConfig(
@@ -252,12 +253,12 @@ def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
-        {
-            "interfaces": ["ethernetip"],
-            "ethernetip": {"udp_port": udp_port},
-            "heartbeat_timeout_seconds": 0.15,
-            "heartbeat_interval_seconds": 0.05,
-        },
+        MazakSmoothXOptions(
+            interfaces=["ethernetip"],
+            ethernetip={"udp_port": udp_port},
+            heartbeat_timeout_seconds=0.15,
+            heartbeat_interval_seconds=0.05,
+        ),
     )
     device.start()
     try:
