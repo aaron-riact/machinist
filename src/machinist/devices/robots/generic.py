@@ -23,7 +23,7 @@ from ...core.events import EventBus
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...srci import SrciServer
-from ...transport.message import FrameHandler, open_server
+from ...transport.message import FrameHandler, MessageServer, open_server
 from .arm import ArmOptions, RobotArm, arm_from_options, arm_readers
 
 if TYPE_CHECKING:
@@ -66,27 +66,21 @@ class RobotDevice(Device):
     DEFAULT_PORT = 15001
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: RobotDeviceOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: RobotDeviceOptions,
+        *, arm: RobotArm, server: MessageServer, opcua: OpcUaServer | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
+        self.arm = arm
+        self._server = server
+        self._opcua = opcua
         protocol = options.protocol
-        transport = options.transport
         try:
             factory = _PROTOCOLS[protocol]
         except KeyError:
             raise ValueError(
                 f"unknown robot protocol {protocol!r}; have {protocols()}"
             ) from None
-        self.arm = arm_from_options(ArmOptions(
-            joint_count=options.joint_count,
-            kinematics=options.kinematics,
-            backend=options.backend,
-            dh_params=options.dh_params,
-            urdf=options.urdf,
-        ))
         self._handler = factory(self.arm)
-        self._server = open_server(transport, endpoint.host, endpoint.port)
-        self._opcua = _maybe_opcua(name, endpoint.host, options.opcua, self.arm)
 
     def _run(self, stop: threading.Event) -> None:
         self.arm.start_ticker()
@@ -153,4 +147,14 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     opts = dict(options)
     raw_opcua = opts.pop("opcua", None)
     opcua_opts = OpcUaClientOptions(**raw_opcua) if raw_opcua else None
-    return RobotDevice(name, endpoint, bus, RobotDeviceOptions(opcua=opcua_opts, **opts))
+    opt = RobotDeviceOptions(opcua=opcua_opts, **opts)
+    arm = arm_from_options(ArmOptions(
+        joint_count=opt.joint_count,
+        kinematics=opt.kinematics,
+        backend=opt.backend,
+        dh_params=opt.dh_params,
+        urdf=opt.urdf,
+    ))
+    server = open_server(opt.transport, endpoint.host, endpoint.port)
+    opcua = _maybe_opcua(name, endpoint.host, opt.opcua, arm)
+    return RobotDevice(name, endpoint, bus, opt, arm=arm, server=server, opcua=opcua)
