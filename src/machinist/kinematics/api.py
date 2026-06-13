@@ -8,24 +8,22 @@ that the :mod:`machinist` core never hard-depends on pinocchio/pykdl/etc.
 
 Typical use from a device::
 
-    kin = build_kinematics({
-        "backend": "pinocchio",          # "noop" | "dh" | "pinocchio" | ...
-        "urdf":    "models/ur5.urdf",    # either this…
-        "dh_params": {                   # …or this
-            "a":     [...],
-            "d":     [...],
-            "alpha": [...],
-        },
-        "joint_count": 6,
-    })
+    kin = build_kinematics(KinematicsOptions(
+        backend="pinocchio",          # "noop" | "dh" | "pinocchio" | ...
+        urdf_path=Path("models/ur5.urdf"),  # either this…
+        dh=DHParams(                         # …or this
+            a=[...], d=[...], alpha=[...],
+        ),
+        joint_count=6,
+    ))
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 Joints = tuple[float, ...]
 Pose = tuple[float, float, float, float, float, float]  # x y z rx ry rz (RPY)
@@ -50,13 +48,24 @@ class DHParams:
 
 
 @dataclass(frozen=True, slots=True)
+class KinematicsOptions:
+    """Typed configuration for building a :class:`Kinematics` instance."""
+
+    joint_count: int = 6
+    backend: str | None = None
+    dh: DHParams | None = None
+    urdf_path: Path | None = None
+    robot_type: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RobotModel:
     """Everything a backend needs to build its internal representation."""
 
     joint_count: int
     dh: DHParams | None = None
     urdf_path: Path | None = None
-    extras: dict[str, Any] = field(default_factory=dict)
+    robot_type: str | None = None
 
 
 # --- kinematics protocol ---------------------------------------------
@@ -94,40 +103,24 @@ def get_backend(name: str, model: RobotModel) -> Kinematics:
     return factory(model)
 
 
-def build_kinematics(options: dict[str, Any]) -> Kinematics:
-    """Construct a :class:`Kinematics` from a YAML-style config dict."""
-    backend = options.get("backend") or _infer_backend(options)
-    model = _model_from_options(options)
+def build_kinematics(options: KinematicsOptions) -> Kinematics:
+    """Construct a :class:`Kinematics` from typed options."""
+    backend = options.backend or _infer_backend(options)
+    model = RobotModel(
+        joint_count=options.joint_count,
+        dh=options.dh,
+        urdf_path=options.urdf_path,
+        robot_type=options.robot_type,
+    )
     return get_backend(backend, model)
 
 
-def _infer_backend(options: dict[str, Any]) -> str:
-    if options.get("dh_params") is not None:
+def _infer_backend(options: KinematicsOptions) -> str:
+    if options.dh is not None:
         return "dh"
-    if options.get("urdf") is not None:
+    if options.urdf_path is not None:
         return "pinocchio"
     return "noop"
-
-
-def _model_from_options(options: dict[str, Any]) -> RobotModel:
-    dh = options.get("dh_params")
-    urdf = options.get("urdf")
-    joint_count = int(options.get("joint_count", 6))
-    return RobotModel(
-        joint_count=joint_count,
-        dh=_parse_dh(dh) if dh else None,
-        urdf_path=Path(urdf) if urdf else None,
-        extras={k: v for k, v in options.items() if k not in {"backend", "dh_params", "urdf", "joint_count"}},
-    )
-
-
-def _parse_dh(dh: dict[str, Any]) -> DHParams:
-    return DHParams(
-        a=tuple(float(x) for x in dh["a"]),
-        d=tuple(float(x) for x in dh["d"]),
-        alpha=tuple(float(x) for x in dh["alpha"]),
-        theta_offset=tuple(float(x) for x in dh.get("theta_offset", ())),
-    )
 
 
 # --- trivial fallback back-end ---------------------------------------

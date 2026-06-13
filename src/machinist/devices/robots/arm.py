@@ -16,9 +16,10 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from pathlib import Path
 from typing import Any
 
-from ...kinematics.api import Kinematics, NoOpKinematics, RobotModel
+from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
 
 JOINT_COUNT_DEFAULT = 6
 
@@ -221,20 +222,38 @@ def arm_from_options(options: ArmOptions) -> RobotArm:
     """Build a :class:`RobotArm` from typed arm options."""
     from ...kinematics.api import build_kinematics
 
-    joint_count = options.joint_count
-    kin_opts = _kinematics_options(options, joint_count=joint_count)
-    return RobotArm(joint_count=joint_count, kinematics=build_kinematics(kin_opts))
+    kin_opts = _kinematics_options(options)
+    return RobotArm(joint_count=kin_opts.joint_count, kinematics=build_kinematics(kin_opts))
 
 
-def _kinematics_options(options: ArmOptions, *, joint_count: int) -> dict[str, Any]:
+def _parse_dh(raw: dict[str, list[float]]) -> DHParams:
+    return DHParams(
+        a=tuple(raw["a"]),
+        d=tuple(raw["d"]),
+        alpha=tuple(raw["alpha"]),
+        theta_offset=tuple(raw.get("theta_offset", ())),
+    )
+
+
+def _kinematics_options(options: ArmOptions) -> KinematicsOptions:
     if options.kinematics is not None:
-        return {**options.kinematics, "joint_count": joint_count}
-    top_level: dict[str, Any] = {}
-    for key in ("backend", "dh_params", "urdf"):
-        value = getattr(options, key)
-        if value is not None:
-            top_level[key] = value
-    return {**top_level, "joint_count": joint_count}
+        d = options.kinematics
+        dh = _parse_dh(d["dh_params"]) if "dh_params" in d else None
+        urdf_path = Path(d["urdf"]) if "urdf" in d else None
+        return KinematicsOptions(
+            joint_count=d.get("joint_count", options.joint_count),
+            backend=d.get("backend"),
+            dh=dh,
+            urdf_path=urdf_path,
+            robot_type=d.get("robot_type"),
+        )
+    dh = _parse_dh(options.dh_params) if options.dh_params is not None else None
+    return KinematicsOptions(
+        joint_count=options.joint_count,
+        backend=options.backend,
+        dh=dh,
+        urdf_path=Path(options.urdf) if options.urdf else None,
+    )
 
 
 def arm_readers(arm: RobotArm) -> dict[str, Callable[[], object]]:

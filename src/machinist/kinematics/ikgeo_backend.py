@@ -29,7 +29,7 @@ class IKGeoKinematics(Kinematics):
                 "ik-geo back-end requires ik_geo: `uv pip install ik-geo`"
             ) from exc
 
-        robot_type = model.extras.get("robot_type") or "general"
+        robot_type = model.robot_type or "general"
         self._ik_geo = ik_geo
         self._robot = ik_geo.Robot(robot_type)
         if model.dh is None:
