@@ -49,9 +49,13 @@ class _Mappings:
 from .state import MachineState
 
 
+def _default_mappings() -> _Mappings:
+    return _build_mappings({})
+
+
 @dataclass(frozen=True, slots=True)
 class MazakSinumerik840DOptions:
-    mappings: dict[str, Any] = field(default_factory=dict)
+    mappings: _Mappings = field(default_factory=_default_mappings)
     s7_backend: str = "stub"
 
 
@@ -63,7 +67,7 @@ class MazakSinumerik840D(Device):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSinumerik840DOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self._maps = _build_mappings(options.mappings)
+        self._maps = options.mappings
         self.state = MachineState()
         self.state.door("main")
         self.io = SignalBank(owner=name)
@@ -157,4 +161,9 @@ def _build_mappings(raw: dict[str, Any]) -> _Mappings:
 
 @register("mazak_840d", default_port=102)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return MazakSinumerik840D(name, endpoint, bus, MazakSinumerik840DOptions(**options))
+    opts = dict(options)
+    raw_maps = opts.pop("mappings", {}) or {}
+    return MazakSinumerik840D(
+        name, endpoint, bus,
+        MazakSinumerik840DOptions(mappings=_build_mappings(raw_maps), **opts),
+    )
