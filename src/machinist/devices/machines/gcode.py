@@ -36,6 +36,21 @@ _DPRINT = re.compile(r"DPRINT\[(.*)\]", re.IGNORECASE)
 _NUM = re.compile(r"-?\d+(\.\d+)?")
 
 
+@dataclass(frozen=True, slots=True)
+class GCodeLine:
+    """Typed representation of a parsed G-code line."""
+
+    g: int | None = None
+    m: int | None = None
+    f: float | None = None
+    s: float | None = None
+    t: int | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    p: float | None = None
+
+
 @dataclass(slots=True)
 class Interpreter:
     state: MachineState
@@ -67,57 +82,53 @@ class Interpreter:
             return
         words = _words(line)
         yield from self._apply_tooling(words)
-        if "M30" in words:
+        if words.m == 30:
             self.state.cycle = CycleState.IDLE
             self.state.parts += 1
             yield "M30 program end"
             return
-        if any(w in words for w in ("M0", "M1")):
+        if words.m in (0, 1):
             self.state.cycle = CycleState.PAUSED
             yield "program stop"
             return
-        if "G4" in words and "P" in words:
-            duration = float(words["P"])
+        if words.g == 4 and words.p is not None:
+            duration = words.p
             time.sleep(duration)
             yield f"dwell {duration}s"
             return
-        if any(w in words for w in ("G0", "G1")):
+        if words.g in (0, 1):
             self._apply_position(words)
-            yield " ".join(f"{k}{v}" for k, v in words.items())
+            yield f"G{words.g} move"
             return
 
-    def _apply_tooling(self, words: dict[str, str]) -> Iterator[str]:
+    def _apply_tooling(self, words: GCodeLine) -> Iterator[str]:
         """Update spindle, feed and tool state from a parsed line."""
-        if "F" in words:
-            self.state.feed = float(words["F"])
-        if "T" in words:
-            self.state.tool = int(float(words["T"]))
-        if "M6" in words:
+        if words.f is not None:
+            self.state.feed = words.f
+        if words.t is not None:
+            self.state.tool = words.t
+        if words.m == 6:
             self.state.tool_changes += 1
             yield f"tool change T{self.state.tool}"
-        if any(w in words for w in ("M3", "M4")):
-            self.state.spindle_rpm = float(words.get("S", self.state.spindle_rpm))
-            direction = "CW" if "M3" in words else "CCW"
+        if words.m in (3, 4):
+            self.state.spindle_rpm = words.s if words.s is not None else self.state.spindle_rpm
+            direction = "CW" if words.m == 3 else "CCW"
             yield f"spindle {direction} {self.state.spindle_rpm:g}"
-        elif "M5" in words:
+        elif words.m == 5:
             self.state.spindle_rpm = 0.0
             yield "spindle stop"
 
-    def _apply_position(self, words: dict[str, str]) -> None:
+    def _apply_position(self, words: GCodeLine) -> None:
         self.state.position.move_to(
-            x=float(words["X"]) if "X" in words else None,
-            y=float(words["Y"]) if "Y" in words else None,
-            z=float(words["Z"]) if "Z" in words else None,
+            x=words.x,
+            y=words.y,
+            z=words.z,
         )
 
 
-def _words(line: str) -> dict[str, str]:
-    """Parse G-code line into a ``{letter: value}`` mapping.
-
-    M- and G-codes become canonical keys (``M03`` and ``M3`` both map to
-    ``M3``) so callers can match them without worrying about zero-padding.
-    """
-    out: dict[str, str] = {}
+def _words(line: str) -> GCodeLine:
+    """Parse G-code line into a typed :class:`GCodeLine`."""
+    kw: dict[str, object] = {}
     i = 0
     while i < len(line):
         ch = line[i].upper()
@@ -127,22 +138,23 @@ def _words(line: str) -> dict[str, str]:
         i += 1
         m = _NUM.match(line, i)
         if m is None:
-            out[ch] = ""
+            i += 1
             continue
+        raw = m.group(0)
         if ch in "MG":
-            out[f"{ch}{_canonical(m.group(0))}"] = m.group(0)
-        else:
-            out[ch] = m.group(0)
+            kw[f"{ch.lower()}"] = int(raw)
+        elif ch == "F":
+            kw["f"] = float(raw)
+        elif ch == "S":
+            kw["s"] = float(raw)
+        elif ch == "T":
+            kw["t"] = int(float(raw))
+        elif ch == "P":
+            kw["p"] = float(raw)
+        elif ch in "XYZ":
+            kw[ch.lower()] = float(raw)
         i = m.end()
-    return out
-
-
-def _canonical(number: str) -> str:
-    """Strip zero-padding from an integer code (``03`` -> ``3``)."""
-    try:
-        return str(int(number))
-    except ValueError:
-        return number
+    return GCodeLine(**kw)
 
 
 def _coerce(value: str) -> float | str:
