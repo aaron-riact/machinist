@@ -228,7 +228,7 @@ def arm_from_options(options: ArmOptions) -> RobotArm:
 
 def _kinematics_options(options: ArmOptions, *, joint_count: int) -> dict[str, Any]:
     if options.kinematics is not None:
-        return {**options.kinematics, "joint_count": options.kinematics.get("joint_count", joint_count)}
+        return {**options.kinematics, "joint_count": joint_count}
     top_level: dict[str, Any] = {}
     for key in ("backend", "dh_params", "urdf"):
         value = getattr(options, key)

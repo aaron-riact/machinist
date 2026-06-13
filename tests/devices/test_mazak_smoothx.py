@@ -11,19 +11,62 @@ from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.core.world import WorldBuilder
 from machinist.devices.machines.mazak_smoothx import (
+    BLOCK_SIZE,
     HEARTBEAT_ALARM,
     INPUT_SIGNAL_POINTS,
     INPUT_TEXT_FIELDS,
+    MTConnectOptions,
     OUTPUT_SIGNAL_POINTS,
     MazakSmoothXEmulator,
     MazakSmoothXOptions,
 )
-from machinist.transport.ethernetip import EtherNetIPScanner, EtherNetIPScannerConfig
+from machinist.transport.ethernetip import (
+    EtherNetIPAdapterConfig,
+    EtherNetIPScanner,
+    EtherNetIPScannerConfig,
+)
 
 from ..conftest import free_port, wait_running
 
 
 def _make(**kw: object) -> MazakSmoothXEmulator:
+    raw_mtconnect_port = kw.pop("mtconnect_port", None)
+    mtconnect_opts = MTConnectOptions(port=int(raw_mtconnect_port)) if raw_mtconnect_port is not None else None
+    raw_ethernetip = kw.get("ethernetip")
+    if isinstance(raw_ethernetip, dict):
+        mode = str(raw_ethernetip.get("mode", "adapter")).strip().lower()
+        kw["ethernetip_mode"] = mode
+        if mode == "adapter":
+            kw["ethernetip_adapter_config"] = EtherNetIPAdapterConfig(
+                host="127.0.0.1",
+                port=0,
+                udp_port=int(raw_ethernetip.get("udp_port", 2222)),
+                output_length=BLOCK_SIZE,
+                input_length=BLOCK_SIZE,
+                requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
+                o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "modeless")),
+                t_o_realtime_format=str(raw_ethernetip.get("t_o_realtime_format", "modeless")),
+            )
+        elif mode == "scanner":
+            kw["ethernetip_scanner_config"] = EtherNetIPScannerConfig(
+                host=str(raw_ethernetip["host"]).strip(),
+                port=int(raw_ethernetip.get("port", 44818)),
+                originator_udp_port=int(raw_ethernetip.get("originator_udp_port", 2222)),
+                target_udp_port=int(raw_ethernetip.get("target_udp_port", 2222)),
+                assembly_object_class=int(raw_ethernetip.get("assembly_object_class", 0x04)),
+                configuration_assembly_instance_id=int(
+                    raw_ethernetip.get("configuration_assembly_instance_id", 0x01)
+                ),
+                output_assembly_instance_id=int(raw_ethernetip.get("output_assembly_instance_id", 0x64)),
+                input_assembly_instance_id=int(raw_ethernetip.get("input_assembly_instance_id", 0x65)),
+                output_length=BLOCK_SIZE,
+                input_length=BLOCK_SIZE,
+                requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
+                o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "modeless")),
+                t_o_realtime_format=str(raw_ethernetip.get("t_o_realtime_format", "modeless")),
+                o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
+                t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
+            )
     opts = MazakSmoothXOptions(
         interfaces=kw.pop("interfaces", ["io"]),
         heartbeat_timeout_seconds=kw.pop("heartbeat_timeout_seconds", 10.0),
@@ -31,6 +74,7 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
         door_move_seconds=kw.pop("door_move_seconds", 0.05),
         cycle_duration_seconds=kw.pop("cycle_duration_seconds", 0.05),
         work_search_seconds=kw.pop("work_search_seconds", 0.01),
+        mtconnect=mtconnect_opts,
         **kw,
     )
     return MazakSmoothXEmulator("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts)
