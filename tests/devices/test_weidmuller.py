@@ -4,8 +4,10 @@ import socket
 import struct
 
 from machinist.core.events import EventBus
+from machinist.core.io import SignalBank
 from machinist.core.types import Endpoint
 from machinist.devices.io_controllers.weidmuller_ur20 import WeidmullerUR20, WeidmullerUR20Options
+from machinist.transport.modbus_server import HoldingRegisterServer
 
 from ..conftest import free_port, wait_running
 
@@ -20,7 +22,13 @@ def _modbus_request(host: str, port: int, body: bytes) -> bytes:
 def test_write_then_read_outputs() -> None:
     port = free_port()
     device = WeidmullerUR20(
-        "io1", Endpoint("127.0.0.1", port), EventBus(), WeidmullerUR20Options(inputs=8, outputs=8)
+        "io1", Endpoint("127.0.0.1", port), EventBus(), WeidmullerUR20Options(inputs=8, outputs=8),
+        io=SignalBank(owner="io1"),
+    )
+    device._server = HoldingRegisterServer(
+        host="127.0.0.1", port=port,
+        on_read=device._on_read,
+        on_write=device._on_write,
     )
     device.start()
     try:

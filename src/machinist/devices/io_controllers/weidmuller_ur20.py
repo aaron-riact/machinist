@@ -34,22 +34,18 @@ class WeidmullerUR20(Device):
     DEFAULT_PORT = 502
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: WeidmullerUR20Options
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: WeidmullerUR20Options,
+        *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._cfg = options
-        self.io = SignalBank(owner=name)
+        self.io = io
         for i in range(1, self._cfg.inputs + 1):
             self.io.declare(f"i{i}", Direction.INPUT)
         for i in range(1, self._cfg.outputs + 1):
             sig = self.io.declare(f"o{i}", Direction.OUTPUT)
             sig.subscribe(lambda v, idx=i: self.emit("output", index=idx, value=v))
-        self._server = HoldingRegisterServer(
-            host=endpoint.host,
-            port=endpoint.port,
-            on_read=self._on_read,
-            on_write=self._on_write,
-        )
+        self._server: HoldingRegisterServer | None = None
 
     def _on_read(self, address: int) -> int:
         if REG_INPUTS <= address < REG_INPUTS + 16:
@@ -93,4 +89,12 @@ class WeidmullerUR20(Device):
 
 @register("weidmuller_ur20", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return WeidmullerUR20(name, endpoint, bus, WeidmullerUR20Options(**options))
+    opts = WeidmullerUR20Options(**options)
+    device = WeidmullerUR20(name, endpoint, bus, opts, io=SignalBank(owner=name))
+    device._server = HoldingRegisterServer(
+        host=endpoint.host,
+        port=endpoint.port,
+        on_read=device._on_read,
+        on_write=device._on_write,
+    )
+    return device
