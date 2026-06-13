@@ -34,13 +34,26 @@ from .state import MachineState, Toggle, machine_readers
 
 
 @dataclass(frozen=True, slots=True)
+class SmbDeviceOptions:
+    backend: str = "impacket"
+    port: int = 445
+    share_name: str = "PROGRAMS"
+    smb1: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class OpcUaDeviceOptions:
+    port: int = 4840
+
+
+@dataclass(frozen=True, slots=True)
 class HaasNGCOptions:
     doors: tuple[str, ...] = ("main",)
     program_folder: str | None = None
     dprint_port: int | None = None
     mtconnect_port: int | None = None
-    smb: dict[str, Any] | None = None
-    opcua: dict[str, Any] | None = None
+    smb: SmbDeviceOptions | None = None
+    opcua: OpcUaDeviceOptions | None = None
 
 
 @dataclass(slots=True)
@@ -100,15 +113,15 @@ class HaasNGC(Device):
 
         self._smb = None
         if options.smb is not None:
-            smb = options.smb
+            smb_opts = options.smb
             cfg = SmbConfig(
                 host=endpoint.host,
-                port=int(smb.get("port", 445)),
-                share_name=smb.get("share", "PROGRAMS"),
+                port=smb_opts.port,
+                share_name=smb_opts.share_name,
                 root=self.programs.root,
-                smb1=bool(smb.get("smb1", True)),
+                smb1=smb_opts.smb1,
             )
-            self._smb = build_share(smb.get("backend", "impacket"), cfg)
+            self._smb = build_share(smb_opts.backend, cfg)
 
         self._opcua = None
         if options.opcua is not None:
@@ -117,7 +130,7 @@ class HaasNGC(Device):
 
             self._opcua = OpcUaServer(
                 endpoint.host,
-                int(opc.get("port", 4840)),
+                opc.port,
                 device_name=name,
                 readers=machine_readers(self.state),
             )
@@ -201,4 +214,8 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     opts = dict(options)
     if "doors" in opts:
         opts["doors"] = tuple(opts["doors"])
+    if "smb" in opts:
+        opts["smb"] = SmbDeviceOptions(**opts["smb"]) if opts["smb"] else None
+    if "opcua" in opts:
+        opts["opcua"] = OpcUaDeviceOptions(**opts["opcua"]) if opts["opcua"] else None
     return HaasNGC(name, endpoint, bus, HaasNGCOptions(**opts))
