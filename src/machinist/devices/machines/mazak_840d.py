@@ -64,27 +64,22 @@ class MazakSinumerik840D(Device):
     DEFAULT_PORT = 102
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSinumerik840DOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSinumerik840DOptions,
+        *, io: SignalBank, store: S7Store, server: S7Server,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._maps = options.mappings
         self.state = MachineState()
         self.state.door("main")
-        self.io = SignalBank(owner=name)
+        self.io = io
+        self._store = store
+        self._server = server
         self.io.declare("door_open_cmd", Direction.INPUT)
         self.io.declare("door_close_cmd", Direction.INPUT)
         self.io.declare("cycle_start_cmd", Direction.INPUT)
         self.io.declare("door_is_open", Direction.OUTPUT)
         self.io.declare("door_is_closed", Direction.OUTPUT)
         self.io.declare("cycle_running", Direction.OUTPUT)
-        self._store = S7Store()
-        self._server = S7Server(
-            host=endpoint.host,
-            port=endpoint.port,
-            store=self._store,
-            backend=options.s7_backend,
-        )
-        # Sync IO -> S7 store and back.
         self._wire_signals()
 
     # -----------------------------------------------------------------
@@ -163,7 +158,8 @@ def _build_mappings(raw: dict[str, Any]) -> _Mappings:
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = dict(options)
     raw_maps = opts.pop("mappings", {}) or {}
-    return MazakSinumerik840D(
-        name, endpoint, bus,
-        MazakSinumerik840DOptions(mappings=_build_mappings(raw_maps), **opts),
-    )
+    opt = MazakSinumerik840DOptions(mappings=_build_mappings(raw_maps), **opts)
+    store = S7Store()
+    io = SignalBank(owner=name)
+    server = S7Server(host=endpoint.host, port=endpoint.port, store=store, backend=opt.s7_backend)
+    return MazakSinumerik840D(name, endpoint, bus, opt, io=io, store=store, server=server)
