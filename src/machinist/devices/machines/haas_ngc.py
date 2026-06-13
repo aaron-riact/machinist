@@ -80,6 +80,7 @@ class HaasNGC(Device):
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: HaasNGCOptions,
+        *, dprint: BroadcastServer | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.state = MachineState()
@@ -93,47 +94,11 @@ class HaasNGC(Device):
         self.programs = ProgramLibrary(root=root)
         self.interpreter = Interpreter(state=self.state)
 
-        self._mdc = LineServer(
-            endpoint.host, endpoint.port,
-            session_factory=stateless(self._handle_mdc),
-            framer=CRLF,
-        )
-
-        self._dprint: BroadcastServer | None = None
-        if options.dprint_port is not None:
-            self._dprint = BroadcastServer(endpoint.host, options.dprint_port)
-            self.state.dprint_subscribers.append(self._dprint.broadcast)
-
+        self._mdc: LineServer | None = None
+        self._dprint: BroadcastServer | None = dprint
         self._mtc: MTConnectAgent | None = None
-        if options.mtconnect_port is not None:
-            self._mtc = MTConnectAgent(
-                endpoint.host, options.mtconnect_port,
-                render=lambda endpoint: render_mtconnect(self.state, endpoint),
-            )
-
         self._smb = None
-        if options.smb is not None:
-            smb_opts = options.smb
-            cfg = SmbConfig(
-                host=endpoint.host,
-                port=smb_opts.port,
-                share_name=smb_opts.share_name,
-                root=self.programs.root,
-                smb1=smb_opts.smb1,
-            )
-            self._smb = build_share(smb_opts.backend, cfg)
-
         self._opcua = None
-        if options.opcua is not None:
-            opc = options.opcua
-            from ...transport.opcua_server import OpcUaServer
-
-            self._opcua = OpcUaServer(
-                endpoint.host,
-                opc.port,
-                device_name=name,
-                readers=machine_readers(self.state),
-            )
 
         self._runner: threading.Thread | None = None
         self._run_lock = threading.Lock()
@@ -218,4 +183,36 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         opts["smb"] = SmbDeviceOptions(**opts["smb"]) if opts["smb"] else None
     if "opcua" in opts:
         opts["opcua"] = OpcUaDeviceOptions(**opts["opcua"]) if opts["opcua"] else None
-    return HaasNGC(name, endpoint, bus, HaasNGCOptions(**opts))
+    opt = HaasNGCOptions(**opts)
+    dprint = BroadcastServer(endpoint.host, opt.dprint_port) if opt.dprint_port is not None else None
+    device = HaasNGC(name, endpoint, bus, opt, dprint=dprint)
+    if dprint is not None:
+        device.state.dprint_subscribers.append(dprint.broadcast)
+    device._mdc = LineServer(
+        endpoint.host, endpoint.port,
+        session_factory=stateless(device._handle_mdc),
+        framer=CRLF,
+    )
+    if opt.mtconnect_port is not None:
+        device._mtc = MTConnectAgent(
+            endpoint.host, opt.mtconnect_port,
+            render=lambda ep: render_mtconnect(device.state, ep),
+        )
+    if opt.smb is not None:
+        smb_opts = opt.smb
+        cfg = SmbConfig(
+            host=endpoint.host,
+            port=smb_opts.port,
+            share_name=smb_opts.share_name,
+            root=device.programs.root,
+            smb1=smb_opts.smb1,
+        )
+        device._smb = build_share(smb_opts.backend, cfg)
+    if opt.opcua is not None:
+        from ...transport.opcua_server import OpcUaServer
+        device._opcua = OpcUaServer(
+            endpoint.host, opt.opcua.port,
+            device_name=name,
+            readers=machine_readers(device.state),
+        )
+    return device

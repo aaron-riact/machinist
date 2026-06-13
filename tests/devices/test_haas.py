@@ -8,21 +8,46 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.machines.haas_ngc import HaasNGC, HaasNGCOptions
+from machinist.transport.broadcast import BroadcastServer
+from machinist.transport.framing import CRLF
+from machinist.transport.line_server import LineServer, stateless
+from machinist.transport.mtconnect import MTConnectAgent, render_mtconnect
+from machinist.transport.smb_share import SmbConfig, build_share
 
 from ..conftest import free_port, wait_running
 
 
 def _make(tmp_path, **opts) -> HaasNGC:
+    raw_dprint_port = opts.pop("dprint_port", None)
+    raw_mtconnect_port = opts.pop("mtconnect_port", None)
+    raw_smb = opts.pop("smb", None)
+    raw_opcua = opts.pop("opcua", None)
+    host = "127.0.0.1"
+    port = free_port()
+    dprint = BroadcastServer(host, raw_dprint_port) if raw_dprint_port is not None else None
     otp = HaasNGCOptions(
         doors=tuple(opts.pop("doors", ["main"])),
         program_folder=opts.pop("program_folder", str(tmp_path)),
-        dprint_port=opts.pop("dprint_port", None),
-        mtconnect_port=opts.pop("mtconnect_port", None),
-        smb=opts.pop("smb", None),
-        opcua=opts.pop("opcua", None),
+        dprint_port=raw_dprint_port,
+        mtconnect_port=raw_mtconnect_port,
+        smb=raw_smb,
+        opcua=raw_opcua,
     )
     bus = EventBus()
-    d = HaasNGC("haas1", Endpoint("127.0.0.1", free_port()), bus, otp)
+    d = HaasNGC("haas1", Endpoint(host, port), bus, otp, dprint=dprint)
+    if dprint is not None:
+        d.state.dprint_subscribers.append(dprint.broadcast)
+    d._mdc = LineServer(host, port, session_factory=stateless(d._handle_mdc), framer=CRLF)
+    if raw_mtconnect_port is not None:
+        d._mtc = MTConnectAgent(host, raw_mtconnect_port, render=lambda ep: render_mtconnect(d.state, ep))
+    if raw_smb is not None:
+        smb_opts = raw_smb
+        cfg = SmbConfig(host=host, port=smb_opts.port, share_name=smb_opts.share_name, root=d.programs.root, smb1=smb_opts.smb1)
+        d._smb = build_share(smb_opts.backend, cfg)
+    if raw_opcua is not None:
+        from machinist.transport.opcua_server import OpcUaServer
+        from machinist.devices.machines.state import machine_readers
+        d._opcua = OpcUaServer(host, raw_opcua.port, device_name="haas1", readers=machine_readers(d.state))
     d.start()
     wait_running(d)
     return d
