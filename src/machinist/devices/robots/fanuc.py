@@ -12,6 +12,7 @@ wire to it through ``io_links``.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from ...core.events import EventBus
@@ -20,9 +21,20 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
-from .arm import RobotArm, arm_from_options
+from .arm import ArmOptions, RobotArm, arm_from_options
 
 FANUC_PORT = 18735  # fanucpy default Karel port
+
+
+@dataclass(frozen=True, slots=True)
+class FanucKarelServerOptions:
+    joint_count: int = 6
+    kinematics: dict[str, Any] | None = None
+    backend: str | None = None
+    dh_params: dict[str, list[float]] | None = None
+    urdf: str | None = None
+    digital_outputs: int = 16
+    digital_inputs: int = 16
 
 
 class FanucKarelServer(LineServerDevice):
@@ -31,12 +43,22 @@ class FanucKarelServer(LineServerDevice):
     FRAMER = NEWLINE
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: FanucKarelServerOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        digital_outputs = int(options.get("digital_outputs", 16))
-        digital_inputs = int(options.get("digital_inputs", 16))
-        self.arm = arm_from_options(options)
+        self.arm = arm_from_options(ArmOptions(
+            joint_count=options.joint_count,
+            kinematics=options.kinematics,
+            backend=options.backend,
+            dh_params=options.dh_params,
+            urdf=options.urdf,
+        ))
+        self.arm.start_ticker()
+        self.io = SignalBank(owner=name)
+        for i in range(1, options.digital_outputs + 1):
+            self.io.declare(f"do{i}", Direction.OUTPUT)
+        for i in range(1, options.digital_inputs + 1):
+            self.io.declare(f"di{i}", Direction.INPUT)
         self.arm.start_ticker()
         self.io = SignalBank(owner=name)
         for i in range(1, digital_outputs + 1):
@@ -90,4 +112,4 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
 
 @register("fanuc_r30ib", default_port=FANUC_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    return FanucKarelServer(name, endpoint, bus, options)
+    return FanucKarelServer(name, endpoint, bus, FanucKarelServerOptions(**options))

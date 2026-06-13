@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ...core.device import Device
@@ -23,7 +24,7 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...srci import SrciServer
 from ...transport.message import FrameHandler, open_server
-from .arm import RobotArm, arm_from_options, arm_readers
+from .arm import ArmOptions, RobotArm, arm_from_options, arm_readers
 
 if TYPE_CHECKING:
     from ...transport.opcua_server import OpcUaServer
@@ -41,7 +42,18 @@ def protocols() -> tuple[str, ...]:
     return tuple(_PROTOCOLS)
 
 
-@register("robot", default_port=15001)
+@dataclass(frozen=True, slots=True)
+class RobotDeviceOptions:
+    joint_count: int = 6
+    kinematics: dict[str, Any] | None = None
+    backend: str | None = None
+    dh_params: dict[str, list[float]] | None = None
+    urdf: str | None = None
+    protocol: str = "srci"
+    transport: str = "tcp"
+    opcua: dict[str, Any] | None = None
+
+
 class RobotDevice(Device):
     """A robot arm served over a configurable protocol + transport."""
 
@@ -49,21 +61,27 @@ class RobotDevice(Device):
     DEFAULT_PORT = 15001
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: RobotDeviceOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        protocol = str(options.get("protocol", "srci"))
-        transport = str(options.get("transport", "tcp"))
+        protocol = options.protocol
+        transport = options.transport
         try:
             factory = _PROTOCOLS[protocol]
         except KeyError:
             raise ValueError(
                 f"unknown robot protocol {protocol!r}; have {protocols()}"
             ) from None
-        self.arm = arm_from_options(options)
+        self.arm = arm_from_options(ArmOptions(
+            joint_count=options.joint_count,
+            kinematics=options.kinematics,
+            backend=options.backend,
+            dh_params=options.dh_params,
+            urdf=options.urdf,
+        ))
         self._handler = factory(self.arm)
         self._server = open_server(transport, endpoint.host, endpoint.port)
-        self._opcua = _maybe_opcua(name, endpoint.host, options.get("opcua"), self.arm)
+        self._opcua = _maybe_opcua(name, endpoint.host, options.opcua, self.arm)
 
     def _run(self, stop: threading.Event) -> None:
         self.arm.start_ticker()
@@ -124,3 +142,8 @@ def _maybe_opcua(
         device_name=name,
         readers=arm_readers(arm),
     )
+
+
+@register("robot", default_port=15001)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
+    return RobotDevice(name, endpoint, bus, RobotDeviceOptions(**options))
