@@ -46,16 +46,24 @@ class _Mappings:
     extra: tuple[_DBMapping, ...] = field(default_factory=tuple)
 
 
+from .state import MachineState
+
+
+@dataclass(frozen=True, slots=True)
+class MazakSinumerik840DOptions:
+    mappings: dict[str, Any] = field(default_factory=dict)
+    s7_backend: str = "stub"
+
+
 class MazakSinumerik840D(Device):
     kind = "mazak_840d"
     DEFAULT_PORT = 102
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSinumerik840DOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        raw_maps = options.get("mappings") or {}
-        self._maps = _build_mappings(raw_maps)
+        self._maps = _build_mappings(options.mappings)
         self.state = MachineState()
         self.state.door("main")
         self.io = SignalBank(owner=name)
@@ -70,7 +78,7 @@ class MazakSinumerik840D(Device):
             host=endpoint.host,
             port=endpoint.port,
             store=self._store,
-            backend=options.get("s7_backend", "stub"),
+            backend=options.s7_backend,
         )
         # Sync IO -> S7 store and back.
         self._wire_signals()
@@ -149,4 +157,4 @@ def _build_mappings(raw: dict[str, Any]) -> _Mappings:
 
 @register("mazak_840d", default_port=102)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return MazakSinumerik840D(name, endpoint, bus, options)
+    return MazakSinumerik840D(name, endpoint, bus, MazakSinumerik840DOptions(**options))
