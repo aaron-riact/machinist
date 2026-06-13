@@ -4,12 +4,12 @@ import time
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.grippers.pneumatic import PneumaticGripper
+from machinist.devices.grippers.pneumatic import PneumaticGripper, PneumaticGripperOptions
 
 
 def test_open_close_cycle() -> None:
     gripper = PneumaticGripper(
-        "g1", Endpoint("127.0.0.1", 0), EventBus(), {"settle_seconds": 0.05}
+        "g1", Endpoint("127.0.0.1", 0), EventBus(), PneumaticGripperOptions(settle_seconds=0.05)
     )
     gripper.start()
     try:

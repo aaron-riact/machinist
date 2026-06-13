@@ -23,7 +23,7 @@ from ...core.types import Endpoint
 
 
 @dataclass(frozen=True, slots=True)
-class _Settings:
+class PneumaticGripperOptions:
     settle_seconds: float = 0.3
 
 
@@ -31,10 +31,10 @@ class PneumaticGripper(Device):
     kind = "pneumatic_gripper"
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: PneumaticGripperOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self._settings = _Settings(**options)
+        self._settings = options
         self.io = SignalBank(owner=name)
         self._cmd_open = self.io.declare("cmd_open", Direction.INPUT)
         self._cmd_close = self.io.declare("cmd_close", Direction.INPUT)
@@ -77,4 +77,4 @@ class PneumaticGripper(Device):
 
 @register("pneumatic_gripper", default_port=0)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return PneumaticGripper(name, endpoint, bus, options)
+    return PneumaticGripper(name, endpoint, bus, PneumaticGripperOptions(**options))
