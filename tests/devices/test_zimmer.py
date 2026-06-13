@@ -5,14 +5,17 @@ import urllib.request
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.grippers.zimmer_ged6000il import ZimmerGED6000IL
+from machinist.devices.grippers.zimmer_ged6000il import (
+    ZimmerGED6000IL,
+    ZimmerGED6000ILOptions,
+)
 
 from ..conftest import free_port, wait_running
 
 
 def test_iolink_http_round_trip() -> None:
     port = free_port()
-    device = ZimmerGED6000IL("z1", Endpoint("127.0.0.1", port), EventBus(), {})
+    device = ZimmerGED6000IL("z1", Endpoint("127.0.0.1", port), EventBus(), ZimmerGED6000ILOptions())
     device.start()
     try:
         wait_running(device)

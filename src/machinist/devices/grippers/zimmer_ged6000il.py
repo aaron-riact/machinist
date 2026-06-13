@@ -20,6 +20,11 @@ from ...transport.iolink_http_master import IOLinkHttpMaster, IOLinkPort
 
 
 @dataclass(slots=True)
+class ZimmerGED6000ILOptions:
+    initial_diameter_mm: float = 75.0
+
+
+@dataclass(slots=True)
 class _State:
     diameter_mm: float = 75.0
     target_mm: float = 75.0
@@ -34,10 +39,10 @@ class ZimmerGED6000IL(Device, IOLinkPort):
     DEFAULT_PORT = 80
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: ZimmerGED6000ILOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self._state = _State(diameter_mm=options.get("initial_diameter_mm", 75.0))
+        self._state = _State(diameter_mm=options.initial_diameter_mm)
         self._state.target_mm = self._state.diameter_mm
         self._state_lock = threading.Lock()
         self._master = IOLinkHttpMaster(host=endpoint.host, port=endpoint.port, port_device=self)
@@ -86,4 +91,4 @@ class ZimmerGED6000IL(Device, IOLinkPort):
 
 @register("zimmer_ged6000il", default_port=80)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    return ZimmerGED6000IL(name, endpoint, bus, options)
+    return ZimmerGED6000IL(name, endpoint, bus, ZimmerGED6000ILOptions(**options))
