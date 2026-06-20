@@ -65,9 +65,9 @@ STATUS_GRIPPED = 0x02
 
 #: Default finger geometry for the 3FG25 gripper (.1 mm units).
 #: The 3FG15 shares the same register map but with different defaults.
-FINGER_LENGTH_25_TENTHS = 485  # 48.5 mm
-FINGERTIP_OFFSET_25_HUNDREDTHS = 650  # 6.5 mm (.01 mm units)
-FINGER_POSITION_25_TENTHS = 20  # 2.0 mm
+FINGER_LENGTH_25_TENTHS = 0  # 48.5 mm
+FINGERTIP_OFFSET_25_HUNDREDTHS = 0  # 6.5 mm (.01 mm units)
+FINGER_POSITION_25_TENTHS = 0  # 2.0 mm
 
 
 @dataclass(slots=True)
