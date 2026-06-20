@@ -1,0 +1,4 @@
+
+devices:
+  - name: gripper
+    kind: onrobot_3fg25

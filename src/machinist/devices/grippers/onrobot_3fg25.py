@@ -2,17 +2,28 @@
 
 Spec reference (public): https://onrobot.com/en/products/3fg25
 The physical gripper exposes its full state via Modbus holding
-registers on TCP port 502. We emulate the canonical subset:
+registers on TCP port 502.
 
-============ ====== ====================
-Register     Mode   Meaning
-============ ====== ====================
-0x0100       R/W    Target diameter (.1 mm)
-0x0101       R/W    Target force (N)
-0x0102       R/W    Grip command (0/1)
-0x0200       R      Actual diameter (.1 mm)
-0x0201       R      Status flags (bit0=busy, bit1=gripped)
-============ ====== ====================
+============ ========== ===================================
+Address      Access     Meaning
+============ ========== ===================================
+0x0000       Write      Target force (N)
+0x0001       Write      Target diameter (.1 mm)
+0x0002       Write      Grip type
+0x0003       Write      Control
+0x0100       Read       Status flags
+0x0101       Read       Raw diameter (.1 mm)
+0x0102       Read       Diameter w/ fingertip offset (.1 mm)
+0x0103       Read       Force applied (N)
+0x010E       Read       Finger length (.1 mm)
+0x0110       Read       Finger position (.1 mm)
+0x0111       Read       Fingertip offset (.1 mm)
+0x0201       Read       Minimum diameter (.1 mm)
+0x0202       Read       Maximum diameter (.1 mm)
+0x0401       Read/Write Set finger length (.1 mm)
+0x0403       Read/Write Set finger position (.1 mm)
+0x0404       Read/Write Set fingertip offset (.1 mm)
+============ ========== ===================================
 """
 
 from __future__ import annotations
@@ -27,20 +38,45 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
 
-REG_TARGET_DIAMETER = 0x0100
-REG_TARGET_FORCE = 0x0101
-REG_GRIP_COMMAND = 0x0102
-REG_ACTUAL_DIAMETER = 0x0200
-REG_STATUS = 0x0201
+# --- write registers --------------------------------------------------------
+REG_TARGET_FORCE = 0x0000
+REG_TARGET_DIAMETER = 0x0001
+REG_GRIP_TYPE = 0x0002
+REG_CONTROL = 0x0003
+
+# --- read-only registers ----------------------------------------------------
+REG_STATUS = 0x0100
+REG_RAW_DIAMETER = 0x0101
+REG_DIAMETER_WITH_OFFSET = 0x0102
+REG_FORCE_APPLIED = 0x0103
+REG_FINGER_LENGTH = 0x010E
+REG_FINGER_POSITION = 0x0110
+REG_FINGERTIP_OFFSET = 0x0111
+REG_MIN_DIAMETER = 0x0201
+REG_MAX_DIAMETER = 0x0202
+
+# --- read/write registers ---------------------------------------------------
+REG_SET_FINGER_LENGTH = 0x0401
+REG_SET_FINGER_POSITION = 0x0403
+REG_SET_FINGERTIP_OFFSET = 0x0404
 
 STATUS_BUSY = 0x01
 STATUS_GRIPPED = 0x02
+
+#: Default finger geometry for the 3FG25 gripper (.1 mm units).
+#: The 3FG15 shares the same register map but with different defaults.
+FINGER_LENGTH_25_TENTHS = 485  # 48.5 mm
+FINGERTIP_OFFSET_25_TENTHS = 65  # 6.5 mm
+FINGER_POSITION_25_TENTHS = 20  # 2.0 mm
 
 
 @dataclass(slots=True)
 class OnRobot3FG25Options:
     initial_diameter_mm: float = 75.0
     travel_mm_per_sec: float = 60.0
+    finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
+    fingertip_offset_tenths: int = FINGERTIP_OFFSET_25_TENTHS
+    finger_position_tenths: int = FINGER_POSITION_25_TENTHS
 
 
 @dataclass(slots=True)
@@ -49,6 +85,11 @@ class _State:
     target_tenths: int = 750
     force: int = 40
     grip: bool = False
+    grip_type: int = 0
+    control: int = 0
+    finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
+    finger_position_tenths: int = FINGER_POSITION_25_TENTHS
+    fingertip_offset_tenths: int = FINGERTIP_OFFSET_25_TENTHS
     busy: bool = False
     gripped: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -72,23 +113,42 @@ class OnRobot3FG25(Device):
         s = self._state
         with s.lock:
             return {
-                REG_TARGET_DIAMETER: s.target_tenths,
                 REG_TARGET_FORCE: s.force,
-                REG_GRIP_COMMAND: int(s.grip),
-                REG_ACTUAL_DIAMETER: s.actual_tenths,
+                REG_TARGET_DIAMETER: s.target_tenths,
+                REG_GRIP_TYPE: s.grip_type,
+                REG_CONTROL: s.control,
                 REG_STATUS: (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0),
+                REG_RAW_DIAMETER: s.actual_tenths,
+                REG_DIAMETER_WITH_OFFSET: max(0, s.actual_tenths - s.fingertip_offset_tenths),
+                REG_FORCE_APPLIED: s.force,
+                REG_FINGER_LENGTH: s.finger_length_tenths,
+                REG_FINGER_POSITION: s.finger_position_tenths,
+                REG_FINGERTIP_OFFSET: s.fingertip_offset_tenths,
+                REG_MIN_DIAMETER: 0,
+                REG_MAX_DIAMETER: 1000,  # 100 mm
+                REG_SET_FINGER_LENGTH: s.finger_length_tenths,
+                REG_SET_FINGER_POSITION: s.finger_position_tenths,
+                REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_tenths,
             }.get(address, 0)
 
     def _on_write(self, address: int, value: int) -> None:
         s = self._state
         with s.lock:
-            if address == REG_TARGET_DIAMETER:
-                s.target_tenths = value
-            elif address == REG_TARGET_FORCE:
+            if address == REG_TARGET_FORCE:
                 s.force = value
-            elif address == REG_GRIP_COMMAND:
-                s.grip = bool(value)
-        if address in (REG_TARGET_DIAMETER, REG_GRIP_COMMAND):
+            elif address == REG_TARGET_DIAMETER:
+                s.target_tenths = value
+            elif address == REG_GRIP_TYPE:
+                s.grip_type = value
+            elif address == REG_CONTROL:
+                s.grip = bool(value & 0x01)
+            elif address == REG_SET_FINGER_LENGTH:
+                s.finger_length_tenths = value
+            elif address == REG_SET_FINGER_POSITION:
+                s.finger_position_tenths = value
+            elif address == REG_SET_FINGERTIP_OFFSET:
+                s.fingertip_offset_tenths = value
+        if address in (REG_TARGET_DIAMETER, REG_CONTROL):
             self._kick()
 
     def _kick(self) -> None:
@@ -134,7 +194,12 @@ class OnRobot3FG25(Device):
 @register("onrobot_3fg25", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = OnRobot3FG25Options(**options)
-    state = _State(actual_tenths=int(opts.initial_diameter_mm * 10))
+    state = _State(
+        actual_tenths=int(opts.initial_diameter_mm * 10),
+        finger_length_tenths=opts.finger_length_tenths,
+        finger_position_tenths=opts.finger_position_tenths,
+        fingertip_offset_tenths=opts.fingertip_offset_tenths,
+    )
     state.target_tenths = state.actual_tenths
     device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
     device._server = HoldingRegisterServer(
