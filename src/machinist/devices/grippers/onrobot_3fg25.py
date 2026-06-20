@@ -4,6 +4,9 @@ Spec reference (public): https://onrobot.com/en/products/3fg25
 The physical gripper exposes its full state via Modbus holding
 registers on TCP port 502.
 
+Device-specific registers
+=========================
+
 ============ ========== ===================================
 Address      Access     Meaning
 ============ ========== ===================================
@@ -24,6 +27,18 @@ Address      Access     Meaning
 0x0403       Read/Write Set finger position (.1 mm)
 0x0404       Read/Write Set fingertip offset (.1 mm)
 ============ ========== ===================================
+
+Common registers (all OnRobot grippers)
+========================================
+
+============ ========== ===============================================
+Address      Access     Meaning
+============ ========== ===============================================
+0x0600       Read       Product code (3FG25 = 0x71, 3FG15 = 0x70)
+0x0604       Read       Firmware version: upper byte = major, lower = minor
+0x0605       Read       Firmware build number
+0x0609-0x0618  Read     Serial number (32 bytes, 2 ASCII chars per register)
+============ ========== ===============================================
 """
 
 from __future__ import annotations
@@ -63,6 +78,17 @@ REG_SET_FINGERTIP_OFFSET = 0x0404
 STATUS_BUSY = 0x01
 STATUS_GRIPPED = 0x02
 
+# --- common registers (all OnRobot grippers) --------------------------------
+REG_PRODUCT_CODE = 0x0600
+REG_FW_MAJOR_MINOR = 0x0604
+REG_FW_BUILD = 0x0605
+REG_SERIAL_BASE = 0x0609
+REG_SERIAL_END = 0x0618
+
+#: Product codes from the OnRobot common register spec.
+PRODUCT_3FG25 = 0x71
+PRODUCT_3FG15 = 0x70
+
 #: Default finger geometry for the 3FG25 gripper (.1 mm units).
 #: The 3FG15 shares the same register map but with different defaults.
 FINGER_LENGTH_25_TENTHS = 0  # 48.5 mm
@@ -92,6 +118,11 @@ class _State:
     fingertip_offset_hundredths: int = FINGERTIP_OFFSET_25_HUNDREDTHS
     busy: bool = False
     gripped: bool = False
+    product_code: int = PRODUCT_3FG25
+    fw_major: int = 0
+    fw_minor: int = 0
+    fw_build: int = 0
+    serial: str = ""
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -112,6 +143,8 @@ class OnRobot3FG25(Device):
     def _on_read(self, address: int) -> int:
         s = self._state
         with s.lock:
+            if REG_SERIAL_BASE <= address <= REG_SERIAL_END:
+                return self._serial_register(address, s.serial)
             return {
                 REG_TARGET_FORCE: s.force,
                 REG_TARGET_DIAMETER: s.target_tenths,
@@ -129,7 +162,18 @@ class OnRobot3FG25(Device):
                 REG_SET_FINGER_LENGTH: s.finger_length_tenths,
                 REG_SET_FINGER_POSITION: s.finger_position_tenths,
                 REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
+                REG_PRODUCT_CODE: s.product_code,
+                REG_FW_MAJOR_MINOR: (s.fw_major << 8) | s.fw_minor,
+                REG_FW_BUILD: s.fw_build,
             }.get(address, 0)
+
+    @staticmethod
+    def _serial_register(address: int, serial: str) -> int:
+        """Encode serial bytes at ``address`` as two ASCII chars in a 16-bit word."""
+        idx = (address - REG_SERIAL_BASE) * 2
+        hi = ord(serial[idx]) if idx < len(serial) else 0
+        lo = ord(serial[idx + 1]) if idx + 1 < len(serial) else 0
+        return (hi << 8) | lo
 
     def _on_write(self, address: int, value: int) -> None:
         s = self._state
