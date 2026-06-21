@@ -46,13 +46,21 @@ class HoldingRegisterServer:
         port: int,
         on_read: ReadCallback,
         on_write: WriteCallback,
+        on_connect_change: Callable[[int], None] | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._on_read = on_read
         self._on_write = on_write
+        self._on_connect_change = on_connect_change
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
+        self._client_count = 0
+        self._lock = threading.Lock()
+
+    @property
+    def client_count(self) -> int:
+        return self._client_count
 
     def serve_forever(self, ready: threading.Event | None = None) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -70,6 +78,11 @@ class HoldingRegisterServer:
                     continue
                 except OSError:
                     return
+                with self._lock:
+                    self._client_count += 1
+                    cb = self._on_connect_change
+                if cb is not None:
+                    cb(self._client_count)
                 threading.Thread(target=self._serve, args=(client,), daemon=True).start()
         finally:
             if self._sock is not None:
@@ -101,6 +114,12 @@ class HoldingRegisterServer:
                     return
                 client.sendall(_MBAP.pack(txn, proto, len(response) + 1, unit) + response)
         finally:
+            with self._lock:
+                self._client_count -= 1
+                cb = self._on_connect_change
+                count = self._client_count
+            if cb is not None:
+                cb(count)
             client.close()
 
     def _handle(self, body: bytes) -> bytes | None:

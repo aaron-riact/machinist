@@ -180,8 +180,7 @@ class DeviceDetail extends HTMLElement {
     const summary = tile("Modbus", `
       <dl class="kv">
         <dt>mode</dt><dd>${esc(e.mode)}</dd>
-        <dt>transport</dt><dd class="${e.transport_ready ? "good" : "bad"}">${e.transport_ready ? "ready" : "offline"}</dd>
-        <dt>peer</dt><dd class="${e.peer_connected ? "good" : ""}">${e.peer_connected ? "connected" : "waiting"}</dd>
+        <dt>clients</dt><dd>${+e.clients || 0}</dd>
       </dl>`);
     const tables = el("div", "tiles split");
     tables.append(

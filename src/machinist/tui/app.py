@@ -335,12 +335,12 @@ def _snapshot_summary(device: Device) -> str:
     snapshot = _device_snapshot(device)
     if snapshot is None:
         return ""
+    clients = snapshot.get("clients")
+    if clients is not None:
+        return f"\n{snapshot['mode']}   {clients} client(s)"
     peer = "peer up" if snapshot["peer_connected"] else "waiting"
     ready = "ready" if snapshot["transport_ready"] else "offline"
-    return (
-        f"\n{snapshot['mode']}   transport {ready}   "
-        f"link {peer}"
-    )
+    return f"\n{snapshot['mode']}   transport {ready}   link {peer}"
 
 
 def _device_snapshot(device: Device) -> dict[str, object] | None:

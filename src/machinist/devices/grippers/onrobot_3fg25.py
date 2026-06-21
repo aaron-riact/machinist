@@ -252,10 +252,12 @@ class OnRobot3FG25(Device):
         def _reg(signal: str, name: str, offset: str, type_: str, value: object) -> dict[str, str]:
             return {"signal": signal, "name": name, "offset": offset, "type": type_, "value": str(value)}
 
+        server = self._server
         return {
             "mode": "modbus",
-            "transport_ready": True,
-            "peer_connected": True,
+            "transport_ready": server is not None and server._sock is not None,
+            "peer_connected": server is not None and server.client_count > 0,
+            "clients": server.client_count if server is not None else 0,
             "input_block_hex": "",
             "output_block_hex": "",
             "input_fields": [
@@ -378,5 +380,6 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         port=endpoint.port,
         on_read=device._on_read,
         on_write=device._on_write,
+        on_connect_change=lambda count: device.emit("snapshot", clients=count),
     )
     return device
