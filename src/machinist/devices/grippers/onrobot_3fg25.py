@@ -43,6 +43,7 @@ Address      Access     Meaning
 
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,11 +90,55 @@ REG_SERIAL_END = 0x0618
 PRODUCT_3FG25 = 0x71
 PRODUCT_3FG15 = 0x70
 
-#: Default finger geometry for the 3FG25 gripper (.1 mm units).
+# --- finger geometry ---------------------------------------------------------
+
+#: Distance from gripper center to each finger motor (.1 mm).
+MOTOR_RADIUS_TENTHS = 370  # 37.0 mm
+
+#: Offsets for the three finger mounting positions (.1 mm).
+_POSITION_OFFSETS: dict[int, int] = {1: -180, 2: -60, 3: 60}
+
+#: Angular step per tick at 50 Hz (~36 °/s).
+ANGLE_STEP_TENTHS = 7  # 0.7 degree per tick
+
+#: Default finger geometry for the 3FG25.
 #: The 3FG15 shares the same register map but with different defaults.
-FINGER_LENGTH_25_TENTHS = 0  # 48.5 mm
-FINGERTIP_OFFSET_25_HUNDREDTHS = 0  # 6.5 mm (.01 mm units)
-FINGER_POSITION_25_TENTHS = 0  # 2.0 mm
+FINGER_LENGTH_25_TENTHS = 485  # 48.5 mm
+FINGERTIP_OFFSET_25_HUNDREDTHS = 650  # 6.5 mm
+FINGER_POSITION_25 = 2  # mounting position (1 / 2 / 3)
+
+
+def _angle_to_width(
+    angle_tenths: int,
+    finger_length_tenths: int,
+    position_offset_tenths: int,
+    fingertip_offset_tenths: int,
+) -> int:
+    angle_rad = math.radians(angle_tenths / 10)
+    radial = (
+        MOTOR_RADIUS_TENTHS
+        + finger_length_tenths * math.cos(angle_rad)
+        + position_offset_tenths
+        - fingertip_offset_tenths
+    )
+    return max(0, int(2 * radial))
+
+
+def _width_to_angle(
+    width_tenths: int,
+    finger_length_tenths: int,
+    position_offset_tenths: int,
+    fingertip_offset_tenths: int,
+) -> int:
+    radial = width_tenths / 2
+    cos_a = (
+        radial
+        - MOTOR_RADIUS_TENTHS
+        - position_offset_tenths
+        + fingertip_offset_tenths
+    ) / finger_length_tenths
+    cos_a = max(-1.0, min(1.0, cos_a))
+    return int(round(math.degrees(math.acos(cos_a)) * 10))
 
 
 @dataclass(slots=True)
@@ -102,19 +147,19 @@ class OnRobot3FG25Options:
     travel_mm_per_sec: float = 60.0
     finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
     fingertip_offset_hundredths: int = FINGERTIP_OFFSET_25_HUNDREDTHS
-    finger_position_tenths: int = FINGER_POSITION_25_TENTHS
+    finger_position: int = FINGER_POSITION_25
 
 
 @dataclass(slots=True)
 class _State:
-    actual_tenths: int = 750
-    target_tenths: int = 750
+    actual_angle_tenths: int = 0
+    target_angle_tenths: int = 0
     force: int = 40
     grip: bool = False
     grip_type: int = 0
     control: int = 0
     finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
-    finger_position_tenths: int = FINGER_POSITION_25_TENTHS
+    finger_position: int = FINGER_POSITION_25
     fingertip_offset_hundredths: int = FINGERTIP_OFFSET_25_HUNDREDTHS
     busy: bool = False
     gripped: bool = False
@@ -140,6 +185,26 @@ class OnRobot3FG25(Device):
         self._server: HoldingRegisterServer | None = None
         self._mover: threading.Thread | None = None
 
+    def _width(self) -> int:
+        s = self._state
+        pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
+        return _angle_to_width(
+            s.actual_angle_tenths,
+            s.finger_length_tenths,
+            pos_offset,
+            s.fingertip_offset_hundredths//10,
+        )
+
+    def _target_width(self) -> int:
+        s = self._state
+        pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
+        return _angle_to_width(
+            s.target_angle_tenths,
+            s.finger_length_tenths,
+            pos_offset,
+            s.fingertip_offset_hundredths//10,
+        )
+
     def _on_read(self, address: int) -> int:
         s = self._state
         with s.lock:
@@ -147,20 +212,20 @@ class OnRobot3FG25(Device):
                 return self._serial_register(address, s.serial)
             return {
                 REG_TARGET_FORCE: s.force,
-                REG_TARGET_DIAMETER: s.target_tenths,
+                REG_TARGET_DIAMETER: self._target_width(),
                 REG_GRIP_TYPE: s.grip_type,
                 REG_CONTROL: s.control,
                 REG_STATUS: (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0),
-                REG_RAW_DIAMETER: s.actual_tenths,
-                REG_DIAMETER_WITH_OFFSET: max(0, s.actual_tenths - s.fingertip_offset_hundredths // 10),
+                REG_RAW_DIAMETER: self._width(),
+                REG_DIAMETER_WITH_OFFSET: max(0, self._width() - s.fingertip_offset_hundredths//10 * 2),
                 REG_FORCE_APPLIED: s.force,
                 REG_FINGER_LENGTH: s.finger_length_tenths,
-                REG_FINGER_POSITION: s.finger_position_tenths,
+                REG_FINGER_POSITION: s.finger_position,
                 REG_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
                 REG_MIN_DIAMETER: 0,
-                REG_MAX_DIAMETER: 1000,  # 100 mm
+                REG_MAX_DIAMETER: 1000,
                 REG_SET_FINGER_LENGTH: s.finger_length_tenths,
-                REG_SET_FINGER_POSITION: s.finger_position_tenths,
+                REG_SET_FINGER_POSITION: s.finger_position,
                 REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
                 REG_PRODUCT_CODE: s.product_code,
                 REG_FW_MAJOR_MINOR: (s.fw_major << 8) | s.fw_minor,
@@ -169,7 +234,6 @@ class OnRobot3FG25(Device):
 
     @staticmethod
     def _serial_register(address: int, serial: str) -> int:
-        """Encode serial bytes at ``address`` as two ASCII chars in a 16-bit word."""
         idx = (address - REG_SERIAL_BASE) * 2
         hi = ord(serial[idx]) if idx < len(serial) else 0
         lo = ord(serial[idx + 1]) if idx + 1 < len(serial) else 0
@@ -181,7 +245,10 @@ class OnRobot3FG25(Device):
             if address == REG_TARGET_FORCE:
                 s.force = value
             elif address == REG_TARGET_DIAMETER:
-                s.target_tenths = value
+                pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
+                s.target_angle_tenths = _width_to_angle(
+                    value, s.finger_length_tenths, pos_offset, s.fingertip_offset_hundredths//10,
+                )
             elif address == REG_GRIP_TYPE:
                 s.grip_type = value
             elif address == REG_CONTROL:
@@ -189,7 +256,7 @@ class OnRobot3FG25(Device):
             elif address == REG_SET_FINGER_LENGTH:
                 s.finger_length_tenths = value
             elif address == REG_SET_FINGER_POSITION:
-                s.finger_position_tenths = value
+                s.finger_position = value
             elif address == REG_SET_FINGERTIP_OFFSET:
                 s.fingertip_offset_hundredths = value
         if address in (REG_TARGET_DIAMETER, REG_CONTROL):
@@ -202,23 +269,20 @@ class OnRobot3FG25(Device):
 
     def _move_loop(self) -> None:
         s = self._state
-        step = max(1, int(self._settings.travel_mm_per_sec * 10 / 50))  # 50 Hz
         while not self._stop_event.is_set():
             with s.lock:
-                if s.actual_tenths == s.target_tenths:
+                if s.actual_angle_tenths == s.target_angle_tenths:
                     s.busy = False
                     s.gripped = bool(s.grip)
-                    self.emit("settled", diameter_mm=s.actual_tenths / 10)
+                    width = self._width()
+                    self.emit("settled", diameter_mm=width / 10)
                     return
                 s.busy = True
-                delta = s.target_tenths - s.actual_tenths
-                s.actual_tenths += step if delta > 0 else -step
-                s.actual_tenths = (
-                    min(s.actual_tenths, s.target_tenths)
-                    if delta > 0
-                    else max(s.actual_tenths, s.target_tenths)
-                )
-            self.emit("moving", diameter_mm=s.actual_tenths / 10)
+                delta = s.target_angle_tenths - s.actual_angle_tenths
+                step = min(abs(delta), ANGLE_STEP_TENTHS)
+                s.actual_angle_tenths += step if delta > 0 else -step
+            width = self._width()
+            self.emit("moving", diameter_mm=width / 10)
             self._stop_event.wait(0.02)
 
     def _run(self, stop: threading.Event) -> None:
@@ -238,13 +302,20 @@ class OnRobot3FG25(Device):
 @register("onrobot_3fg25", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = OnRobot3FG25Options(**options)
+    pos_offset = _POSITION_OFFSETS.get(opts.finger_position, 0)
+    initial_angle = _width_to_angle(
+        int(opts.initial_diameter_mm * 10),
+        opts.finger_length_tenths,
+        pos_offset,
+        opts.fingertip_offset_hundredths//10,
+    )
     state = _State(
-        actual_tenths=int(opts.initial_diameter_mm * 10),
+        actual_angle_tenths=initial_angle,
         finger_length_tenths=opts.finger_length_tenths,
-        finger_position_tenths=opts.finger_position_tenths,
+        finger_position=opts.finger_position,
         fingertip_offset_hundredths=opts.fingertip_offset_hundredths,
     )
-    state.target_tenths = state.actual_tenths
+    state.target_angle_tenths = state.actual_angle_tenths
     device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
     device._server = HoldingRegisterServer(
         host=endpoint.host,
