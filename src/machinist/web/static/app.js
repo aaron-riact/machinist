@@ -79,6 +79,7 @@ class DeviceDetail extends HTMLElement {
     if (device.arm) this.append(this._arm(device.arm));
     if (device.machine) this.append(this._machine(device.machine));
     if (device.ethernetip) this.append(this._ethernetip(device.ethernetip));
+    if (device.modbus) this.append(this._modbus(device.modbus));
     if (device.signals) this.append(this._signals(device));
   }
 
@@ -171,6 +172,21 @@ class DeviceDetail extends HTMLElement {
     tables.append(
       tile("Input packet fields", fieldTable(e.input_fields)),
       tile("Output packet fields", fieldTable(e.output_fields)),
+    );
+    return frag(summary, tables, tile("Derived state", fieldTable(e.derived_fields)));
+  }
+
+  _modbus(e) {
+    const summary = tile("Modbus", `
+      <dl class="kv">
+        <dt>mode</dt><dd>${esc(e.mode)}</dd>
+        <dt>transport</dt><dd class="${e.transport_ready ? "good" : "bad"}">${e.transport_ready ? "ready" : "offline"}</dd>
+        <dt>peer</dt><dd class="${e.peer_connected ? "good" : ""}">${e.peer_connected ? "connected" : "waiting"}</dd>
+      </dl>`);
+    const tables = el("div", "tiles split");
+    tables.append(
+      tile("Inputs (writable)", fieldTable(e.input_fields)),
+      tile("Outputs (read-only)", fieldTable(e.output_fields)),
     );
     return frag(summary, tables, tile("Derived state", fieldTable(e.derived_fields)));
   }
@@ -288,7 +304,7 @@ function fieldTable(fields) {
         <tbody>
           ${fields.map((f) => `
             <tr>
-              <td><strong>${esc(f.signal)}</strong><br /><span>${esc(f.name)}</span></td>
+              <td>${esc(f.name)}</td>
               <td>${esc(f.offset)}</td>
               <td>${esc(f.type)}</td>
               <td>${esc(f.value)}</td>

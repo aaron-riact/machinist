@@ -44,6 +44,9 @@ def snapshot_device(device: Any) -> dict[str, Any]:
     ethernetip = _ethernetip(device)
     if ethernetip is not None:
         snap["ethernetip"] = ethernetip
+    modbus = _modbus(device)
+    if modbus is not None:
+        snap["modbus"] = modbus
     programs = getattr(device, "programs", None)
     if programs is not None and hasattr(programs, "list"):
         snap["programs"] = list(programs.list())
@@ -98,6 +101,12 @@ def _machine(state: Any) -> dict[str, Any] | None:
 
 def _ethernetip(device: Any) -> dict[str, Any] | None:
     snapshot = getattr(device, "ethernetip_snapshot", None)
+    if snapshot is None or not callable(snapshot):
+        return None
+    return snapshot()
+
+def _modbus(device: Any) -> dict[str, Any] | None:
+    snapshot = getattr(device, "modbus_snapshot", None)
     if snapshot is None or not callable(snapshot):
         return None
     return snapshot()
