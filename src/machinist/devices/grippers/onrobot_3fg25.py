@@ -66,7 +66,7 @@ STATUS_GRIPPED = 0x02
 #: Default finger geometry for the 3FG25 gripper (.1 mm units).
 #: The 3FG15 shares the same register map but with different defaults.
 FINGER_LENGTH_25_TENTHS = 485  # 48.5 mm
-FINGERTIP_OFFSET_25_TENTHS = 65  # 6.5 mm
+FINGERTIP_OFFSET_25_HUNDREDTHS = 650  # 6.5 mm (.01 mm units)
 FINGER_POSITION_25_TENTHS = 20  # 2.0 mm
 
 
@@ -75,7 +75,7 @@ class OnRobot3FG25Options:
     initial_diameter_mm: float = 75.0
     travel_mm_per_sec: float = 60.0
     finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
-    fingertip_offset_tenths: int = FINGERTIP_OFFSET_25_TENTHS
+    fingertip_offset_hundredths: int = FINGERTIP_OFFSET_25_HUNDREDTHS
     finger_position_tenths: int = FINGER_POSITION_25_TENTHS
 
 
@@ -89,7 +89,7 @@ class _State:
     control: int = 0
     finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
     finger_position_tenths: int = FINGER_POSITION_25_TENTHS
-    fingertip_offset_tenths: int = FINGERTIP_OFFSET_25_TENTHS
+    fingertip_offset_hundredths: int = FINGERTIP_OFFSET_25_HUNDREDTHS
     busy: bool = False
     gripped: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -119,16 +119,16 @@ class OnRobot3FG25(Device):
                 REG_CONTROL: s.control,
                 REG_STATUS: (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0),
                 REG_RAW_DIAMETER: s.actual_tenths,
-                REG_DIAMETER_WITH_OFFSET: max(0, s.actual_tenths - s.fingertip_offset_tenths),
+                REG_DIAMETER_WITH_OFFSET: max(0, s.actual_tenths - s.fingertip_offset_hundredths // 10),
                 REG_FORCE_APPLIED: s.force,
                 REG_FINGER_LENGTH: s.finger_length_tenths,
                 REG_FINGER_POSITION: s.finger_position_tenths,
-                REG_FINGERTIP_OFFSET: s.fingertip_offset_tenths,
+                REG_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
                 REG_MIN_DIAMETER: 0,
                 REG_MAX_DIAMETER: 1000,  # 100 mm
                 REG_SET_FINGER_LENGTH: s.finger_length_tenths,
                 REG_SET_FINGER_POSITION: s.finger_position_tenths,
-                REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_tenths,
+                REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
             }.get(address, 0)
 
     def _on_write(self, address: int, value: int) -> None:
@@ -147,7 +147,7 @@ class OnRobot3FG25(Device):
             elif address == REG_SET_FINGER_POSITION:
                 s.finger_position_tenths = value
             elif address == REG_SET_FINGERTIP_OFFSET:
-                s.fingertip_offset_tenths = value
+                s.fingertip_offset_hundredths = value
         if address in (REG_TARGET_DIAMETER, REG_CONTROL):
             self._kick()
 
@@ -198,7 +198,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         actual_tenths=int(opts.initial_diameter_mm * 10),
         finger_length_tenths=opts.finger_length_tenths,
         finger_position_tenths=opts.finger_position_tenths,
-        fingertip_offset_tenths=opts.fingertip_offset_tenths,
+        fingertip_offset_hundredths=opts.fingertip_offset_hundredths,
     )
     state.target_tenths = state.actual_tenths
     device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
