@@ -116,12 +116,13 @@ def _angle_to_width(
     fingertip_offset_tenths: int,
 ) -> int:
     angle_rad = math.radians(angle_tenths / 10)
-    radial = (
-        MOTOR_RADIUS_TENTHS
-        + finger_length_tenths * math.cos(angle_rad)
-        + position_offset_tenths
-        - fingertip_offset_tenths
+    eff_len = finger_length_tenths + position_offset_tenths
+    radius_sq = (
+        MOTOR_RADIUS_TENTHS**2
+        + eff_len**2
+        + 2 * MOTOR_RADIUS_TENTHS * eff_len * math.cos(angle_rad)
     )
+    radial = math.sqrt(radius_sq) - fingertip_offset_tenths
     return max(0, int(2 * radial))
 
 
@@ -131,13 +132,14 @@ def _width_to_angle(
     position_offset_tenths: int,
     fingertip_offset_tenths: int,
 ) -> int:
-    radial = width_tenths / 2
+    eff_len = finger_length_tenths + position_offset_tenths
+    radial_to_contact = width_tenths / 2
+    radial_to_joint = radial_to_contact + fingertip_offset_tenths
     cos_a = (
-        radial
-        - MOTOR_RADIUS_TENTHS
-        - position_offset_tenths
-        + fingertip_offset_tenths
-    ) / finger_length_tenths
+        radial_to_joint**2
+        - MOTOR_RADIUS_TENTHS**2
+        - eff_len**2
+    ) / (2 * MOTOR_RADIUS_TENTHS * eff_len)
     cos_a = max(-1.0, min(1.0, cos_a))
     return int(round(math.degrees(math.acos(cos_a)) * 10))
 
