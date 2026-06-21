@@ -69,7 +69,6 @@ REG_FORCE_APPLIED = 0x0103
 REG_FINGER_LENGTH = 0x010E
 REG_FINGER_POSITION = 0x0110
 REG_FINGERTIP_OFFSET = 0x0111
-REG_ACTUAL_WIDTH_WITH_OFFSET = 0x0113
 REG_MIN_DIAMETER = 0x0201
 REG_MAX_DIAMETER = 0x0202
 
@@ -221,7 +220,6 @@ class OnRobot3FG25(Device):
                 REG_RAW_DIAMETER: self._width(),
                 REG_DIAMETER_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
                 REG_FORCE_APPLIED: s.force,
-                REG_ACTUAL_WIDTH_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
                 REG_FINGER_LENGTH: s.finger_length_tenths,
                 REG_FINGER_POSITION: s.finger_position,
                 REG_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
@@ -235,7 +233,7 @@ class OnRobot3FG25(Device):
                 REG_FW_BUILD: s.fw_build,
             }.get(address, 0)
 
-    def ethernetip_snapshot(self) -> dict[str, object]:
+    def modbus_snapshot(self) -> dict[str, object]:
         """Expose Modbus register values for the TUI and web interfaces."""
         s = self._state
         status = (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0)
@@ -259,6 +257,15 @@ class OnRobot3FG25(Device):
             "input_block_hex": "",
             "output_block_hex": "",
             "input_fields": [
+                _reg("T_FORCE", "Target force", "0x0000", "int", f"{s.force} (10*%)"),
+                _reg("T_DIA", "Target diameter", "0x0001", "int", f"{target_tenths} (.1 mm)"),
+                _reg("GRIP_TYPE", "Grip type", "0x0002", "int", str(s.grip_type)),
+                _reg("CTRL", "Control", "0x0003", "hex", f"0x{s.control:04X}"),
+                _reg("SET_FLEN", "Set finger length", "0x0401", "int", f"{s.finger_length_tenths} (.1 mm)"),
+                _reg("SET_FPOS", "Set finger position", "0x0403", "int", str(s.finger_position)),
+                _reg("SET_FTOF", "Set fingertip offset", "0x0404", "int", f"{s.fingertip_offset_hundredths} (.01 mm)"),
+            ],
+            "output_fields": [
                 _reg("STATUS", "Status flags", "0x0100", "hex", f"0x{status:04X}"),
                 _reg("RAW_DIA", "Raw diameter", "0x0101", "int", f"{actual_tenths} (.1 mm)"),
                 _reg("DIA_OFF", "Diameter w/ offset", "0x0102", "int", f"{actual_tenths - s.fingertip_offset_hundredths // 10 * 2} (.1 mm)"),
@@ -270,15 +277,6 @@ class OnRobot3FG25(Device):
                 _reg("MAX_DIA", "Maximum diameter", "0x0202", "int", "1400 (.1 mm)"),
                 _reg("PROD", "Product code", "0x0600", "hex", f"0x{s.product_code:02X}"),
                 _reg("FW", "Firmware version", "0x0604", "hex", f"{s.fw_major}.{s.fw_minor}"),
-            ],
-            "output_fields": [
-                _reg("T_FORCE", "Target force", "0x0000", "int", f"{s.force} (10*%)"),
-                _reg("T_DIA", "Target diameter", "0x0001", "int", f"{target_tenths} (.1 mm)"),
-                _reg("GRIP_TYPE", "Grip type", "0x0002", "int", str(s.grip_type)),
-                _reg("CTRL", "Control", "0x0003", "hex", f"0x{s.control:04X}"),
-                _reg("SET_FLEN", "Set finger length", "0x0401", "int", f"{s.finger_length_tenths} (.1 mm)"),
-                _reg("SET_FPOS", "Set finger position", "0x0403", "int", str(s.finger_position)),
-                _reg("SET_FTOF", "Set fingertip offset", "0x0404", "int", f"{s.fingertip_offset_hundredths} (.01 mm)"),
             ],
             "derived_fields": [
                 _reg("DIAMETER", "Actual diameter", "", "mm", f"{actual_tenths / 10:.1f}"),
