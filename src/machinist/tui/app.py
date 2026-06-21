@@ -55,7 +55,7 @@ class MachinistApp(App[None]):
     #signals-row { height: 1fr; }
     #inputs, #outputs { width: 1fr; }
     #detail-lower { height: 40%; }
-    #files, #registers { width: 1fr; border-top: dashed #6e6cd1; }
+    #files, #derived { width: 1fr; border-top: dashed #6e6cd1; }
     #detail-lower.hidden { display: none; }
     RichLog#log { height: 1fr; border: round #6e6cd1; padding: 0 1; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
@@ -100,10 +100,10 @@ class MachinistApp(App[None]):
                         id="files", cursor_type="row", zebra_stripes=True,
                     )
                     yield self.files
-                    self.registers = DataTable(
-                        id="registers", cursor_type="row", zebra_stripes=True,
+                    self.derived = DataTable(
+                        id="derived", cursor_type="row", zebra_stripes=True,
                     )
-                    yield self.registers
+                    yield self.derived
         self._log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
         yield self._log
         self.cmd = Input(placeholder="◇ command (type 'help' for ideas)", id="cmd")
@@ -114,10 +114,10 @@ class MachinistApp(App[None]):
         self.title = "◇ Machinist"
         self.sub_title = f"fleet of {len(self.world.devices)} device(s)"
         self.devices_table.add_columns("name", "kind", "state")
-        self.inputs.add_columns("input", "value")
-        self.outputs.add_columns("output", "value")
+        self.inputs.add_columns("input", "offset", "value")
+        self.outputs.add_columns("output", "offset", "value")
         self.files.add_columns("program")
-        self.registers.add_columns("dir", "field", "offset", "type", "value")
+        self.derived.add_columns("field", "value")
         self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
         self.set_interval(0.1, self._drain)
@@ -169,7 +169,7 @@ class MachinistApp(App[None]):
             self.inputs.clear()
             self.outputs.clear()
             self.files.clear()
-            self.registers.clear()
+            self.derived.clear()
             return
         self._refresh_detail_header(device)
         self.inputs.clear()
@@ -181,9 +181,16 @@ class MachinistApp(App[None]):
                 table = (
                     self.outputs if sig.direction is Direction.OUTPUT else self.inputs
                 )
-                table.add_row(f"{dot} {sig.name}", str(sig.value))
+                table.add_row(f"{dot} {sig.name}", "", str(sig.value))
+        snapshot = _device_snapshot(device)
+        if snapshot is not None:
+            for field in snapshot["input_fields"]:
+                self.inputs.add_row(field["name"], field["offset"], field["value"])
+            for field in snapshot["output_fields"]:
+                self.outputs.add_row(field["name"], field["offset"], field["value"])
+            for field in snapshot["derived_fields"]:
+                self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
         self._refresh_files(device)
-        self._refresh_registers(device)
 
     def _refresh_detail_header(self, device: Device | None = None) -> None:
         current = device or self._lookup(self._selected)
@@ -199,25 +206,6 @@ class MachinistApp(App[None]):
             return
         for name in programs.list():
             self.files.add_row(name)
-
-    def _refresh_registers(self, device: Device) -> None:
-        self.registers.clear()
-        snapshot = _ethernetip_snapshot(device)
-        if snapshot is None:
-            return
-        for direction, fields in [
-            ("IN", snapshot["input_fields"]),
-            ("OUT", snapshot["output_fields"]),
-            ("DRV", snapshot["derived_fields"]),
-        ]:
-            for field in fields:
-                self.registers.add_row(
-                    direction,
-                    f"{field['signal']} {field['name']}",
-                    field["offset"],
-                    field["type"],
-                    field["value"],
-                )
 
     def _lookup(self, name: str | None) -> Device | None:
         if name is None:
@@ -292,7 +280,7 @@ def _detail_header(device: Device) -> str:
         f"lifecycle {_paint_lifecycle(device.lifecycle)}"
         f"{_arm_summary(device)}"
         f"{_machine_summary(device)}"
-        f"{_ethernetip_summary(device)}"
+        f"{_snapshot_summary(device)}"
     )
 
 
@@ -340,23 +328,26 @@ def _machine_summary(device: Device) -> str:
     )
 
 
-def _ethernetip_summary(device: Device) -> str:
-    snapshot = _ethernetip_snapshot(device)
+def _snapshot_summary(device: Device) -> str:
+    snapshot = _device_snapshot(device)
     if snapshot is None:
         return ""
     peer = "peer up" if snapshot["peer_connected"] else "waiting"
     ready = "ready" if snapshot["transport_ready"] else "offline"
     return (
-        f"\neip mode [cyan]{snapshot['mode']}[/]   transport {ready}   "
+        f"\n{snapshot['mode']}   transport {ready}   "
         f"link {peer}"
     )
 
 
-def _ethernetip_snapshot(device: Device) -> dict[str, object] | None:
-    snapshot = getattr(device, "ethernetip_snapshot", None)
-    if snapshot is None or not callable(snapshot):
-        return None
-    return snapshot()
+def _device_snapshot(device: Device) -> dict[str, object] | None:
+    for attr in ("ethernetip_snapshot", "modbus_snapshot"):
+        fn = getattr(device, attr, None)
+        if fn is not None and callable(fn):
+            snap = fn()
+            if snap is not None:
+                return snap
+    return None
 
 
 def _format_event(event: Event) -> str:
