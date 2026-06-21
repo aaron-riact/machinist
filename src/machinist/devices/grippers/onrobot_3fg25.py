@@ -235,6 +235,59 @@ class OnRobot3FG25(Device):
                 REG_FW_BUILD: s.fw_build,
             }.get(address, 0)
 
+    def ethernetip_snapshot(self) -> dict[str, object]:
+        """Expose Modbus register values for the TUI and web interfaces."""
+        s = self._state
+        status = (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0)
+        pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
+        actual_tenths = _angle_to_width(
+            s.actual_angle_tenths, s.finger_length_tenths,
+            pos_offset, s.fingertip_offset_hundredths // 10,
+        )
+        target_tenths = _angle_to_width(
+            s.target_angle_tenths, s.finger_length_tenths,
+            pos_offset, s.fingertip_offset_hundredths // 10,
+        )
+
+        def _reg(signal: str, name: str, offset: str, type_: str, value: object) -> dict[str, str]:
+            return {"signal": signal, "name": name, "offset": offset, "type": type_, "value": str(value)}
+
+        return {
+            "mode": "modbus",
+            "transport_ready": True,
+            "peer_connected": True,
+            "input_block_hex": "",
+            "output_block_hex": "",
+            "input_fields": [
+                _reg("STATUS", "Status flags", "0x0100", "hex", f"0x{status:04X}"),
+                _reg("RAW_DIA", "Raw diameter", "0x0101", "int", f"{actual_tenths} (.1 mm)"),
+                _reg("DIA_OFF", "Diameter w/ offset", "0x0102", "int", f"{actual_tenths - s.fingertip_offset_hundredths // 10 * 2} (.1 mm)"),
+                _reg("FORCE", "Force applied", "0x0103", "int", f"{s.force} (1/10 %)"),
+                _reg("FLENGTH", "Finger length", "0x010E", "int", f"{s.finger_length_tenths} (.1 mm)"),
+                _reg("FPOS", "Finger position", "0x0110", "int", str(s.finger_position)),
+                _reg("FTOFFSET", "Fingertip offset", "0x0111", "int", f"{s.fingertip_offset_hundredths} (.01 mm)"),
+                _reg("MIN_DIA", "Minimum diameter", "0x0201", "int", "250 (.1 mm)"),
+                _reg("MAX_DIA", "Maximum diameter", "0x0202", "int", "1400 (.1 mm)"),
+                _reg("PROD", "Product code", "0x0600", "hex", f"0x{s.product_code:02X}"),
+                _reg("FW", "Firmware version", "0x0604", "hex", f"{s.fw_major}.{s.fw_minor}"),
+            ],
+            "output_fields": [
+                _reg("T_FORCE", "Target force", "0x0000", "int", f"{s.force} (10*%)"),
+                _reg("T_DIA", "Target diameter", "0x0001", "int", f"{target_tenths} (.1 mm)"),
+                _reg("GRIP_TYPE", "Grip type", "0x0002", "int", str(s.grip_type)),
+                _reg("CTRL", "Control", "0x0003", "hex", f"0x{s.control:04X}"),
+                _reg("SET_FLEN", "Set finger length", "0x0401", "int", f"{s.finger_length_tenths} (.1 mm)"),
+                _reg("SET_FPOS", "Set finger position", "0x0403", "int", str(s.finger_position)),
+                _reg("SET_FTOF", "Set fingertip offset", "0x0404", "int", f"{s.fingertip_offset_hundredths} (.01 mm)"),
+            ],
+            "derived_fields": [
+                _reg("DIAMETER", "Actual diameter", "", "mm", f"{actual_tenths / 10:.1f}"),
+                _reg("ANGLE", "Finger angle", "", "deg", f"{s.actual_angle_tenths / 10:.1f}"),
+                _reg("BUSY", "Moving", "", "bit", "1" if s.busy else "0"),
+                _reg("GRIPPED", "Object gripped", "", "bit", "1" if s.gripped else "0"),
+            ],
+        }
+
     @staticmethod
     def _serial_register(address: int, serial: str) -> int:
         idx = (address - REG_SERIAL_BASE) * 2
