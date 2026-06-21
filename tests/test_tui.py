@@ -13,7 +13,7 @@ from machinist.tui.app import (
     _cmd_ls,
     _cmd_run,
     _detail_header,
-    _ethernetip_summary,
+    _snapshot_summary,
     _format_event,
     _machine_summary,
     _paint_lifecycle,
@@ -88,7 +88,7 @@ def test_detail_header_combines_static_and_dynamic_sections() -> None:
     assert "program" in out
 
 
-def test_ethernetip_summary_reports_mode_and_link_state() -> None:
+def test_snapshot_summary_reports_mode_and_link_state() -> None:
     device = SimpleNamespace(
         ethernetip_snapshot=lambda: {
             "mode": "adapter",
@@ -96,12 +96,12 @@ def test_ethernetip_summary_reports_mode_and_link_state() -> None:
             "peer_connected": False,
         }
     )
-    out = _ethernetip_summary(device)
+    out = _snapshot_summary(device)
     assert "adapter" in out
     assert "waiting" in out
 
 
-def test_drain_refreshes_selected_detail_even_without_events() -> None:
+def test_drain_does_not_refresh_when_no_events() -> None:
     calls: list[str] = []
     app = SimpleNamespace(
         _events=queue.Queue(),
@@ -110,6 +110,21 @@ def test_drain_refreshes_selected_detail_even_without_events() -> None:
         _refresh_devices_table=lambda: calls.append("table"),
         _refresh_detail=lambda: calls.append("detail"),
         _refresh_detail_header=lambda: calls.append("header"),
+    )
+    MachinistApp._drain(app)
+    assert calls == []
+
+
+def test_drain_refreshes_detail_on_event_for_selected_device() -> None:
+    q: queue.Queue[Event] = queue.Queue()
+    q.put(Event(device="robot1", kind="moving", payload={"diameter_mm": 42.0}))
+    calls: list[str] = []
+    app = SimpleNamespace(
+        _events=q,
+        _selected="robot1",
+        _log=SimpleNamespace(write=lambda _msg: None),
+        _refresh_devices_table=lambda: calls.append("table"),
+        _refresh_detail=lambda: calls.append("detail"),
     )
     MachinistApp._drain(app)
     assert calls == ["detail"]
