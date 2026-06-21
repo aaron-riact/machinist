@@ -18,6 +18,7 @@ Address         Register                        Access
 270     0x010E  Finger length                   Read only
 272     0x0110  Finger position                 Read only
 273     0x0111  Fingertip offset                Read only
+275     0x0113  Actual width with offset        Read only
 513     0x0201  Minimum diameter                Read only
 514     0x0202  Maximum diameter                Read only
 1025    0x0401  Set finger length               Read/Write

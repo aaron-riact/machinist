@@ -21,6 +21,7 @@ Address      Access     Meaning
 0x010E       Read       Finger length (.1 mm)
 0x0110       Read       Finger position (index 1/2/3)
 0x0111       Read       Fingertip offset (.01 mm)
+0x0113       Read       Actual width with offset (.1 mm)
 0x0201       Read       Minimum diameter (.1 mm)
 0x0202       Read       Maximum diameter (.1 mm)
 0x0401       Read/Write Set finger length (.1 mm)
@@ -68,6 +69,7 @@ REG_FORCE_APPLIED = 0x0103
 REG_FINGER_LENGTH = 0x010E
 REG_FINGER_POSITION = 0x0110
 REG_FINGERTIP_OFFSET = 0x0111
+REG_ACTUAL_WIDTH_WITH_OFFSET = 0x0113
 REG_MIN_DIAMETER = 0x0201
 REG_MAX_DIAMETER = 0x0202
 
@@ -219,6 +221,7 @@ class OnRobot3FG25(Device):
                 REG_RAW_DIAMETER: self._width(),
                 REG_DIAMETER_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
                 REG_FORCE_APPLIED: s.force,
+                REG_ACTUAL_WIDTH_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
                 REG_FINGER_LENGTH: s.finger_length_tenths,
                 REG_FINGER_POSITION: s.finger_position,
                 REG_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
