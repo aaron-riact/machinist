@@ -130,6 +130,7 @@ class MachinistApp(App[None]):
             self._events.put_nowait(event)
 
     def _drain(self) -> None:
+        refresh = False
         for _ in range(50):
             try:
                 event = self._events.get_nowait()
@@ -139,8 +140,9 @@ class MachinistApp(App[None]):
             if event.kind == "state":
                 self._refresh_devices_table()
             if event.device == self._selected:
-                self._refresh_detail()
-                return
+                refresh = True
+        if refresh:
+            self._refresh_detail()
 
     # ----- selection / detail -------------------------------------------
 
