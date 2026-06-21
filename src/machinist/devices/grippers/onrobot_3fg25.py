@@ -10,22 +10,22 @@ Device-specific registers
 ============ ========== ===================================
 Address      Access     Meaning
 ============ ========== ===================================
-0x0000       Write      Target force (N)
+0x0000       Write      Target force (10*%)
 0x0001       Write      Target diameter (.1 mm)
 0x0002       Write      Grip type
 0x0003       Write      Control
 0x0100       Read       Status flags
 0x0101       Read       Raw diameter (.1 mm)
 0x0102       Read       Diameter w/ fingertip offset (.1 mm)
-0x0103       Read       Force applied (N)
+0x0103       Read       Force applied (1/10 %)
 0x010E       Read       Finger length (.1 mm)
-0x0110       Read       Finger position (.1 mm)
-0x0111       Read       Fingertip offset (.1 mm)
+0x0110       Read       Finger position (index 1/2/3)
+0x0111       Read       Fingertip offset (.01 mm)
 0x0201       Read       Minimum diameter (.1 mm)
 0x0202       Read       Maximum diameter (.1 mm)
 0x0401       Read/Write Set finger length (.1 mm)
-0x0403       Read/Write Set finger position (.1 mm)
-0x0404       Read/Write Set fingertip offset (.1 mm)
+0x0403       Read/Write Set finger position (index 1/2/3)
+0x0404       Read/Write Set fingertip offset (.01 mm)
 ============ ========== ===================================
 
 Common registers (all OnRobot grippers)
@@ -217,7 +217,7 @@ class OnRobot3FG25(Device):
                 REG_CONTROL: s.control,
                 REG_STATUS: (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0),
                 REG_RAW_DIAMETER: self._width(),
-                REG_DIAMETER_WITH_OFFSET: max(0, self._width() - s.fingertip_offset_hundredths//10 * 2),
+                REG_DIAMETER_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
                 REG_FORCE_APPLIED: s.force,
                 REG_FINGER_LENGTH: s.finger_length_tenths,
                 REG_FINGER_POSITION: s.finger_position,
