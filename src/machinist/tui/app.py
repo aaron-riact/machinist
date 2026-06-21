@@ -174,6 +174,7 @@ class MachinistApp(App[None]):
         self._refresh_detail_header(device)
         self.inputs.clear()
         self.outputs.clear()
+        self.derived.clear()
         bank = getattr(device, "io", None)
         if bank is not None:
             for sig in bank:
