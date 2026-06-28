@@ -9,10 +9,9 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from threading import RLock
-from typing import Any
+from typing import Any, Union
 
 from eeip import ConnectionType, EEIPClient, RealTimeFormat
-from typing import Any, Union
 
 _EnumValue = Union[RealTimeFormat, ConnectionType]
 
@@ -185,6 +184,7 @@ class EtherNetIPAdapter:
         self._udp_send_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._peer_udp: tuple[str, int] | None = None
+        self._peer_udp_port: int = 0
         self._connection_id_o_t = 0
         self._connection_id_t_o = 0
         self._udp_sequence = 0
@@ -309,7 +309,8 @@ class EtherNetIPAdapter:
                     return
                 command = int.from_bytes(packet[0:2], "little")
                 if command == 0x0065:
-                    client.sendall(_register_session_reply(packet, self._session_handle))
+                    reply = _register_session_reply(packet, self._session_handle)
+                    client.sendall(reply)
                 elif command == 0x0066:
                     with self._lock:
                         self._peer_connected = False
@@ -332,15 +333,38 @@ class EtherNetIPAdapter:
         with self._lock:
             self._connection_id_o_t = int.from_bytes(packet[48:52], "little")
             self._connection_id_t_o = int.from_bytes(packet[52:56], "little")
+            # Parse scanner's UDP port from CPF Item 2 (Socket Address Info 0x8001)
+            item_count = int.from_bytes(packet[30:32], "little")
+            if item_count >= 3 and len(packet) > 40:
+                item1_len = int.from_bytes(packet[38:40], "little")
+                item2_start = 40 + item1_len
+                if (item2_start + 4 <= len(packet)
+                        and int.from_bytes(packet[item2_start:item2_start + 2], "little") == 0x8001):
+                    port_raw = packet[item2_start + 6:item2_start + 8]
+                    self._peer_udp_port = port_raw[0] << 8 | port_raw[1]
             self._peer_connected = True
-        client.sendall(
-            _send_rrdata_reply(
-                packet,
-                service=packet[40] | 0x80,
-                payload=packet[48:60],
-                session_handle=self._session_handle,
-            )
+        path_size = packet[41] if len(packet) > 41 else 0
+        payload = (
+            packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
+            + packet[68:72]        # O→T API (= O→T Requested Packet Rate)
+            + packet[74:78]        # T→O API (= T→O Requested Packet Rate)
+            + (0).to_bytes(2, "little")  # Application Reply Size
         )
+        socket_address = bytearray()
+        socket_address += (0x8001).to_bytes(2, "little")
+        socket_address += (16).to_bytes(2, "little")
+        socket_address += (2).to_bytes(2, "big")          # sin_family = AF_INET
+        socket_address += self._config.udp_port.to_bytes(2, "big")  # sin_port
+        socket_address += (0).to_bytes(4, "big")           # sin_address = 0.0.0.0
+        socket_address += (0).to_bytes(8, "big")           # sin_zero
+        reply = _send_rrdata_reply(
+            packet,
+            service=packet[40] | 0x80,
+            payload=payload,
+            session_handle=self._session_handle,
+            socket_address=bytes(socket_address),
+        )
+        client.sendall(reply)
 
     def _handle_forward_close(self, client: socket.socket, packet: bytes) -> None:
         with self._lock:
@@ -371,14 +395,30 @@ class EtherNetIPAdapter:
             if len(message) < 20:
                 continue
             with self._lock:
-                if int.from_bytes(message[6:10], "little") != self._connection_id_o_t:
+                got_cid = int.from_bytes(message[6:10], "little")
+                if got_cid != self._connection_id_o_t:
                     continue
-                header_offset = 4 if _uses_header32bit(self._config.o_t_realtime_format) else 0
-                payload = message[20 + header_offset :]
-                block = bytes(payload[: self._config.input_length]).ljust(
+                got_type = int.from_bytes(message[14:16], "little")
+                if got_type != 0x00B1:
+                    continue
+                seq_addr_len = int.from_bytes(message[16:18], "little")
+                next_item = 14 + 4 + seq_addr_len
+                if (next_item + 2 <= len(message)
+                        and int.from_bytes(message[next_item:next_item + 2], "little") == 0x00B2):
+                    data_item_len = int.from_bytes(message[next_item + 2:next_item + 4], "little")
+                    raw_payload = message[next_item + 4:next_item + 4 + data_item_len]
+                    if _uses_header32bit(self._config.o_t_realtime_format):
+                        raw_payload = raw_payload[4:]
+                else:
+                    hdr = 4 if _uses_header32bit(self._config.o_t_realtime_format) else 0
+                    raw_payload = message[20 + hdr:]
+                block = bytes(raw_payload[: self._config.input_length]).ljust(
                     self._config.input_length, b"\x00"
                 )
                 self._input_block[:] = block
+                self._input_block[0] = (
+                    self._input_block[0] & 0xFE
+                ) | (self._output_block[0] & 0x01)
                 self._peer_udp = address
                 self._last_received_at = datetime.utcnow()
                 self._peer_connected = True
@@ -389,12 +429,14 @@ class EtherNetIPAdapter:
             with self._lock:
                 udp_socket = self._udp_socket
                 peer_udp = self._peer_udp
+                peer_port = self._peer_udp_port or (peer_udp[1] if peer_udp else 0)
                 connection_id = self._connection_id_t_o
                 payload = bytes(self._output_block)
                 active = self._peer_connected and peer_udp is not None and connection_id != 0
                 if active:
                     self._udp_sequence += 1
                     sequence = self._udp_sequence
+                    target = (peer_udp[0], peer_port)
             if active and udp_socket is not None and peer_udp is not None:
                 message = _build_udp_message(
                     connection_id=connection_id,
@@ -403,7 +445,7 @@ class EtherNetIPAdapter:
                     realtime_format=self._config.t_o_realtime_format,
                 )
                 with suppress(OSError):
-                    udp_socket.sendto(message, peer_udp)
+                    udp_socket.sendto(message, target)
             self._stop.wait(interval)
 
 
@@ -447,17 +489,20 @@ def _register_session_reply(request: bytes, session_handle: int) -> bytes:
 
 def _send_rrdata_reply(
     request: bytes, *, service: int, payload: bytes, session_handle: int,
+    socket_address: bytes | None = None,
 ) -> bytes:
     cip = bytes([service, 0x00, 0x00, 0x00]) + payload
-    cpf = (
-        (2).to_bytes(2, "little")
-        + (0).to_bytes(2, "little")
-        + (0).to_bytes(2, "little")
-        + (0x00B2).to_bytes(2, "little")
-        + len(cip).to_bytes(2, "little")
-        + cip
-    )
-    body = b"\x00\x00\x00\x00\x00\x00" + cpf
+    item_count = 3 if socket_address is not None else 2
+    cpf = bytearray()
+    cpf += item_count.to_bytes(2, "little")
+    cpf += (0).to_bytes(2, "little")  # Null Address Item type
+    cpf += (0).to_bytes(2, "little")  # Null Address Item length
+    cpf += (0x00B2).to_bytes(2, "little")  # Unconnected Data type
+    cpf += len(cip).to_bytes(2, "little")  # Unconnected Data length
+    cpf += cip
+    if socket_address is not None:
+        cpf += socket_address
+    body = b"\x00\x00\x00\x00\x00\x00" + bytes(cpf)
     return _encapsulation_reply(request, command=0x006F, session_handle=session_handle, body=body)
 
 
@@ -483,16 +528,17 @@ def _build_udp_message(
 ) -> bytes:
     header32bit = _uses_header32bit(realtime_format)
     message = bytearray()
-    message += (2).to_bytes(2, "little")
-    message += (0x8002).to_bytes(2, "little")
-    message += (8).to_bytes(2, "little")
-    message += connection_id.to_bytes(4, "little")
-    message += sequence.to_bytes(4, "little")
-    message += (0x00B1).to_bytes(2, "little")
+    message += (2).to_bytes(2, "little")            # item count
+    message += (0x8002).to_bytes(2, "little")        # type + attr
+    message += (8).to_bytes(2, "little")             # length (conn_id + seq)
+    message += connection_id.to_bytes(4, "little")   # connection ID
+    message += sequence.to_bytes(4, "little")        # sequence number
+    message += (0x00B1).to_bytes(2, "little")        # Sequence Address Item
     data_length = len(payload) + 2 + (4 if header32bit else 0)
-    message += data_length.to_bytes(2, "little")
-    message += (sequence & 0xFFFF).to_bytes(2, "little")
+    message += data_length.to_bytes(2, "little")     # item length
+    message += (sequence & 0xFFFF).to_bytes(2, "little")  # seq count
     if header32bit:
-        message += b"\x01\x00\x00\x00"
+        hdr32 = (sequence & 0xFFFF) | (1 << 16)  # seq_count + Run/Idle=1
+        message += hdr32.to_bytes(4, "little")
     message += payload
     return bytes(message)
