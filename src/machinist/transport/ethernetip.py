@@ -355,27 +355,29 @@ class EtherNetIPAdapter:
             svc = packet[40]
             is_large = svc == 0x58
             print(f"[EIP] Forward Open: service=0x{svc:02X} is_large={is_large} len={len(packet)}", file=sys.stderr)
-            print(f"[EIP]   40-81 hex: {packet[40:82].hex()}", file=sys.stderr)
-            print(f"[EIP]   82-100 hex: {packet[82:100].hex()}", file=sys.stderr)
-            # Try Connection Parameters at multiple candidate offsets
-            for o_t_off, t_o_off in [(72, 78), (74, 80), (70, 76)]:
-                cp_len = 4 if is_large else 2
-                o_t_v = int.from_bytes(packet[o_t_off:o_t_off + cp_len], "little")
-                t_o_v = int.from_bytes(packet[t_o_off:t_o_off + cp_len], "little")
-                mask = 0xFFFF if is_large else 0x1FF
-                o_sz = o_t_v & mask
-                t_sz = t_o_v & mask
-                print(f"[EIP]   cand o_t={o_t_off} t_o={t_o_off}: o_t_raw={o_t_v} t_o_raw={t_o_v} sz_o={o_sz} sz_t={t_sz}", file=sys.stderr)
-                print(f"[EIP]     hdr_off_o={o_sz - self._config.output_length} hdr_off_t={t_sz - self._config.input_length}", file=sys.stderr)
-            # Use candidate at default offset (72/78), fall back to modeless
+            print(f"[EIP]   40-81: {packet[40:82].hex()}", file=sys.stderr)
             cp_len = 4 if is_large else 2
             mask = 0xFFFF if is_large else 0x1FF
             o_sz = int.from_bytes(packet[72:72 + cp_len], "little") & mask
             t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
+            print(f"[EIP]   o_t_conn_size={o_sz} t_o_conn_size={t_sz}", file=sys.stderr)
+            # O→T = Originator→Target = adapter input; T→O = Target→Originator = adapter output
+            # Infer closest format by matching data_length = conn_size - header_offset to config
             _MAP = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
-            self._o_t_realtime_format = _MAP.get(o_sz - self._config.output_length, "modeless")
-            self._t_o_realtime_format = _MAP.get(t_sz - self._config.input_length, "modeless")
-            print(f"[EIP] Forward Open: O→T={self._o_t_realtime_format}, T→O={self._t_o_realtime_format}", file=sys.stderr)
+            def _best_fmt(conn_size: int, cfg_len: int) -> str:
+                best = 2, "modeless"
+                for off in _MAP:
+                    if conn_size > off:
+                        diff = abs((conn_size - off) - cfg_len)
+                        if diff < abs((conn_size - best[0]) - cfg_len):
+                            best = off, _MAP[off]
+                return best[1]
+            self._o_t_realtime_format = _best_fmt(o_sz, self._config.input_length)
+            self._t_o_realtime_format = _best_fmt(t_sz, self._config.output_length)
+            inferred_in = o_sz - {v: k for k, v in _MAP.items()}[self._o_t_realtime_format]
+            inferred_out = t_sz - {v: k for k, v in _MAP.items()}[self._t_o_realtime_format]
+            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} inferred_input_len={inferred_in} (cfg={self._config.input_length})", file=sys.stderr)
+            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} inferred_output_len={inferred_out} (cfg={self._config.output_length})", file=sys.stderr)
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
             packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
