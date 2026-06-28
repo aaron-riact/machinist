@@ -75,6 +75,7 @@ class MachinistApp(App[None]):
         self._selected: str | None = (
             world.devices[0].name if world.devices else None
         )
+        self._last_selected: str | None = None
 
     # ----- widgets -----------------------------------------------------
 
@@ -172,12 +173,15 @@ class MachinistApp(App[None]):
             self.outputs.clear()
             self.files.clear()
             self.derived.clear()
+            self._last_selected = None
             return
         self._refresh_detail_header(device)
         bank = getattr(device, "io", None)
         snapshot = _device_snapshot(device)
 
-        if self.inputs.row_count == 0:
+        rebuild = self.inputs.row_count == 0 or self._selected != self._last_selected
+
+        if rebuild:
             self.inputs.clear()
             self.outputs.clear()
             self.derived.clear()
@@ -195,6 +199,7 @@ class MachinistApp(App[None]):
                     self.outputs.add_row(field["name"], field["offset"], field["value"], key=field["name"])
                 for field in snapshot["derived_fields"]:
                     self.derived.add_row(f"{field['signal']} {field['name']}", field["value"], key=field["signal"])
+            self._last_selected = self._selected
         else:
             if bank is not None:
                 for sig in bank:
