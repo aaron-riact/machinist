@@ -210,8 +210,9 @@ class MazakSmoothXEmulator(Device):
         self._cycle_start_armed = False
         self._feed_hold = False
         self._machining_complete_latched = False
-        self._heartbeat_expected_since = 0.0
         self._last_heartbeat_toggle_at = -self._heartbeat_interval
+        self._last_di000_toggle_at = 0.0
+        self._prev_di000: bool | None = None
         self._last_connection_gen = -1
 
         self.io = io
@@ -457,8 +458,9 @@ class MazakSmoothXEmulator(Device):
         if gen != self._last_connection_gen:
             self._last_connection_gen = gen
             self.clear_alarm()
-            self._heartbeat_expected_since = now
             self._last_heartbeat_toggle_at = -self._heartbeat_interval
+            self._last_di000_toggle_at = now
+            self._prev_di000 = None
 
     def _scan_cycle(self, *, now: float) -> None:
         self._update_heartbeat(now)
@@ -469,26 +471,22 @@ class MazakSmoothXEmulator(Device):
 
     def _update_heartbeat(self, now: float) -> None:
         if self._ethernetip is not None and not self._connection_up:
-            self._heartbeat_expected_since = now
-            self._last_heartbeat_toggle_at = now
-            return
-        input_echo = self._read_input_bit(0)
-        output_state = self._read_output_bit(0)
-        if (
-            input_echo != output_state
-            and now - self._heartbeat_expected_since > self._heartbeat_timeout
-        ):
-            self._set_alarm(HEARTBEAT_ALARM, "Robot Communication Error")
-            if not isinstance(self._ethernetip, EtherNetIPAdapter) and self._ethernetip is not None:
-                self._ethernetip.close()
-            self._heartbeat_expected_since = now
             return
 
+        output_state = self._read_output_bit(0)
         if now - self._last_heartbeat_toggle_at >= self._heartbeat_interval:
-            next_value = not output_state
-            self._write_output_bit(0, next_value)
-            self._heartbeat_expected_since = now
+            self._write_output_bit(0, not output_state)
             self._last_heartbeat_toggle_at = now
+
+        di000 = self._read_input_bit(0)
+        if self._prev_di000 is not None and di000 != self._prev_di000:
+            self._last_di000_toggle_at = now
+            if self._alarm_code == HEARTBEAT_ALARM:
+                self.clear_alarm()
+        self._prev_di000 = di000
+
+        if now - self._last_di000_toggle_at > self._heartbeat_timeout:
+            self._set_alarm(HEARTBEAT_ALARM, "Robot Communication Error")
 
     def _handle_program_search(self, now: float) -> None:
         di101 = self._read_input_bit(101)
