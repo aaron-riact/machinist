@@ -191,6 +191,8 @@ class EtherNetIPAdapter:
         self._connection_generation = 0
         self._o_t_realtime_format: str = self._config.o_t_realtime_format
         self._t_o_realtime_format: str = self._config.t_o_realtime_format
+        self._input_length: int = config.input_length
+        self._output_length: int = config.output_length
 
     @property
     def connected(self) -> bool:
@@ -265,8 +267,8 @@ class EtherNetIPAdapter:
                 thread.join(timeout=1.0)
 
     def write_output_block(self, data: bytes | bytearray) -> None:
-        payload = bytes(data[: self._config.output_length]).ljust(
-            self._config.output_length, b"\x00"
+        payload = bytes(data[: self._output_length]).ljust(
+            self._output_length, b"\x00"
         )
         with self._lock:
             self._output_block[:] = payload
@@ -372,12 +374,24 @@ class EtherNetIPAdapter:
                         if diff < abs((conn_size - best[0]) - cfg_len):
                             best = off, _MAP[off]
                 return best[1]
-            self._o_t_realtime_format = _best_fmt(o_sz, self._config.input_length)
-            self._t_o_realtime_format = _best_fmt(t_sz, self._config.output_length)
+            self._o_t_realtime_format = _best_fmt(o_sz, self._input_length)
+            self._t_o_realtime_format = _best_fmt(t_sz, self._output_length)
             inferred_in = o_sz - {v: k for k, v in _MAP.items()}[self._o_t_realtime_format]
             inferred_out = t_sz - {v: k for k, v in _MAP.items()}[self._t_o_realtime_format]
-            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} inferred_input_len={inferred_in} (cfg={self._config.input_length})", file=sys.stderr)
-            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} inferred_output_len={inferred_out} (cfg={self._config.output_length})", file=sys.stderr)
+            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} inferred_input_len={inferred_in} (cfg={self._input_length})", file=sys.stderr)
+            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} inferred_output_len={inferred_out} (cfg={self._output_length})", file=sys.stderr)
+            if inferred_in != self._input_length:
+                print(f"[EIP]   adapting input_length {self._input_length} → {inferred_in}", file=sys.stderr)
+                self._input_length = inferred_in
+                old = self._input_block
+                self._input_block = bytearray(inferred_in)
+                self._input_block[:len(old)] = old[:inferred_in]
+            if inferred_out != self._output_length:
+                print(f"[EIP]   adapting output_length {self._output_length} → {inferred_out}", file=sys.stderr)
+                self._output_length = inferred_out
+                old = self._output_block
+                self._output_block = bytearray(inferred_out)
+                self._output_block[:len(old)] = old[:inferred_out]
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
             packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
@@ -447,8 +461,8 @@ class EtherNetIPAdapter:
                 else:
                     hdr = 4 if _uses_header32bit(self._o_t_realtime_format) else 0
                     raw_payload = message[20 + hdr:]
-                block = bytes(raw_payload[: self._config.input_length]).ljust(
-                    self._config.input_length, b"\x00"
+                block = bytes(raw_payload[: self._input_length]).ljust(
+                    self._input_length, b"\x00"
                 )
                 self._input_block[:] = block
                 self._peer_udp = address
