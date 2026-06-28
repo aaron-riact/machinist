@@ -326,7 +326,7 @@ def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
     try:
         wait_running(device)
         time.sleep(0.4)
-        assert device.alarm_code is None
+        assert device.alarm_code == HEARTBEAT_ALARM
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.settimeout(1.0)
         try:

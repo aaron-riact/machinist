@@ -211,8 +211,7 @@ class MazakSmoothXEmulator(Device):
         self._feed_hold = False
         self._machining_complete_latched = False
         self._last_heartbeat_toggle_at = -self._heartbeat_interval
-        self._last_di000_toggle_at = 0.0
-        self._prev_di000: bool | None = None
+        self._di000_toggle: tuple[float, bool | None] = (0.0, None)
         self._last_connection_gen = -1
 
         self.io = io
@@ -459,8 +458,7 @@ class MazakSmoothXEmulator(Device):
             self._last_connection_gen = gen
             self.clear_alarm()
             self._last_heartbeat_toggle_at = -self._heartbeat_interval
-            self._last_di000_toggle_at = now
-            self._prev_di000 = None
+            self._di000_toggle = (now, None)
 
     def _scan_cycle(self, *, now: float) -> None:
         self._update_heartbeat(now)
@@ -470,22 +468,21 @@ class MazakSmoothXEmulator(Device):
         self._refresh_outputs()
 
     def _update_heartbeat(self, now: float) -> None:
-        if self._ethernetip is not None and not self._connection_up:
-            return
-
         output_state = self._read_output_bit(0)
         if now - self._last_heartbeat_toggle_at >= self._heartbeat_interval:
             self._write_output_bit(0, not output_state)
             self._last_heartbeat_toggle_at = now
 
         di000 = self._read_input_bit(0)
-        if self._prev_di000 is not None and di000 != self._prev_di000:
-            self._last_di000_toggle_at = now
+        prev_time, prev_value = self._di000_toggle
+        if prev_value is not None and di000 != prev_value:
+            self._di000_toggle = (now, di000)
             if self._alarm_code == HEARTBEAT_ALARM:
                 self.clear_alarm()
-        self._prev_di000 = di000
+        else:
+            self._di000_toggle = (prev_time, di000)
 
-        if now - self._last_di000_toggle_at > self._heartbeat_timeout:
+        if now - self._di000_toggle[0] > self._heartbeat_timeout:
             self._set_alarm(HEARTBEAT_ALARM, "Robot Communication Error")
 
     def _handle_program_search(self, now: float) -> None:
