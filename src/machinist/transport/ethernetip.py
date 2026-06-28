@@ -416,9 +416,6 @@ class EtherNetIPAdapter:
                     self._config.input_length, b"\x00"
                 )
                 self._input_block[:] = block
-                self._input_block[0] = (
-                    self._input_block[0] & 0xFE
-                ) | (self._output_block[0] & 0x01)
                 self._peer_udp = address
                 self._last_received_at = datetime.utcnow()
                 self._peer_connected = True

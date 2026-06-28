@@ -154,7 +154,7 @@ class MazakSmoothXOptions:
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.1
     heartbeat_interval_seconds: float = 0.1
-    heartbeat_timeout_seconds: float = 0.5
+    heartbeat_timeout_seconds: float = 3.0
     interfaces: Any = None
     main_interface: Any = None
     ethernetip: dict[str, Any] | None = None
