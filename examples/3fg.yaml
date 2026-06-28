@@ -2,3 +2,13 @@
 devices:
   - name: gripper
     kind: onrobot_3fg25
+
+  - name: smooth_eip_adapter
+    kind: mazak_smoothx
+    options:
+      interfaces: [ethernetip]
+      ethernetip:
+        mode: adapter
+        udp_port: 2222
+        #t_o_realtime_format: header32bit
+      mtconnect_port: 5054
