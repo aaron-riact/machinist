@@ -10,5 +10,5 @@ devices:
       ethernetip:
         mode: adapter
         udp_port: 2222
-        #t_o_realtime_format: header32bit
+        o_t_realtime_format: header32bit
       mtconnect_port: 5054
