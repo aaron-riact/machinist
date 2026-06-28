@@ -351,19 +351,25 @@ class EtherNetIPAdapter:
                     self._peer_udp_port = port_raw[0] << 8 | port_raw[1]
             self._peer_connected = True
             self._connection_generation += 1
-            is_large = packet[40] == 0x58
+            import sys
+            svc = packet[40]
+            is_large = svc == 0x58
+            print(f"[EIP] Forward Open: service=0x{svc:02X} len={len(packet)}", file=sys.stderr)
+            print(f"[EIP]   raw_bytes=72-75={packet[72:76].hex()} 78-81={packet[78:82].hex()}", file=sys.stderr)
             conn_params_len = 4 if is_large else 2
             o_t_params = int.from_bytes(packet[72:72 + conn_params_len], "little")
             t_o_params = int.from_bytes(packet[78:78 + conn_params_len], "little")
+            print(f"[EIP]   o_t_params={o_t_params} t_o_params={t_o_params} conn_params_len={conn_params_len}", file=sys.stderr)
             o_t_conn_size = o_t_params & (0xFFFF if is_large else 0x1FF)
             t_o_conn_size = t_o_params & (0xFFFF if is_large else 0x1FF)
+            print(f"[EIP]   o_t_conn_size={o_t_conn_size} t_o_conn_size={t_o_conn_size} (output_len={self._config.output_length} input_len={self._config.input_length})", file=sys.stderr)
             o_t_hdr_offset = o_t_conn_size - self._config.output_length
             t_o_hdr_offset = t_o_conn_size - self._config.input_length
+            print(f"[EIP]   o_t_hdr_offset={o_t_hdr_offset} t_o_hdr_offset={t_o_hdr_offset}", file=sys.stderr)
             _MAP = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
             self._o_t_realtime_format = _MAP.get(o_t_hdr_offset, "modeless")
             self._t_o_realtime_format = _MAP.get(t_o_hdr_offset, "modeless")
-            import sys
-            print(f"[EtherNet/IP] Forward Open: O→T={self._o_t_realtime_format}, T→O={self._t_o_realtime_format}", file=sys.stderr)
+            print(f"[EIP] Forward Open: O→T={self._o_t_realtime_format}, T→O={self._t_o_realtime_format}", file=sys.stderr)
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
             packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum

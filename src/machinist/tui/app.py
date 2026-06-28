@@ -145,7 +145,8 @@ class MachinistApp(App[None]):
                 event = self._events.get_nowait()
             except queue.Empty:
                 break
-            self._log.write(_format_event(event))
+            if event.kind != "snapshot":
+                self._log.write(_format_event(event))
             if event.kind == "state":
                 self._refresh_devices_table()
             if event.device == self._selected:
