@@ -188,6 +188,7 @@ class EtherNetIPAdapter:
         self._connection_id_o_t = 0
         self._connection_id_t_o = 0
         self._udp_sequence = 0
+        self._connection_generation = 0
 
     @property
     def connected(self) -> bool:
@@ -196,6 +197,10 @@ class EtherNetIPAdapter:
     @property
     def peer_connected(self) -> bool:
         return self._peer_connected
+
+    @property
+    def connection_generation(self) -> int:
+        return self._connection_generation
 
     @property
     def last_received_at(self) -> datetime | None:
@@ -343,6 +348,7 @@ class EtherNetIPAdapter:
                     port_raw = packet[item2_start + 6:item2_start + 8]
                     self._peer_udp_port = port_raw[0] << 8 | port_raw[1]
             self._peer_connected = True
+            self._connection_generation += 1
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
             packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum

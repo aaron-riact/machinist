@@ -212,6 +212,7 @@ class MazakSmoothXEmulator(Device):
         self._machining_complete_latched = False
         self._heartbeat_expected_since = 0.0
         self._last_heartbeat_toggle_at = -self._heartbeat_interval
+        self._last_connection_gen = -1
 
         self.io = io
         self._declare_signals()
@@ -452,6 +453,12 @@ class MazakSmoothXEmulator(Device):
             return
         self._connection_up = bool(getattr(transport, "peer_connected", transport.connected))
         self.write_input_block(incoming)
+        gen = getattr(transport, "connection_generation", -1)
+        if gen != self._last_connection_gen:
+            self._last_connection_gen = gen
+            self.clear_alarm()
+            self._heartbeat_expected_since = now
+            self._last_heartbeat_toggle_at = -self._heartbeat_interval
 
     def _scan_cycle(self, *, now: float) -> None:
         self._update_heartbeat(now)
@@ -472,18 +479,12 @@ class MazakSmoothXEmulator(Device):
             and now - self._heartbeat_expected_since > self._heartbeat_timeout
         ):
             self._set_alarm(HEARTBEAT_ALARM, "Robot Communication Error")
-            if isinstance(self._ethernetip, EtherNetIPAdapter):
-                self._ethernetip.drop_peer()
-            elif self._ethernetip is not None:
+            if not isinstance(self._ethernetip, EtherNetIPAdapter) and self._ethernetip is not None:
                 self._ethernetip.close()
-            self._connection_up = False
             self._heartbeat_expected_since = now
             return
 
-        if (
-            input_echo == output_state
-            and now - self._last_heartbeat_toggle_at >= self._heartbeat_interval
-        ):
+        if now - self._last_heartbeat_toggle_at >= self._heartbeat_interval:
             next_value = not output_state
             self._write_output_bit(0, next_value)
             self._heartbeat_expected_since = now
