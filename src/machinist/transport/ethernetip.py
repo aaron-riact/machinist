@@ -189,6 +189,8 @@ class EtherNetIPAdapter:
         self._connection_id_t_o = 0
         self._udp_sequence = 0
         self._connection_generation = 0
+        self._o_t_realtime_format: str = self._config.o_t_realtime_format
+        self._t_o_realtime_format: str = self._config.t_o_realtime_format
 
     @property
     def connected(self) -> bool:
@@ -349,6 +351,19 @@ class EtherNetIPAdapter:
                     self._peer_udp_port = port_raw[0] << 8 | port_raw[1]
             self._peer_connected = True
             self._connection_generation += 1
+            is_large = packet[40] == 0x58
+            conn_params_len = 4 if is_large else 2
+            o_t_params = int.from_bytes(packet[72:72 + conn_params_len], "little")
+            t_o_params = int.from_bytes(packet[78:78 + conn_params_len], "little")
+            o_t_conn_size = o_t_params & (0xFFFF if is_large else 0x1FF)
+            t_o_conn_size = t_o_params & (0xFFFF if is_large else 0x1FF)
+            o_t_hdr_offset = o_t_conn_size - self._config.output_length
+            t_o_hdr_offset = t_o_conn_size - self._config.input_length
+            _MAP = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
+            self._o_t_realtime_format = _MAP.get(o_t_hdr_offset, "modeless")
+            self._t_o_realtime_format = _MAP.get(t_o_hdr_offset, "modeless")
+            import sys
+            print(f"[EtherNet/IP] Forward Open: O→T={self._o_t_realtime_format}, T→O={self._t_o_realtime_format}", file=sys.stderr)
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
             packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
@@ -413,10 +428,10 @@ class EtherNetIPAdapter:
                         and int.from_bytes(message[next_item:next_item + 2], "little") == 0x00B2):
                     data_item_len = int.from_bytes(message[next_item + 2:next_item + 4], "little")
                     raw_payload = message[next_item + 4:next_item + 4 + data_item_len]
-                    if _uses_header32bit(self._config.o_t_realtime_format):
+                    if _uses_header32bit(self._o_t_realtime_format):
                         raw_payload = raw_payload[4:]
                 else:
-                    hdr = 4 if _uses_header32bit(self._config.o_t_realtime_format) else 0
+                    hdr = 4 if _uses_header32bit(self._o_t_realtime_format) else 0
                     raw_payload = message[20 + hdr:]
                 block = bytes(raw_payload[: self._config.input_length]).ljust(
                     self._config.input_length, b"\x00"
@@ -445,7 +460,7 @@ class EtherNetIPAdapter:
                     connection_id=connection_id,
                     sequence=sequence,
                     payload=payload,
-                    realtime_format=self._config.t_o_realtime_format,
+                    realtime_format=self._t_o_realtime_format,
                 )
                 with suppress(OSError):
                     udp_socket.sendto(message, target)
