@@ -354,21 +354,27 @@ class EtherNetIPAdapter:
             import sys
             svc = packet[40]
             is_large = svc == 0x58
-            print(f"[EIP] Forward Open: service=0x{svc:02X} len={len(packet)}", file=sys.stderr)
-            print(f"[EIP]   raw_bytes=72-75={packet[72:76].hex()} 78-81={packet[78:82].hex()}", file=sys.stderr)
-            conn_params_len = 4 if is_large else 2
-            o_t_params = int.from_bytes(packet[72:72 + conn_params_len], "little")
-            t_o_params = int.from_bytes(packet[78:78 + conn_params_len], "little")
-            print(f"[EIP]   o_t_params={o_t_params} t_o_params={t_o_params} conn_params_len={conn_params_len}", file=sys.stderr)
-            o_t_conn_size = o_t_params & (0xFFFF if is_large else 0x1FF)
-            t_o_conn_size = t_o_params & (0xFFFF if is_large else 0x1FF)
-            print(f"[EIP]   o_t_conn_size={o_t_conn_size} t_o_conn_size={t_o_conn_size} (output_len={self._config.output_length} input_len={self._config.input_length})", file=sys.stderr)
-            o_t_hdr_offset = o_t_conn_size - self._config.output_length
-            t_o_hdr_offset = t_o_conn_size - self._config.input_length
-            print(f"[EIP]   o_t_hdr_offset={o_t_hdr_offset} t_o_hdr_offset={t_o_hdr_offset}", file=sys.stderr)
+            print(f"[EIP] Forward Open: service=0x{svc:02X} is_large={is_large} len={len(packet)}", file=sys.stderr)
+            print(f"[EIP]   40-81 hex: {packet[40:82].hex()}", file=sys.stderr)
+            print(f"[EIP]   82-100 hex: {packet[82:100].hex()}", file=sys.stderr)
+            # Try Connection Parameters at multiple candidate offsets
+            for o_t_off, t_o_off in [(72, 78), (74, 80), (70, 76)]:
+                cp_len = 4 if is_large else 2
+                o_t_v = int.from_bytes(packet[o_t_off:o_t_off + cp_len], "little")
+                t_o_v = int.from_bytes(packet[t_o_off:t_o_off + cp_len], "little")
+                mask = 0xFFFF if is_large else 0x1FF
+                o_sz = o_t_v & mask
+                t_sz = t_o_v & mask
+                print(f"[EIP]   cand o_t={o_t_off} t_o={t_o_off}: o_t_raw={o_t_v} t_o_raw={t_o_v} sz_o={o_sz} sz_t={t_sz}", file=sys.stderr)
+                print(f"[EIP]     hdr_off_o={o_sz - self._config.output_length} hdr_off_t={t_sz - self._config.input_length}", file=sys.stderr)
+            # Use candidate at default offset (72/78), fall back to modeless
+            cp_len = 4 if is_large else 2
+            mask = 0xFFFF if is_large else 0x1FF
+            o_sz = int.from_bytes(packet[72:72 + cp_len], "little") & mask
+            t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
             _MAP = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
-            self._o_t_realtime_format = _MAP.get(o_t_hdr_offset, "modeless")
-            self._t_o_realtime_format = _MAP.get(t_o_hdr_offset, "modeless")
+            self._o_t_realtime_format = _MAP.get(o_sz - self._config.output_length, "modeless")
+            self._t_o_realtime_format = _MAP.get(t_sz - self._config.input_length, "modeless")
             print(f"[EIP] Forward Open: O→T={self._o_t_realtime_format}, T→O={self._t_o_realtime_format}", file=sys.stderr)
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
