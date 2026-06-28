@@ -75,7 +75,7 @@ class MachinistApp(App[None]):
         self._selected: str | None = (
             world.devices[0].name if world.devices else None
         )
-        self._last_selected: str | None = None
+        self._last_selected: Device | None = None
 
     # ----- widgets -----------------------------------------------------
 
@@ -115,10 +115,18 @@ class MachinistApp(App[None]):
         self.title = "◇ Machinist"
         self.sub_title = f"fleet of {len(self.world.devices)} device(s)"
         self.devices_table.add_columns("name", "kind", "state")
-        self.inputs.add_columns("input", "offset", "value")
-        self.outputs.add_columns("output", "offset", "value")
+        (
+            self._inputs_col_label,
+            _,
+            self._inputs_col_value,
+        ) = self.inputs.add_columns("input", "offset", "value")
+        (
+            self._outputs_col_label,
+            _,
+            self._outputs_col_value,
+        ) = self.outputs.add_columns("output", "offset", "value")
         self.files.add_columns("program")
-        self.derived.add_columns("field", "value")
+        self._derived_col_field, self._derived_col_value = self.derived.add_columns("field", "value")
         self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
         self.set_interval(0.1, self._drain)
@@ -179,31 +187,51 @@ class MachinistApp(App[None]):
         bank = getattr(device, "io", None)
         snapshot = _device_snapshot(device)
 
-        saved = {
-            self.inputs: self.inputs.cursor_row,
-            self.outputs: self.outputs.cursor_row,
-            self.derived: self.derived.cursor_row,
-        }
-        self.inputs.clear()
-        self.outputs.clear()
-        self.derived.clear()
-        if bank is not None:
-            for sig in bank:
-                dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                table = (
-                    self.outputs if sig.direction is Direction.OUTPUT else self.inputs
-                )
-                table.add_row(f"{dot} {sig.name}", "", str(sig.value))
-        if snapshot is not None:
-            for field in snapshot["input_fields"]:
-                self.inputs.add_row(field["name"], field["offset"], field["value"])
-            for field in snapshot["output_fields"]:
-                self.outputs.add_row(field["name"], field["offset"], field["value"])
-            for field in snapshot["derived_fields"]:
-                self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
-        for table, row in saved.items():
-            if 0 <= row < table.row_count:
-                table.move_cursor(row=row)
+        if device is not self._last_selected or self.inputs.row_count == 0:
+            self.inputs.clear()
+            self.outputs.clear()
+            self.derived.clear()
+            if bank is not None:
+                for sig in bank:
+                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
+                    table = (
+                        self.outputs if sig.direction is Direction.OUTPUT else self.inputs
+                    )
+                    table.add_row(f"{dot} {sig.name}", "", str(sig.value))
+            if snapshot is not None:
+                for field in snapshot["input_fields"]:
+                    self.inputs.add_row(field["name"], field["offset"], field["value"])
+                for field in snapshot["output_fields"]:
+                    self.outputs.add_row(field["name"], field["offset"], field["value"])
+                for field in snapshot["derived_fields"]:
+                    self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
+        else:
+            input_keys = list(self.inputs.rows.keys())
+            output_keys = list(self.outputs.rows.keys())
+            derived_keys = list(self.derived.rows.keys())
+            i_in = 0
+            i_out = 0
+            if bank is not None:
+                for sig in bank:
+                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
+                    if sig.direction is Direction.OUTPUT:
+                        self.outputs.update_cell(output_keys[i_out], self._outputs_col_label, f"{dot} {sig.name}")
+                        self.outputs.update_cell(output_keys[i_out], self._outputs_col_value, str(sig.value))
+                        i_out += 1
+                    else:
+                        self.inputs.update_cell(input_keys[i_in], self._inputs_col_label, f"{dot} {sig.name}")
+                        self.inputs.update_cell(input_keys[i_in], self._inputs_col_value, str(sig.value))
+                        i_in += 1
+            if snapshot is not None:
+                for field in snapshot["input_fields"]:
+                    self.inputs.update_cell(input_keys[i_in], self._inputs_col_value, field["value"])
+                    i_in += 1
+                for field in snapshot["output_fields"]:
+                    self.outputs.update_cell(output_keys[i_out], self._outputs_col_value, field["value"])
+                    i_out += 1
+                for i, field in enumerate(snapshot["derived_fields"]):
+                    self.derived.update_cell(derived_keys[i], self._derived_col_value, field["value"])
+        self._last_selected = device
         self._refresh_files(device)
 
     def _refresh_detail_header(self, device: Device | None = None) -> None:
