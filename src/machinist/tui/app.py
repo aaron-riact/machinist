@@ -36,7 +36,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
-from textual.widgets._data_table import RowKey
 
 from ..core.device import Device
 from ..core.events import Event
@@ -77,9 +76,6 @@ class MachinistApp(App[None]):
             world.devices[0].name if world.devices else None
         )
         self._last_selected: str | None = None
-        self._input_row_keys: dict[str, RowKey] = {}
-        self._output_row_keys: dict[str, RowKey] = {}
-        self._derived_row_keys: dict[str, RowKey] = {}
 
     # ----- widgets -----------------------------------------------------
 
@@ -183,57 +179,31 @@ class MachinistApp(App[None]):
         bank = getattr(device, "io", None)
         snapshot = _device_snapshot(device)
 
-        rebuild = self.inputs.row_count == 0 or self._selected != self._last_selected
-
-        if rebuild:
-            self.inputs.clear()
-            self.outputs.clear()
-            self.derived.clear()
-            self._input_row_keys.clear()
-            self._output_row_keys.clear()
-            self._derived_row_keys.clear()
-            if bank is not None:
-                for sig in bank:
-                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                    table = (
-                        self.outputs if sig.direction is Direction.OUTPUT else self.inputs
-                    )
-                    row_key = table.add_row(f"{dot} {sig.name}", "", str(sig.value))
-                    if sig.direction is Direction.OUTPUT:
-                        self._output_row_keys[sig.name] = row_key
-                    else:
-                        self._input_row_keys[sig.name] = row_key
-            if snapshot is not None:
-                for field in snapshot["input_fields"]:
-                    rk = self.inputs.add_row(field["name"], field["offset"], field["value"])
-                    self._input_row_keys[field["name"]] = rk
-                for field in snapshot["output_fields"]:
-                    rk = self.outputs.add_row(field["name"], field["offset"], field["value"])
-                    self._output_row_keys[field["name"]] = rk
-                for field in snapshot["derived_fields"]:
-                    rk = self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
-                    self._derived_row_keys[field["signal"]] = rk
-            self._last_selected = self._selected
-        else:
-            if bank is not None:
-                for sig in bank:
-                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                    rk = (
-                        self._output_row_keys
-                        if sig.direction is Direction.OUTPUT
-                        else self._input_row_keys
-                    )[sig.name]
-                    label = "output" if sig.direction is Direction.OUTPUT else "input"
-                    table = self.outputs if sig.direction is Direction.OUTPUT else self.inputs
-                    table.update_cell(rk, label, f"{dot} {sig.name}")
-                    table.update_cell(rk, "value", str(sig.value))
-            if snapshot is not None:
-                for field in snapshot["input_fields"]:
-                    self.inputs.update_cell(self._input_row_keys[field["name"]], "value", field["value"])
-                for field in snapshot["output_fields"]:
-                    self.outputs.update_cell(self._output_row_keys[field["name"]], "value", field["value"])
-                for field in snapshot["derived_fields"]:
-                    self.derived.update_cell(self._derived_row_keys[field["signal"]], "value", field["value"])
+        saved = {
+            self.inputs: self.inputs.cursor_row,
+            self.outputs: self.outputs.cursor_row,
+            self.derived: self.derived.cursor_row,
+        }
+        self.inputs.clear()
+        self.outputs.clear()
+        self.derived.clear()
+        if bank is not None:
+            for sig in bank:
+                dot = "[green]●[/]" if sig.value else "[red]●[/]"
+                table = (
+                    self.outputs if sig.direction is Direction.OUTPUT else self.inputs
+                )
+                table.add_row(f"{dot} {sig.name}", "", str(sig.value))
+        if snapshot is not None:
+            for field in snapshot["input_fields"]:
+                self.inputs.add_row(field["name"], field["offset"], field["value"])
+            for field in snapshot["output_fields"]:
+                self.outputs.add_row(field["name"], field["offset"], field["value"])
+            for field in snapshot["derived_fields"]:
+                self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
+        for table, row in saved.items():
+            if 0 <= row < table.row_count:
+                table.move_cursor(row=row)
         self._refresh_files(device)
 
     def _refresh_detail_header(self, device: Device | None = None) -> None:
