@@ -21,7 +21,7 @@ from ...transport.ethernetip import (
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from .state import CycleState, MachineState
 
-BLOCK_SIZE = 100
+BLOCK_SIZE = 110
 PROGRAM_OFFSET = 44
 PROGRAM_LENGTH = 32
 CONTROL_OFFSET = 12

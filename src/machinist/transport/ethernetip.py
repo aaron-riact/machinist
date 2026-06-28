@@ -364,37 +364,22 @@ class EtherNetIPAdapter:
             t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
             print(f"[EIP]   o_t_conn_size={o_sz} t_o_conn_size={t_sz}", file=sys.stderr)
             # O→T = Originator→Target = adapter input; T→O = Target→Originator = adapter output
-            # Infer closest format by matching data_length = conn_size - header_offset to config
-            _MAP = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
-            def _best_fmt(conn_size: int, cfg_len: int) -> str:
-                best = 2, "modeless"
-                for off in _MAP:
-                    if conn_size > off:
-                        diff = abs((conn_size - off) - cfg_len)
-                        if diff < abs((conn_size - best[0]) - cfg_len):
-                            best = off, _MAP[off]
-                return best[1]
-            self._o_t_realtime_format = _best_fmt(o_sz, self._input_length)
-            inferred_in = o_sz - {v: k for k, v in _MAP.items()}[self._o_t_realtime_format]
-            # Pick T→O format whose data_length best matches O→T's inferred data_length.
-            # Both assemblies are typically the same size, and the O→T reference is
-            # more reliable than the config default when sizes differ.
-            self._t_o_realtime_format = _best_fmt(t_sz, inferred_in)
-            inferred_out = t_sz - {v: k for k, v in _MAP.items()}[self._t_o_realtime_format]
-            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} inferred_input_len={inferred_in} (cfg={self._input_length})", file=sys.stderr)
-            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} inferred_output_len={inferred_out} (cfg={self._output_length})", file=sys.stderr)
-            if inferred_in != self._input_length:
-                print(f"[EIP]   adapting input_length {self._input_length} → {inferred_in}", file=sys.stderr)
-                self._input_length = inferred_in
-                old = self._input_block
-                self._input_block = bytearray(inferred_in)
-                self._input_block[:len(old)] = old[:inferred_in]
-            if inferred_out != self._output_length:
-                print(f"[EIP]   adapting output_length {self._output_length} → {inferred_out}", file=sys.stderr)
-                self._output_length = inferred_out
-                old = self._output_block
-                self._output_block = bytearray(inferred_out)
-                self._output_block[:len(old)] = old[:inferred_out]
+            # Resolve real-time format per direction: header = connection_size - data_size
+            _HEADER_OFFSETS = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
+            o_t_header = o_sz - self._input_length
+            if o_t_header not in _HEADER_OFFSETS:
+                print(f"[EIP]   WARNING: O→T sz={o_sz} - data_size={self._input_length}={o_t_header} not in {{0,2,6}}. Check input_length config ({self._input_length}).", file=sys.stderr)
+                self._o_t_realtime_format = self._config.o_t_realtime_format
+            else:
+                self._o_t_realtime_format = _HEADER_OFFSETS[o_t_header]
+            t_o_header = t_sz - self._output_length
+            if t_o_header not in _HEADER_OFFSETS:
+                print(f"[EIP]   WARNING: T→O sz={t_sz} - data_size={self._output_length}={t_o_header} not in {{0,2,6}}. Check output_length config ({self._output_length}).", file=sys.stderr)
+                self._t_o_realtime_format = self._config.t_o_realtime_format
+            else:
+                self._t_o_realtime_format = _HEADER_OFFSETS[t_o_header]
+            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} sz={o_sz} data={self._input_length} header={o_t_header}", file=sys.stderr)
+            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} sz={t_sz} data={self._output_length} header={t_o_header}", file=sys.stderr)
         path_size = packet[41] if len(packet) > 41 else 0
         payload = (
             packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
