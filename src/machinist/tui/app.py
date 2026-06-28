@@ -174,25 +174,44 @@ class MachinistApp(App[None]):
             self.derived.clear()
             return
         self._refresh_detail_header(device)
-        self.inputs.clear()
-        self.outputs.clear()
-        self.derived.clear()
         bank = getattr(device, "io", None)
-        if bank is not None:
-            for sig in bank:
-                dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                table = (
-                    self.outputs if sig.direction is Direction.OUTPUT else self.inputs
-                )
-                table.add_row(f"{dot} {sig.name}", "", str(sig.value))
         snapshot = _device_snapshot(device)
-        if snapshot is not None:
-            for field in snapshot["input_fields"]:
-                self.inputs.add_row(field["name"], field["offset"], field["value"])
-            for field in snapshot["output_fields"]:
-                self.outputs.add_row(field["name"], field["offset"], field["value"])
-            for field in snapshot["derived_fields"]:
-                self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
+
+        if self.inputs.row_count == 0:
+            self.inputs.clear()
+            self.outputs.clear()
+            self.derived.clear()
+            if bank is not None:
+                for sig in bank:
+                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
+                    table = (
+                        self.outputs if sig.direction is Direction.OUTPUT else self.inputs
+                    )
+                    table.add_row(f"{dot} {sig.name}", "", str(sig.value), key=sig.name)
+            if snapshot is not None:
+                for field in snapshot["input_fields"]:
+                    self.inputs.add_row(field["name"], field["offset"], field["value"], key=field["name"])
+                for field in snapshot["output_fields"]:
+                    self.outputs.add_row(field["name"], field["offset"], field["value"], key=field["name"])
+                for field in snapshot["derived_fields"]:
+                    self.derived.add_row(f"{field['signal']} {field['name']}", field["value"], key=field["signal"])
+        else:
+            if bank is not None:
+                for sig in bank:
+                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
+                    if sig.direction is Direction.OUTPUT:
+                        self.outputs.update_cell(sig.name, "output", f"{dot} {sig.name}")
+                        self.outputs.update_cell(sig.name, "value", str(sig.value))
+                    else:
+                        self.inputs.update_cell(sig.name, "input", f"{dot} {sig.name}")
+                        self.inputs.update_cell(sig.name, "value", str(sig.value))
+            if snapshot is not None:
+                for field in snapshot["input_fields"]:
+                    self.inputs.update_cell(field["name"], "value", field["value"])
+                for field in snapshot["output_fields"]:
+                    self.outputs.update_cell(field["name"], "value", field["value"])
+                for field in snapshot["derived_fields"]:
+                    self.derived.update_cell(field["signal"], "value", field["value"])
         self._refresh_files(device)
 
     def _refresh_detail_header(self, device: Device | None = None) -> None:
