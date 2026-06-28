@@ -375,8 +375,11 @@ class EtherNetIPAdapter:
                             best = off, _MAP[off]
                 return best[1]
             self._o_t_realtime_format = _best_fmt(o_sz, self._input_length)
-            self._t_o_realtime_format = _best_fmt(t_sz, self._output_length)
             inferred_in = o_sz - {v: k for k, v in _MAP.items()}[self._o_t_realtime_format]
+            # Pick T→O format whose data_length best matches O→T's inferred data_length.
+            # Both assemblies are typically the same size, and the O→T reference is
+            # more reliable than the config default when sizes differ.
+            self._t_o_realtime_format = _best_fmt(t_sz, inferred_in)
             inferred_out = t_sz - {v: k for k, v in _MAP.items()}[self._t_o_realtime_format]
             print(f"[EIP]   O→T fmt={self._o_t_realtime_format} inferred_input_len={inferred_in} (cfg={self._input_length})", file=sys.stderr)
             print(f"[EIP]   T→O fmt={self._t_o_realtime_format} inferred_output_len={inferred_out} (cfg={self._output_length})", file=sys.stderr)
