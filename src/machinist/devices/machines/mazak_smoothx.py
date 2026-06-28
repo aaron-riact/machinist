@@ -22,9 +22,9 @@ from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from .state import CycleState, MachineState
 
 BLOCK_SIZE = 100
-PROGRAM_OFFSET = 12
+PROGRAM_OFFSET = 44
 PROGRAM_LENGTH = 32
-CONTROL_OFFSET = 44
+CONTROL_OFFSET = 12
 HEARTBEAT_ALARM = 1362
 
 

@@ -83,17 +83,17 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
 
 
 def test_manual_bit_mapping_matches_manual_offsets() -> None:
-    assert INPUT_TEXT_FIELDS[100].offset == 12
+    assert INPUT_TEXT_FIELDS[100].offset == 44
     assert INPUT_TEXT_FIELDS[100].length == 32
     assert INPUT_SIGNAL_POINTS[0].byte == 0
     assert INPUT_SIGNAL_POINTS[0].bit == 0
-    assert INPUT_SIGNAL_POINTS[101].byte == 44
+    assert INPUT_SIGNAL_POINTS[101].byte == 12
     assert INPUT_SIGNAL_POINTS[101].bit == 0
-    assert INPUT_SIGNAL_POINTS[109].byte == 45
+    assert INPUT_SIGNAL_POINTS[109].byte == 13
     assert INPUT_SIGNAL_POINTS[109].bit == 0
-    assert OUTPUT_SIGNAL_POINTS[107].byte == 45
+    assert OUTPUT_SIGNAL_POINTS[107].byte == 13
     assert OUTPUT_SIGNAL_POINTS[107].bit == 1
-    assert OUTPUT_SIGNAL_POINTS[108].byte == 45
+    assert OUTPUT_SIGNAL_POINTS[108].byte == 13
     assert OUTPUT_SIGNAL_POINTS[108].bit == 2
 
 
@@ -107,7 +107,7 @@ def test_work_number_search_updates_active_program_and_output_field() -> None:
 
     assert device.active_program == "ABC123"
     assert device.io["do101"].value is True
-    assert device.output_block[12:18] == b"ABC123"
+    assert device.output_block[44:50] == b"ABC123"
 
     device.set_input_bit(101, False)
     device._scan_cycle(now=0.03)
@@ -276,8 +276,8 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
             port=tcp_port,
             originator_udp_port=free_port(),
             target_udp_port=udp_port,
-            output_length=100,
-            input_length=100,
+            output_length=BLOCK_SIZE,
+            input_length=BLOCK_SIZE,
             requested_packet_rate_ms=20,
         )
     )
