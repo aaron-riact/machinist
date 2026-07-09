@@ -9,5 +9,6 @@ devices:
       interfaces: [ethernetip]
       ethernetip:
         mode: adapter
+        behaviour: mazak
         udp_port: 2222
       mtconnect_port: 5054
