@@ -901,7 +901,6 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
                 input_length=BLOCK_SIZE,
                 requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
                 o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "header32bit")),
-                t_o_realtime_format=str(raw_ethernetip.get("t_o_realtime_format", "modeless")),
                 behaviour=str(raw_ethernetip.get("behaviour", "mazak")),
             )
         elif mode == "scanner":
@@ -920,7 +919,6 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
                 input_length=BLOCK_SIZE,
                 requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
                 o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "header32bit")),
-                t_o_realtime_format=str(raw_ethernetip.get("t_o_realtime_format", "modeless")),
                 o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )

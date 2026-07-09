@@ -30,7 +30,6 @@ class EtherNetIPScannerConfig:
     input_length: int = 100
     requested_packet_rate_ms: int = 20
     o_t_realtime_format: str = "modeless"
-    t_o_realtime_format: str = "modeless"
     o_t_connection_type: str = "point_to_point"
     t_o_connection_type: str = "point_to_point"
 
@@ -44,7 +43,6 @@ class EtherNetIPAdapterConfig:
     input_length: int = 100
     requested_packet_rate_ms: int = 20
     o_t_realtime_format: str = "modeless"
-    t_o_realtime_format: str = "modeless"
     o_t_connection_point: int = 0x64
     t_o_connection_point: int = 0x65
     behaviour: str = "generic"
@@ -147,9 +145,8 @@ class EtherNetIPScanner:
         client.o_t_realtime_format = _enum_value(
             _REALTIME_FORMATS, cfg.o_t_realtime_format, "o_t_realtime_format"
         )
-        client.t_o_realtime_format = _enum_value(
-            _REALTIME_FORMATS, cfg.t_o_realtime_format, "t_o_realtime_format"
-        )
+        # T→O is always modeless per the CIP spec (no Run/Idle header from target).
+        client.t_o_realtime_format = RealTimeFormat.MODELESS
         client.o_t_connection_type = _enum_value(
             _CONNECTION_TYPES, cfg.o_t_connection_type, "o_t_connection_type"
         )
@@ -193,12 +190,16 @@ class EtherNetIPAdapter:
         self._udp_sequence = 0
         self._connection_generation = 0
         self._o_t_realtime_format: str = self._config.o_t_realtime_format
-        self._t_o_realtime_format: str = self._config.t_o_realtime_format
+        # T→O is always modeless per the CIP spec (no Run/Idle header from target).
+        self._t_o_realtime_format: str = "modeless"
         self._input_length: int = config.input_length
         self._output_length: int = config.output_length
         self._o_t_connection_point: int = config.o_t_connection_point
         self._t_o_connection_point: int = config.t_o_connection_point
         self._active_connection_id: tuple[int, int, int] | None = None
+
+    # Real-time header sizes: heartbeat = 0, modeless = 2, header32bit = 6
+    _HEADER_OFFSETS = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
 
     @property
     def connected(self) -> bool:
@@ -386,23 +387,9 @@ class EtherNetIPAdapter:
             o_sz = int.from_bytes(packet[72:72 + cp_len], "little") & mask
             t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
             print(f"[EIP]   o_t_conn_size={o_sz} t_o_conn_size={t_sz}", file=sys.stderr)
-            # O→T = Originator→Target = adapter input; T→O = Target→Originator = adapter output
-            # Resolve real-time format per direction: header = connection_size - data_size
-            _HEADER_OFFSETS = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
-            o_t_header = o_sz - self._input_length
-            if o_t_header not in _HEADER_OFFSETS:
-                print(f"[EIP]   WARNING: O→T sz={o_sz} - data_size={self._input_length}={o_t_header} not in {{0,2,6}}. Check input_length config ({self._input_length}).", file=sys.stderr)
-                self._o_t_realtime_format = self._config.o_t_realtime_format
-            else:
-                self._o_t_realtime_format = _HEADER_OFFSETS[o_t_header]
-            t_o_header = t_sz - self._output_length
-            if t_o_header not in _HEADER_OFFSETS:
-                print(f"[EIP]   WARNING: T→O sz={t_sz} - data_size={self._output_length}={t_o_header} not in {{0,2,6}}. Check output_length config ({self._output_length}).", file=sys.stderr)
-                self._t_o_realtime_format = self._config.t_o_realtime_format
-            else:
-                self._t_o_realtime_format = _HEADER_OFFSETS[t_o_header]
-            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} sz={o_sz} data={self._input_length} header={o_t_header}", file=sys.stderr)
-            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} sz={t_sz} data={self._output_length} header={t_o_header}", file=sys.stderr)
+            self._resolve_realtime_formats(o_sz, t_sz)
+            print(f"[EIP]   O→T fmt={self._o_t_realtime_format} sz={o_sz} data={self._input_length} header={o_sz - self._input_length}", file=sys.stderr)
+            print(f"[EIP]   T→O fmt={self._t_o_realtime_format} sz={t_sz} data={self._output_length} header={t_sz - self._output_length}", file=sys.stderr)
         payload = self._forward_open_reply_payload(packet)
         socket_address = bytearray()
         socket_address += (0x8001).to_bytes(2, "little")
@@ -419,6 +406,27 @@ class EtherNetIPAdapter:
             socket_address=bytes(socket_address),
         )
         client.sendall(reply)
+
+    def _resolve_realtime_formats(self, o_sz: int, t_sz: int) -> None:
+        """Resolve real-time header formats from Forward Open connection sizes.
+
+        O→T is negotiable: the scanner requests a format by picking a
+        connection_size that includes the desired header (0=heartbeat,
+        2=modeless, 6=header32bit) on top of the data payload. If the
+        header size doesn't match a known format, fall back to the config
+        default (usually ``modeless``).
+
+        T→O is always modeless per the CIP spec — the target does not
+        send a Run/Idle header.
+        """
+        o_t_header = o_sz - self._input_length
+        if o_t_header in self._HEADER_OFFSETS:
+            self._o_t_realtime_format = self._HEADER_OFFSETS[o_t_header]
+        else:
+            import sys
+            print(f"[EIP]   WARNING: O→T sz={o_sz} - data_size={self._input_length}={o_t_header} not in {{0,2,6}}. Check input_length config ({self._input_length}).", file=sys.stderr)
+            self._o_t_realtime_format = self._config.o_t_realtime_format
+        self._t_o_realtime_format = "modeless"
 
     def _forward_open_reply_payload(self, packet: bytes) -> bytes:
         return (
@@ -565,6 +573,12 @@ class MazakEthernetIPAdapter(EtherNetIPAdapter):
     """
 
     _MAX_HEADER_BYTES = 6
+
+    def _resolve_realtime_formats(self, o_sz: int, t_sz: int) -> None:
+        # Mazak SmoothAI always uses header32bit (6 bytes) for O→T and
+        # modeless for T→O, regardless of the scanner's requested size.
+        self._o_t_realtime_format = "header32bit"
+        self._t_o_realtime_format = "modeless"
 
     def _check_forward_open_size(self, packet: bytes) -> tuple[int, bytes] | None:
         svc = packet[40]

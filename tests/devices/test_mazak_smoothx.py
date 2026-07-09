@@ -47,7 +47,6 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
                 input_length=BLOCK_SIZE,
                 requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
                 o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "modeless")),
-                t_o_realtime_format=str(raw_ethernetip.get("t_o_realtime_format", "modeless")),
             )
         elif mode == "scanner":
             kw["ethernetip_scanner_config"] = EtherNetIPScannerConfig(
@@ -65,7 +64,6 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
                 input_length=BLOCK_SIZE,
                 requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
                 o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "modeless")),
-                t_o_realtime_format=str(raw_ethernetip.get("t_o_realtime_format", "modeless")),
                 o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )
