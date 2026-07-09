@@ -45,6 +45,8 @@ class EtherNetIPAdapterConfig:
     requested_packet_rate_ms: int = 20
     o_t_realtime_format: str = "modeless"
     t_o_realtime_format: str = "modeless"
+    o_t_connection_point: int = 0x64
+    t_o_connection_point: int = 0x65
 
 
 _REALTIME_FORMATS = {
@@ -193,6 +195,9 @@ class EtherNetIPAdapter:
         self._t_o_realtime_format: str = self._config.t_o_realtime_format
         self._input_length: int = config.input_length
         self._output_length: int = config.output_length
+        self._o_t_connection_point: int = config.o_t_connection_point
+        self._t_o_connection_point: int = config.t_o_connection_point
+        self._active_connection_id: tuple[int, int, int] | None = None
 
     @property
     def connected(self) -> bool:
@@ -340,6 +345,22 @@ class EtherNetIPAdapter:
 
     def _handle_forward_open(self, client: socket.socket, packet: bytes) -> None:
         with self._lock:
+            err = self._forward_open_error(packet)
+            identity = self._forward_open_identity(packet)
+            if err is None and self._peer_connected and self._active_connection_id == identity:
+                # General Status 0x01 (Connection failure) + extended 0x0100
+                # (Connection in use or duplicate Forward Open).
+                err = (0x01, (0x0100).to_bytes(2, "little"))
+            if err is not None:
+                status, ext = err
+                payload = self._forward_open_reply_payload(packet)
+                reply = _send_rrdata_reply(
+                    packet, service=packet[40] | 0x80, payload=payload,
+                    session_handle=self._session_handle, status=status, extended_status=ext,
+                )
+                client.sendall(reply)
+                return
+
             self._connection_id_o_t = int.from_bytes(packet[48:52], "little")
             self._connection_id_t_o = int.from_bytes(packet[52:56], "little")
             # Parse scanner's UDP port from CPF Item 2 (Socket Address Info 0x8001)
@@ -352,6 +373,7 @@ class EtherNetIPAdapter:
                     port_raw = packet[item2_start + 6:item2_start + 8]
                     self._peer_udp_port = port_raw[0] << 8 | port_raw[1]
             self._peer_connected = True
+            self._active_connection_id = identity
             self._connection_generation += 1
             import sys
             svc = packet[40]
@@ -380,13 +402,7 @@ class EtherNetIPAdapter:
                 self._t_o_realtime_format = _HEADER_OFFSETS[t_o_header]
             print(f"[EIP]   O→T fmt={self._o_t_realtime_format} sz={o_sz} data={self._input_length} header={o_t_header}", file=sys.stderr)
             print(f"[EIP]   T→O fmt={self._t_o_realtime_format} sz={t_sz} data={self._output_length} header={t_o_header}", file=sys.stderr)
-        path_size = packet[41] if len(packet) > 41 else 0
-        payload = (
-            packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
-            + packet[68:72]        # O→T API (= O→T Requested Packet Rate)
-            + packet[74:78]        # T→O API (= T→O Requested Packet Rate)
-            + (0).to_bytes(2, "little")  # Application Reply Size
-        )
+        payload = self._forward_open_reply_payload(packet)
         socket_address = bytearray()
         socket_address += (0x8001).to_bytes(2, "little")
         socket_address += (16).to_bytes(2, "little")
@@ -403,9 +419,54 @@ class EtherNetIPAdapter:
         )
         client.sendall(reply)
 
+    def _forward_open_reply_payload(self, packet: bytes) -> bytes:
+        return (
+            packet[48:64]          # O→T CID + T→O CID + Serial + VendorID + SerialNum
+            + packet[68:72]        # O→T API (= O→T Requested Packet Rate)
+            + packet[74:78]        # T→O API (= T→O Requested Packet Rate)
+            + (0).to_bytes(2, "little")  # Application Reply Size
+        )
+
+    def _forward_open_identity(self, packet: bytes) -> tuple[int, int, int]:
+        vendor_id = int.from_bytes(packet[58:60], "little")
+        originator_serial = int.from_bytes(packet[60:64], "little")
+        connection_serial = int.from_bytes(packet[56:58], "little")
+        return (vendor_id, originator_serial, connection_serial)
+
+    def _forward_open_error(self, packet: bytes) -> tuple[int, bytes] | None:
+        """Return (status, extended_status) to reject, or None to accept.
+
+        Base behaviour follows the EtherNet/IP spec: an unknown connection
+        path is rejected (0x05) and an invalid real-time header size is
+        rejected (0x01 with 0x0127/0x0128). Device-specific subclasses
+        override :meth:`_check_forward_open_size` to relax the size policy.
+        """
+        points = _parse_connection_points(_forward_open_connection_path(packet))
+        if len(points) >= 2 and (
+            points[0] != self._o_t_connection_point
+            or points[1] != self._t_o_connection_point
+        ):
+            return (0x05, b"")  # Path destination unknown
+        return self._check_forward_open_size(packet)
+
+    def _check_forward_open_size(self, packet: bytes) -> tuple[int, bytes] | None:
+        # Spec-strict: the real-time header (connection_size - data_size) must be
+        # 0 (heartbeat), 2 (modeless) or 6 (header32bit). Anything else is rejected.
+        svc = packet[40]
+        cp_len = 4 if svc == 0x58 else 2
+        mask = 0xFFFF if svc == 0x58 else 0x1FF
+        o_sz = int.from_bytes(packet[72:72 + cp_len], "little") & mask
+        t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
+        if (o_sz - self._input_length) not in (0, 2, 6):
+            return (0x01, (0x0127).to_bytes(2, "little"))  # Invalid O->T size
+        if (t_sz - self._output_length) not in (0, 2, 6):
+            return (0x01, (0x0128).to_bytes(2, "little"))  # Invalid T->O size
+        return None
+
     def _handle_forward_close(self, client: socket.socket, packet: bytes) -> None:
         with self._lock:
             self._peer_connected = False
+            self._active_connection_id = None
             self._peer_udp = None
             self._connection_id_o_t = 0
             self._connection_id_t_o = 0

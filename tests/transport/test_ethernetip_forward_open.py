@@ -85,3 +85,126 @@ def test_forward_open_connection_path_reads_path_at_fixed_offset() -> None:
 
 def test_forward_open_connection_path_handles_short_packet() -> None:
     assert _forward_open_connection_path(b"\x00" * 10) == b""
+
+
+class _RecordingClient:
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+
+    def sendall(self, data: bytes) -> None:
+        self.sent.append(data)
+
+
+def _build_forward_open(
+    *, o_t_size: int, t_o_size: int, path: bytes = _GOOD_PATH,
+    serial: int = 1, vendor: int = 1, originator: int = 0xBEEF00D, service: int = 0x54,
+) -> bytes:
+    """Craft a minimal Forward Open request that the handler can validate."""
+    pkt = bytearray(82 + len(path))
+    pkt[40] = service
+    pkt[48:52] = (0x11111111).to_bytes(4, "little")  # O->T CID
+    pkt[52:56] = (0x22222222).to_bytes(4, "little")  # T->O CID
+    pkt[56:58] = serial.to_bytes(2, "little")
+    pkt[58:60] = vendor.to_bytes(2, "little")
+    pkt[60:64] = originator.to_bytes(4, "little")
+    pkt[72:74] = o_t_size.to_bytes(2, "little")      # O->T connection size
+    pkt[78:80] = t_o_size.to_bytes(2, "little")      # T->O connection size
+    pkt[81] = len(path) // 2                          # path size in words
+    pkt[82:82 + len(path)] = path
+    return bytes(pkt)
+
+
+def _reply_status(reply: bytes) -> int:
+    # CIP General Status byte sits at offset 41 in the encapsulation reply.
+    return reply[41]
+
+
+def _reply_ext_size(reply: bytes) -> int:
+    return reply[43]
+
+
+def _status_of_forward_open(
+    adapter: EtherNetIPAdapter, pkt: bytes, client: _RecordingClient | None = None,
+) -> int:
+    client = client or _RecordingClient()
+    adapter._handle_forward_open(client, pkt)
+    assert len(client.sent) == 1
+    return _reply_status(client.sent[0])
+
+
+# --- Base (spec-strict) EtherNetIPAdapter behaviour ---
+# Default config: input_length = output_length = 100.
+# Valid real-time headers are 0 (heartbeat), 2 (modeless), 6 (header32bit).
+
+
+def test_generic_accepts_valid_header_sizes() -> None:
+    adapter = _build_adapter()
+    # 106 -> O->T header 6; 102 -> T->O header 2.
+    pkt = _build_forward_open(o_t_size=106, t_o_size=102)
+    assert _status_of_forward_open(adapter, pkt) == 0x00
+    assert adapter.peer_connected is True
+
+
+def test_generic_rejects_wrong_o_t_connection_point() -> None:
+    adapter = _build_adapter()
+    pkt = _build_forward_open(o_t_size=106, t_o_size=102, path=_BAD_O2T_PATH)
+    assert _status_of_forward_open(adapter, pkt) == 0x05  # Path destination unknown
+    assert adapter.peer_connected is False
+
+
+def test_generic_rejects_wrong_t_o_connection_point() -> None:
+    adapter = _build_adapter()
+    bad_t2o = bytes.fromhex("34000000000000000000" "20 04" "24 01" "2C 64" "2C 7B".replace(" ", ""))
+    pkt = _build_forward_open(o_t_size=106, t_o_size=102, path=bad_t2o)
+    assert _status_of_forward_open(adapter, pkt) == 0x05
+    assert adapter.peer_connected is False
+
+
+def test_generic_rejects_invalid_o_t_header() -> None:
+    adapter = _build_adapter()
+    # 105 -> O->T header 5 (not in {0,2,6}).
+    pkt = _build_forward_open(o_t_size=105, t_o_size=102)
+    assert _status_of_forward_open_ext(adapter, pkt) == (0x01, 0x0127)
+
+
+def test_generic_rejects_invalid_t_o_header() -> None:
+    adapter = _build_adapter()
+    # 105 -> T->O header 5 (not in {0,2,6}).
+    pkt = _build_forward_open(o_t_size=106, t_o_size=105)
+    assert _status_of_forward_open(adapter, pkt) == 0x01
+    assert _status_of_forward_open_ext(adapter, pkt) == (0x01, 0x0128)
+
+
+def test_generic_rejects_oversized_o_t() -> None:
+    adapter = _build_adapter()
+    # 120 -> O->T header 20 (too big).
+    pkt = _build_forward_open(o_t_size=120, t_o_size=102)
+    assert _status_of_forward_open_ext(adapter, pkt) == (0x01, 0x0127)
+
+
+def test_generic_rejects_undersized_o_t() -> None:
+    # Spec-strict: a header smaller than 0 is also invalid -> rejected.
+    adapter = _build_adapter()
+    pkt = _build_forward_open(o_t_size=80, t_o_size=102)  # header -20
+    assert _status_of_forward_open_ext(adapter, pkt) == (0x01, 0x0127)
+
+
+def test_generic_rejects_duplicate_forward_open() -> None:
+    adapter = _build_adapter()
+    client = _RecordingClient()
+    pkt = _build_forward_open(o_t_size=106, t_o_size=102, serial=1)
+    adapter._handle_forward_open(client, pkt)
+    assert _reply_status(client.sent[0]) == 0x00
+    # Same identity opened again while still connected -> duplicate.
+    dup = _RecordingClient()
+    adapter._handle_forward_open(dup, pkt)
+    assert _status_of_forward_open_ext(adapter, pkt) == (0x01, 0x0100)
+
+
+def _status_of_forward_open_ext(adapter: EtherNetIPAdapter, pkt: bytes) -> tuple[int, int]:
+    client = _RecordingClient()
+    adapter._handle_forward_open(client, pkt)
+    reply = client.sent[0]
+    status = _reply_status(reply)
+    ext = int.from_bytes(reply[44:46], "little") if _reply_ext_size(reply) >= 1 else 0
+    return (status, ext)
