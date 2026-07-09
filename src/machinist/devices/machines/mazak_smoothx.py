@@ -17,6 +17,7 @@ from ...transport.ethernetip import (
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
     EtherNetIPScannerConfig,
+    MazakEthernetIPAdapter,
 )
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from .state import CycleState, MachineState
@@ -839,6 +840,8 @@ def _build_ethernetip_transport(
 
 
 def _build_adapter(config: EtherNetIPAdapterConfig) -> EtherNetIPAdapter:
+    if config.behaviour == "mazak":
+        return MazakEthernetIPAdapter(config)
     return EtherNetIPAdapter(config)
 
 

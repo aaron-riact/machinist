@@ -68,3 +68,17 @@ def test_mazak_rejects_duplicate_forward_open() -> None:
 def test_mazak_is_a_distinct_class_from_base() -> None:
     assert issubclass(MazakEthernetIPAdapter, type(_build_base_adapter()))
     assert MazakEthernetIPAdapter is not type(_build_base_adapter())
+
+
+def test_build_adapter_selects_class_by_behaviour() -> None:
+    from machinist.devices.machines.mazak_smoothx import _build_adapter
+
+    generic = _build_adapter(EtherNetIPAdapterConfig(host="127.0.0.1", behaviour="generic"))
+    assert type(generic) is EtherNetIPAdapter
+
+    mazak = _build_adapter(EtherNetIPAdapterConfig(host="127.0.0.1", behaviour="mazak"))
+    assert type(mazak) is MazakEthernetIPAdapter
+
+    # Default behaviour is generic.
+    default = _build_adapter(EtherNetIPAdapterConfig(host="127.0.0.1"))
+    assert type(default) is EtherNetIPAdapter

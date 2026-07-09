@@ -47,6 +47,7 @@ class EtherNetIPAdapterConfig:
     t_o_realtime_format: str = "modeless"
     o_t_connection_point: int = 0x64
     t_o_connection_point: int = 0x65
+    behaviour: str = "generic"
 
 
 _REALTIME_FORMATS = {
