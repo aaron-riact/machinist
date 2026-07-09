@@ -524,8 +524,17 @@ def _register_session_reply(request: bytes, session_handle: int) -> bytes:
 def _send_rrdata_reply(
     request: bytes, *, service: int, payload: bytes, session_handle: int,
     socket_address: bytes | None = None,
+    status: int = 0, extended_status: bytes = b"",
 ) -> bytes:
-    cip = bytes([service, 0x00, 0x00, 0x00]) + payload
+    # CIP response prefix: [service][General Status][Reserved=0][Additional Status Size]
+    # + Additional Status words. The success path (status=0, no ext) is byte-identical
+    # to the previous [service, 0, 0, 0] prefix so existing scanners keep working.
+    ext_size = len(extended_status) // 2
+    cip = (
+        bytes([service & 0xFF, status & 0xFF, 0x00, ext_size & 0xFF])
+        + extended_status
+        + payload
+    )
     item_count = 3 if socket_address is not None else 2
     cpf = bytearray()
     cpf += item_count.to_bytes(2, "little")
