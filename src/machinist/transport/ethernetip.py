@@ -521,6 +521,64 @@ def _register_session_reply(request: bytes, session_handle: int) -> bytes:
     return _encapsulation_reply(request, command=0x0065, session_handle=session_handle, body=body)
 
 
+# Forward Open request layout (offsets inside the encapsulation CPF+CIP payload).
+# The connection path follows the fixed Forward Open fields; its size in 16-bit
+# words sits at byte 81 and the path bytes start at byte 82. These match the
+# offsets the existing size parser already uses (connection params at 72/78).
+_FORWARD_OPEN_CONN_PATH_SIZE_OFF = 81
+_FORWARD_OPEN_CONN_PATH_START = 82
+
+
+def _forward_open_connection_path(packet: bytes) -> bytes:
+    """Return the raw CIP connection path bytes from a Forward Open request."""
+    if len(packet) <= _FORWARD_OPEN_CONN_PATH_SIZE_OFF:
+        return b""
+    path_size_words = packet[_FORWARD_OPEN_CONN_PATH_SIZE_OFF]
+    start = _FORWARD_OPEN_CONN_PATH_START
+    end = start + path_size_words * 2
+    if end > len(packet):
+        end = len(packet)
+    return packet[start:end]
+
+
+def _parse_connection_points(path: bytes) -> list[int]:
+    """Extract Connection Point segment values from a CIP application path.
+
+    Walks logical segments (class/instance/connection-point) and the electronic
+    key special segment. Connection point values are returned in path order:
+    index 0 is the O->T point, index 1 the T->O point.
+    """
+    points: list[int] = []
+    i = 0
+    n = len(path)
+    while i < n:
+        seg = path[i]
+        seg_type = (seg >> 5) & 0x07
+        if seg_type != 0b001:  # not a logical segment -> skip conservatively
+            i += 1
+            continue
+        logical = (seg >> 2) & 0x07
+        fmt = seg & 0x03
+        if logical == 0b101:  # electronic key (special) -> 10-byte segment
+            i += 10
+            continue
+        if logical == 0b011:  # connection point
+            if fmt == 0b00:
+                points.append(path[i + 1])
+                i += 2
+                continue
+            if fmt == 0b01:
+                points.append(int.from_bytes(path[i + 1:i + 3], "little"))
+                i += 3
+                continue
+            points.append(int.from_bytes(path[i + 1:i + 5], "little"))
+            i += 5
+            continue
+        # class / instance: skip by the format's value width
+        i += 2 if fmt == 0b00 else (3 if fmt == 0b01 else 5)
+    return points
+
+
 def _send_rrdata_reply(
     request: bytes, *, service: int, payload: bytes, session_handle: int,
     socket_address: bytes | None = None,
