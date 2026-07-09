@@ -10,5 +10,9 @@ devices:
       ethernetip:
         mode: adapter
         behaviour: mazak
+        # Real-time header formats for the Mazak SmoothAI adapter. These are the
+        # `behaviour: mazak` defaults anyway; shown here for clarity.
+        o_t_realtime_format: header32bit
+        t_o_realtime_format: modeless
         udp_port: 2222
       mtconnect_port: 5054
