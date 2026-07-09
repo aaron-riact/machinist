@@ -97,3 +97,6 @@ def test_mazak_factory_defaults_adapter_behaviour_to_mazak() -> None:
     assert device._ethernetip is not None
     # The Mazak device's adapter uses the lenient Mazak behaviour by default.
     assert isinstance(device._ethernetip, MazakEthernetIPAdapter)
+    # Default real-time formats match real Mazak: O→T=header32bit, T→O=modeless.
+    assert device._ethernetip._o_t_realtime_format == "header32bit"
+    assert device._ethernetip._t_o_realtime_format == "modeless"
