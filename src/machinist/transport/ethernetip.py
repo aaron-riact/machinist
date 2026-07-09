@@ -553,6 +553,31 @@ def _enum_value(mapping: dict[str, _EnumValue], raw: str, field: str) -> _EnumVa
         raise ValueError(f"{field} must be one of: {allowed}") from exc
 
 
+class MazakEthernetIPAdapter(EtherNetIPAdapter):
+    """Mazak SmoothAI-specific adapter.
+
+    Inherits the spec-compliant path and duplicate checks but relaxes the
+    connection-size policy: a real Mazak SmoothAI accepts any connection
+    size up to its assembly capacity (data_size + 6-byte max header) and
+    only rejects an oversized request. Smaller-than-configured requests
+    are accepted (the adapter uses as much of the payload as fits).
+    """
+
+    _MAX_HEADER_BYTES = 6
+
+    def _check_forward_open_size(self, packet: bytes) -> tuple[int, bytes] | None:
+        svc = packet[40]
+        cp_len = 4 if svc == 0x58 else 2
+        mask = 0xFFFF if svc == 0x58 else 0x1FF
+        o_sz = int.from_bytes(packet[72:72 + cp_len], "little") & mask
+        t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
+        if o_sz > self._input_length + self._MAX_HEADER_BYTES:
+            return (0x01, (0x0127).to_bytes(2, "little"))  # Invalid O->T size
+        if t_sz > self._output_length + self._MAX_HEADER_BYTES:
+            return (0x01, (0x0128).to_bytes(2, "little"))  # Invalid T->O size
+        return None
+
+
 def _read_encapsulation_packet(client: socket.socket) -> bytes | None:
     header = _recv_exact(client, 24)
     if header is None:
