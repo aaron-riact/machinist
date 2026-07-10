@@ -15,6 +15,7 @@ dependencies = [
     "textual>=0.79",
     "anyio>=4.4",
     "structlog>=24.1",
+    "dpkt>=1.9.8",
 ]
 
 [project.optional-dependencies]
