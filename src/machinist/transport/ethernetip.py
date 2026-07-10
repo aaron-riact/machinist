@@ -509,16 +509,15 @@ class EtherNetIPAdapter:
                 if got_type != 0x00B1:
                     continue
                 seq_addr_len = int.from_bytes(message[16:18], "little")
-                next_item = 14 + 4 + seq_addr_len
-                if (next_item + 2 <= len(message)
-                        and int.from_bytes(message[next_item:next_item + 2], "little") == 0x00B2):
-                    data_item_len = int.from_bytes(message[next_item + 2:next_item + 4], "little")
-                    raw_payload = message[next_item + 4:next_item + 4 + data_item_len]
-                    if _uses_header32bit(self._o_t_realtime_format):
-                        raw_payload = raw_payload[4:]
-                else:
-                    hdr = 4 if _uses_header32bit(self._o_t_realtime_format) else 0
-                    raw_payload = message[20 + hdr:]
+                # CPF layout for O->T (scanner -> adapter):
+                #   [0:14]  CPF header (item_count + seq_addr type/len + conn_id + seq_num)
+                #   [14:16] item type (0x00B1 = connected transport data)
+                #   [16:18] item length
+                #   [18:20] sequence count (2 bytes)
+                #   [20:24] Run/Idle header (4 bytes, header32bit only)
+                #   [24:]   I/O data
+                hdr = 4 if _uses_header32bit(self._o_t_realtime_format) else 0
+                raw_payload = message[20 + hdr:]
                 block = bytes(raw_payload[: self._input_length]).ljust(
                     self._input_length, b"\x00"
                 )
