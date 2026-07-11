@@ -299,6 +299,7 @@ class DobotDashboard(LineServerDevice):
     kind = "dobot_dashboard"
     DEFAULT_PORT = DOBOT_DASHBOARD_PORT
     FRAMER = PAREN
+    _quiet_commands = frozenset({"tooldi", "gettooldo", "ai", "getao", "toolai"})
 
     _FEEDBACK_PORTS = (DOBOT_FEEDBACK_FAST_PORT, DOBOT_FEEDBACK_MED_PORT, DOBOT_FEEDBACK_SLOW_PORT)
 

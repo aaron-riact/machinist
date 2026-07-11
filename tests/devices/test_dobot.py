@@ -494,3 +494,26 @@ def test_dobot_robot_type_cr20_io_bounds() -> None:
     assert d._tool_di_count == 4
     assert d._tool_do_count == 4
     d.stop()
+
+
+def test_dobot_quiet_commands_suppress_rx_tx_events() -> None:
+    bus = EventBus()
+    received: list[Event] = []
+    bus.subscribe(received.append)
+    d = DobotDashboard("quiet1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
+                       feedback_enabled=False)
+    d.start()
+    try:
+        wait_running(d)
+        _send(d, "ToolDI(1)")
+        _send(d, "AI(1)")
+        _send(d, "GetToolDO(1)")
+        _send(d, "GetAO(1)")
+        _send(d, "ToolAI(1)")
+    finally:
+        d.stop()
+
+    rx_events = [e for e in received if e.kind == "rx"]
+    tx_events = [e for e in received if e.kind == "tx"]
+    assert len(rx_events) == 0
+    assert len(tx_events) == 0
