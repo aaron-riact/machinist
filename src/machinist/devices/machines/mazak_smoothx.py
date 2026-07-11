@@ -154,7 +154,7 @@ class MazakSmoothXOptions:
     door_move_seconds: float = 2.0
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.1
-    heartbeat_interval_seconds: float = 2.0
+    heartbeat_interval_seconds: float = 0.1
     heartbeat_timeout_seconds: float = 3.0
     interfaces: Any = None
     main_interface: Any = None
@@ -211,8 +211,7 @@ class MazakSmoothXEmulator(Device):
         self._cycle_start_armed = False
         self._feed_hold = False
         self._machining_complete_latched = False
-        self._heartbeat_guard_start = -self._heartbeat_interval
-        self._heartbeat_pulse_active = False
+        self._last_heartbeat_toggle_at = -self._heartbeat_interval
         self._di000_toggle: tuple[float, bool | None] = (0.0, None)
         self._last_connection_gen = -1
 
@@ -459,8 +458,7 @@ class MazakSmoothXEmulator(Device):
         if gen != self._last_connection_gen:
             self._last_connection_gen = gen
             self.clear_alarm()
-            self._heartbeat_guard_start = -self._heartbeat_interval
-            self._heartbeat_pulse_active = False
+            self._last_heartbeat_toggle_at = -self._heartbeat_interval
             self._di000_toggle = (now, None)
 
     def _scan_cycle(self, *, now: float) -> None:
@@ -471,25 +469,19 @@ class MazakSmoothXEmulator(Device):
         self._refresh_outputs()
 
     def _update_heartbeat(self, now: float) -> None:
-        echo = self._read_input_bit(0)
+        output_state = self._read_output_bit(0)
+        if now - self._last_heartbeat_toggle_at >= self._heartbeat_interval:
+            self._write_output_bit(0, not output_state)
+            self._last_heartbeat_toggle_at = now
 
-        if echo and self._heartbeat_pulse_active:
-            self._write_output_bit(0, False)
-            self._heartbeat_pulse_active = False
-            self._heartbeat_guard_start = now
-
-        if not self._heartbeat_pulse_active and not self._read_output_bit(0) and not echo:
-            if now - self._heartbeat_guard_start >= self._heartbeat_interval:
-                self._write_output_bit(0, True)
-                self._heartbeat_pulse_active = True
-
+        di000 = self._read_input_bit(0)
         prev_time, prev_value = self._di000_toggle
-        if prev_value is not None and echo != prev_value:
-            self._di000_toggle = (now, echo)
+        if prev_value is not None and di000 != prev_value:
+            self._di000_toggle = (now, di000)
             if self._alarm_code == HEARTBEAT_ALARM:
                 self.clear_alarm()
         else:
-            self._di000_toggle = (prev_time, echo)
+            self._di000_toggle = (prev_time, di000)
 
         if now - self._di000_toggle[0] > self._heartbeat_timeout:
             self._set_alarm(HEARTBEAT_ALARM, "Robot Communication Error")
