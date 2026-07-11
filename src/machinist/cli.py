@@ -24,6 +24,8 @@ from .core.registry import default_registry
 from .core.world import WorldBuilder
 from .web.server import WebServer
 
+from rich.table import Table
+
 app = typer.Typer(help="Machinist - emulate fleets of industrial machines.")
 console = Console()
 
@@ -39,6 +41,31 @@ def kinds() -> None:
     """List all registered device kinds."""
     for kind in default_registry.kinds():
         console.print(f"  • [bold cyan]{kind}[/]  default port [yellow]{default_registry.default_port(kind)}[/]")
+
+
+@app.command()
+def urdf_to_dh(
+    urdf_path: Annotated[Path, typer.Argument(help="Path to a URDF file.")],
+) -> None:
+    """Convert a URDF to modified-DH parameters."""
+    from .kinematics import urdf_to_dh as _convert
+
+    dh = _convert(str(urdf_path))
+    table = Table(title=f"DH Parameters — {urdf_path.name}")
+    table.add_column("i", style="dim")
+    table.add_column("a", justify="right")
+    table.add_column("d", justify="right")
+    table.add_column("alpha", justify="right")
+    table.add_column("theta_offset", justify="right")
+    for i in range(len(dh.a)):
+        table.add_row(
+            str(i),
+            f"{dh.a[i]:11.6f}",
+            f"{dh.d[i]:11.6f}",
+            f"{dh.alpha[i]:11.6f}",
+            f"{dh.theta_offset[i] if dh.theta_offset else 0:11.6f}",
+        )
+    console.print(table)
 
 
 @app.command()
