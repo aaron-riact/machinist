@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import time
 
 import pytest
 
@@ -9,6 +10,7 @@ from machinist.core.types import Endpoint
 from machinist.devices.robots.arm import ArmOptions
 from machinist.devices.robots.arm import ArmMode, ArmStateView
 from machinist.devices.robots.dobot import (
+    DOBOT_FEEDBACK_FAST_PORT,
     DobotDashboard,
     DobotFeedbackPacket,
     _ARM_MODE_TO_ROBOT_MODE,
@@ -56,9 +58,10 @@ def test_dobot_uses_paren_framing_not_semicolon(dobot: DobotDashboard) -> None:
 
 def test_dobot_movj_ack(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "EnableRobot()MovJ(0,0,0,0,0,0)", expect=2)
-    # Two replies concatenated.
+    # Two replies concatenated. MovJ returns a command ID in the value field.
     assert "0,{},EnableRobot()" in reply
-    assert "0,{},MovJ(0,0,0,0,0,0)" in reply
+    assert "MovJ(0,0,0,0,0,0)" in reply
+    assert "{1}" in reply  # command ID 1
 
 
 def test_dobot_unknown_command_returns_error_code(dobot: DobotDashboard) -> None:
@@ -92,6 +95,30 @@ def test_feedback_packet_layout() -> None:
 def test_robot_mode_mapping_covers_all_arm_modes() -> None:
     for mode in ArmMode:
         assert mode in _ARM_MODE_TO_ROBOT_MODE, f"missing mapping for {mode}"
+
+
+def test_feedback_server_streams_packets() -> None:
+    """Connect to the fast feedback port and verify we receive 1440-byte packets."""
+    bus = EventBus()
+    fast, med, slow = free_port(), free_port(), free_port()
+    d = DobotDashboard(
+        "dobot_fb", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
+        feedback_ports=(fast, med, slow),
+    )
+    d.start()
+    try:
+        wait_running(d)
+        s = socket.create_connection(("127.0.0.1", fast), timeout=2)
+        try:
+            data = s.recv(1440, socket.MSG_WAITALL)
+            assert len(data) == 1440
+            assert int.from_bytes(data[0:2], "little") == 1440
+            assert int.from_bytes(data[48:56], "little") == 0x123456789abcdef
+            assert int.from_bytes(data[24:32], "little") == 5  # RobotMode=5 (IDLE)
+        finally:
+            s.close()
+    finally:
+        d.stop()
 
 
 def test_update_feedback_packet_populates_fields() -> None:
