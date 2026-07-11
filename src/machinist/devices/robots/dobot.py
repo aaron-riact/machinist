@@ -440,6 +440,15 @@ class DobotDashboard(LineServerDevice):
                     return f"-30001,{{}},{verb}({args})"
                 self._tool_frames[index] = pose
                 return _ok(verb, args)
+            case "tool":
+                idx, err = _int_arg(args, verb, lo=0, hi=50)
+                if err:
+                    return err
+                if idx != 0 and idx not in self._tool_frames:
+                    return f"-1,{{}},Tool({idx})"
+                self._active_tool = idx
+                self._current_command_id[0] += 1
+                return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1

@@ -539,3 +539,23 @@ def test_dobot_settool_rejects_out_of_range_index(dobot: DobotDashboard) -> None
 def test_dobot_settool_rejects_missing_args(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "SetTool(1)")
     assert reply.startswith("-30001,")
+
+
+def test_dobot_tool_zero_always_succeeds(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "Tool(0)")
+    assert reply.startswith("0,{1},")  # command ID 1
+
+
+def test_dobot_tool_with_frame_selects_active(dobot: DobotDashboard) -> None:
+    _send(dobot, "SetTool(1,{0,0,0,0,0,0})Tool(1)", expect=2)
+    assert dobot._active_tool == 1
+
+
+def test_dobot_tool_fails_for_undefined_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "Tool(42)")
+    assert reply.startswith("-1,")
+
+
+def test_dobot_tool_rejects_out_of_range(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "Tool(99)")
+    assert reply.startswith("-40001,")
