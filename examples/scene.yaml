@@ -8,7 +8,7 @@
 devices:
   - name: db1
     kind: dobot_dashboard         # default port 29999
-    options: {}
+    options: {robot_type: cr10a}
   - name: arm1
     kind: robot                   # generic arm: pick a protocol + transport
     options:
