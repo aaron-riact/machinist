@@ -75,6 +75,24 @@ def test_dobot_unknown_command_returns_error_code(dobot: DobotDashboard) -> None
     assert reply.startswith("-10000,")
 
 
+def test_dobot_geterrorid_returns_empty_when_no_errors(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "GetErrorID()")
+    assert reply == "0,{[]},GetErrorID()"
+
+
+def test_dobot_geterrorid_returns_errors_after_emergency_stop(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "EmergencyStop()GetErrorID()", expect=2)
+    assert "0,{},EmergencyStop()" in reply
+    assert "0,{[1]},GetErrorID()" in reply
+
+
+def test_dobot_geterrorid_clears_after_clearerror(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "EmergencyStop()ClearError()GetErrorID()", expect=3)
+    assert "0,{},EmergencyStop()" in reply
+    assert "0,{},ClearError()" in reply
+    assert "0,{[]},GetErrorID()" in reply
+
+
 def test_feedback_packet_layout() -> None:
     import ctypes
     assert ctypes.sizeof(DobotFeedbackPacket) == 1440

@@ -238,6 +238,7 @@ class DobotDashboard(LineServerDevice):
         self._current_command_id: list[int] = [0]
         self._running = threading.Event()
         self._running.set()
+        self._error_ids: list[int] = []
         self._feedback_socks: list[socket.socket] = []
         self._writer: threading.Thread | None = None
 
@@ -273,9 +274,15 @@ class DobotDashboard(LineServerDevice):
             case "disablerobot":
                 self.arm.set_servo(False); return _ok(verb, args)
             case "emergencystop":
-                self.arm.estop(); return _ok(verb, args)
+                self.arm.estop()
+                self._error_ids = [1]
+                return _ok(verb, args)
             case "clearerror":
-                self.arm.reset(); return _ok(verb, args)
+                self.arm.reset()
+                self._error_ids.clear()
+                return _ok(verb, args)
+            case "geterrorid":
+                return _ok(verb, args, value="[" + ",".join(str(e) for e in self._error_ids) + "]")
             case "getpose":
                 return _ok(verb, args, value=",".join(f"{p:.4f}" for p in s.pose))
             case "getangle":
