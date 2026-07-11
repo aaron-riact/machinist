@@ -119,6 +119,10 @@ def _infer_backend(options: KinematicsOptions) -> str:
     if options.dh is not None:
         return "dh"
     if options.urdf_path is not None:
+        try:
+            import pinocchio  # noqa: F401
+        except ImportError:
+            return "urdf"
         return "pinocchio"
     return "noop"
 

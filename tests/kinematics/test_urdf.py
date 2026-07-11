@@ -45,6 +45,11 @@ def test_urdf_backend_ik_round_trip() -> None:
             )
 
 
+def test_urdf_backend_falls_back_when_pinocchio_not_available() -> None:
+    kin = build_kinematics(KinematicsOptions(urdf_path=EXAMPLES / "cr5.urdf"))
+    assert type(kin).__name__ == "UrdfKinematics"
+
+
 def test_urdf_backend_rejects_wrong_joint_count() -> None:
     kin = build_kinematics(KinematicsOptions(
         backend="urdf", urdf_path=EXAMPLES / "cr5.urdf",
