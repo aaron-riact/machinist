@@ -151,7 +151,7 @@ def _update_feedback_packet(
 ) -> None:
     pkt.len = 1440
     pkt.TestValue = 0x123456789abcdef
-    pkt.RobotMode = _ARM_MODE_TO_ROBOT_MODE.get(state.mode, 9)
+    pkt.RobotMode = _ARM_MODE_TO_ROBOT_MODE[state.mode]
     pkt.TimeStamp = now_us
     pkt.SpeedScaling = state.speed_fraction
     pkt.QActual[:] = state.joints
@@ -281,7 +281,7 @@ class DobotDashboard(LineServerDevice):
             case "getangle":
                 return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
             case "robotmode":
-                return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE.get(s.mode, 9)))
+                return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
