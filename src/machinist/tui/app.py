@@ -32,6 +32,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import ClassVar
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -202,8 +203,11 @@ class MachinistApp(App[None]):
             for sig in io:
                 signal_values[sig.name.lower()] = bool(sig.value)
 
-        def _dot(field_signal: str) -> str:
-            return "[green]●[/]" if signal_values.get(field_signal.lower()) else "[red]●[/]"
+        def _dot(field: DetailField) -> Text:
+            if field["type"] in ("bit", "bool"):
+                on = signal_values.get(field["signal"].lower())
+                return Text("●", style="green" if on else "red")
+            return Text(" ")
 
         if device is not self._last_selected or self.inputs.row_count == 0:
             self.inputs.clear()
@@ -212,14 +216,14 @@ class MachinistApp(App[None]):
 
             if input_fields or output_fields:
                 for field in input_fields:
-                    self.inputs.add_row(f"{_dot(field['signal'])} {field['signal']} {field['name']}", field["offset"], field["value"])
+                    self.inputs.add_row(_dot(field) + " " + field["signal"] + " " + field["name"], field["offset"], field["value"])
                 for field in output_fields:
-                    self.outputs.add_row(f"{_dot(field['signal'])} {field['signal']} {field['name']}", field["offset"], field["value"])
+                    self.outputs.add_row(_dot(field) + " " + field["signal"] + " " + field["name"], field["offset"], field["value"])
             else:
                 for sig in signals:
-                    dot = "[green]●[/]" if sig["value"] else "[red]●[/]"
+                    dot = Text("●", style="green" if sig["value"] else "red")
                     table = self.outputs if sig["direction"] == "OUTPUT" else self.inputs
-                    table.add_row(f"{dot} {sig['name']}", "", str(sig["value"]))
+                    table.add_row(dot + " " + sig["name"], "", str(sig["value"]))
 
             for field in derived_fields:
                 self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
@@ -231,19 +235,19 @@ class MachinistApp(App[None]):
 
             if input_fields or output_fields:
                 for i, field in enumerate(input_fields):
-                    self.inputs.update_cell(input_keys[i], self._inputs_col_label, f"{_dot(field['signal'])} {field['signal']} {field['name']}")
+                    self.inputs.update_cell(input_keys[i], self._inputs_col_label, _dot(field) + " " + field["signal"] + " " + field["name"])
                     self.inputs.update_cell(input_keys[i], self._inputs_col_value, field["value"])
                 for i, field in enumerate(output_fields):
-                    self.outputs.update_cell(output_keys[i], self._outputs_col_label, f"{_dot(field['signal'])} {field['signal']} {field['name']}")
+                    self.outputs.update_cell(output_keys[i], self._outputs_col_label, _dot(field) + " " + field["signal"] + " " + field["name"])
                     self.outputs.update_cell(output_keys[i], self._outputs_col_value, field["value"])
             else:
                 for i, sig in enumerate(signals):
-                    dot = "[green]●[/]" if sig["value"] else "[red]●[/]"
+                    dot = Text("●", style="green" if sig["value"] else "red")
                     row_key = output_keys[i] if sig["direction"] == "OUTPUT" else input_keys[i]
                     col_label = self._outputs_col_label if sig["direction"] == "OUTPUT" else self._inputs_col_label
                     col_value = self._outputs_col_value if sig["direction"] == "OUTPUT" else self._inputs_col_value
                     table = self.outputs if sig["direction"] == "OUTPUT" else self.inputs
-                    table.update_cell(row_key, col_label, f"{dot} {sig['name']}")
+                    table.update_cell(row_key, col_label, dot + " " + sig["name"])
                     table.update_cell(row_key, col_value, str(sig["value"]))
 
             for i, field in enumerate(derived_fields):
