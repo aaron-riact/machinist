@@ -601,3 +601,33 @@ def test_dobot_relmovltool_with_kwargs(dobot: DobotDashboard) -> None:
 def test_dobot_relmovltool_with_speed_kwarg(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "RelMovLTool(5,0,0,0,0,0,speed=20)")
     assert reply.startswith("0,") and "RelMovLTool" in reply
+
+
+def test_dobot_movl_with_pose_braces(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "MovL(pose={-500,100,200,150,0,90})")
+    assert reply.startswith("0,{1},") and "MovL" in reply
+
+
+def test_dobot_movl_with_pose_braces_and_kwargs(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "MovL(pose={-500,100,200,150,0,90},v=60)")
+    assert reply.startswith("0,{1},") and "MovL" in reply
+
+
+def test_dobot_movj_with_joint_braces(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "MovJ(joint={10,20,30,40,50,60})")
+    assert reply.startswith("0,{1},") and "MovJ" in reply
+
+
+def test_dobot_movl_bare_floats_with_kwargs(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "MovL(0,0,0,0,0,0,v=60)")
+    assert reply.startswith("0,{1},") and "MovL" in reply
+
+
+def test_dobot_movl_pose_braces_rejects_wrong_count(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "MovL(pose={1,2,3,4,5})")
+    assert reply.startswith("-30001,")
+
+
+def test_dobot_movl_rejects_bad_args(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "MovL(not_valid)")
+    assert reply.startswith("-30001,")

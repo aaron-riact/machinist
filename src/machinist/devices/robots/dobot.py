@@ -477,11 +477,19 @@ class DobotDashboard(LineServerDevice):
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
-                self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
+                try:
+                    joints = _parse_motion_args(args, count=len(s.joints))
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                self.arm.movej(tuple(joints))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
-                self.arm.movel(tuple(_parse_floats(args, count=6)))  # type: ignore[arg-type]
+                try:
+                    pose = _parse_motion_args(args, count=6)
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                self.arm.movel(tuple(pose))  # type: ignore[arg-type]
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case _:
@@ -566,6 +574,28 @@ def _parse_required_floats(text: str, *, count: int) -> list[float]:
     if len(floats) != count:
         raise ValueError(f"expected {count} floats, got {len(floats)} from {text!r}")
     return floats
+
+
+def _parse_motion_args(text: str, *, count: int) -> list[float]:
+    """Parse MovL/J motion arguments.
+
+    Supports ``pose={x,y,z,rx,ry,rz}`` / ``joint={j1..j6}`` keyword format
+    and bare positional floats.  Trailing ``keyword=value`` tokens are
+    silently ignored in the bare-float form.
+    """
+    stripped = text.strip()
+    if stripped.startswith("pose=") or stripped.startswith("joint="):
+        eq = stripped.index("=")
+        rest = stripped[eq + 1:].lstrip()
+        if not rest.startswith("{") or "}" not in rest:
+            raise ValueError(f"expected brace expression in {text!r}")
+        end = rest.index("}")
+        result = _literal_eval_braced(rest[:end + 1])
+        vals = result[0]
+        if len(vals) != count:
+            raise ValueError(f"expected {count} values, got {len(vals)} from {text!r}")
+        return [float(v) for v in vals]
+    return _parse_required_floats(text, count=count)
 
 
 def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:
