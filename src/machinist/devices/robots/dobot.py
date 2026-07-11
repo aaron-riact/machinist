@@ -249,6 +249,7 @@ class DobotDashboard(LineServerDevice):
         self._running.set()
         self._error_ids: list[int] = []
         self._ai: list[float] = [0.0, 0.0]
+        self._ao: list[float] = [0.0, 0.0]
 
         self.io = SignalBank(name)
         for i in range(1, 5):
@@ -338,6 +339,16 @@ class DobotDashboard(LineServerDevice):
                 if idx < 1 or idx > len(self._ai):
                     return f"-40001,{{}},{verb}({args})"
                 return _ok(verb, args, value=str(self._ai[idx - 1]))
+            case "getao":
+                if not args:
+                    return f"-20000,{{}},{verb}()"
+                try:
+                    idx = int(args.strip())
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                if idx < 1 or idx > len(self._ao):
+                    return f"-40001,{{}},{verb}({args})"
+                return _ok(verb, args, value=str(self._ao[idx - 1]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
@@ -354,6 +365,9 @@ class DobotDashboard(LineServerDevice):
         detail["derived_fields"] = [
             DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._ai)
+        ] + [
+            DetailField(signal=f"ao{i+1}", name=f"AO-{i+1}", offset=str(i), type="float", value=str(v))
+            for i, v in enumerate(self._ao)
         ]
         return detail
 
