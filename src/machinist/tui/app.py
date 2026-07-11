@@ -92,10 +92,12 @@ class MachinistApp(App[None]):
                 with Horizontal(id="signals-row"):
                     self.inputs = DataTable(
                         id="inputs", cursor_type="row", zebra_stripes=True,
+                        cursor_foreground_priority="renderable",
                     )
                     yield self.inputs
                     self.outputs = DataTable(
                         id="outputs", cursor_type="row", zebra_stripes=True,
+                        cursor_foreground_priority="renderable",
                     )
                     yield self.outputs
                 with Horizontal(id="detail-lower"):
@@ -105,6 +107,7 @@ class MachinistApp(App[None]):
                     yield self.files
                     self.derived = DataTable(
                         id="derived", cursor_type="row", zebra_stripes=True,
+                        cursor_foreground_priority="renderable",
                     )
                     yield self.derived
         self._log = RichLog(id="log", wrap=False, max_lines=2000, highlight=False, markup=True)
