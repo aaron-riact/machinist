@@ -47,9 +47,9 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from ...core.device import Device
+from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
 from ...core.events import EventBus
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -235,8 +235,8 @@ class OnRobot3FG25(Device):
                 REG_FW_BUILD: s.fw_build,
             }.get(address, 0)
 
-    def modbus_snapshot(self) -> dict[str, object]:
-        """Expose Modbus register values for the TUI and web interfaces."""
+    def build_detail(self) -> DeviceDetail:
+        """Assemble the normalized detail dict for this 3FG25 gripper."""
         s = self._state
         status = (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0)
         pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
@@ -249,18 +249,26 @@ class OnRobot3FG25(Device):
             pos_offset, s.fingertip_offset_hundredths // 10,
         )
 
-        def _reg(signal: str, name: str, offset: str, type_: str, value: object) -> dict[str, str]:
-            return {"signal": signal, "name": name, "offset": offset, "type": type_, "value": str(value)}
+        def _reg(signal: str, name: str, offset: str, type_: str, value: object) -> DetailField:
+            return cast("DetailField", {"signal": signal, "name": name, "offset": offset, "type": type_, "value": str(value)})
 
         server = self._server
-        return {
-            "mode": "modbus",
-            "transport_ready": server is not None and server._sock is not None,
-            "peer_connected": server is not None and server.client_count > 0,
-            "clients": server.client_count if server is not None else 0,
-            "input_block_hex": "",
-            "output_block_hex": "",
-            "input_fields": [
+        signals: list[DetailSignal] = []
+        io = getattr(self, "io", None)
+        if io is not None:
+            signals = cast("list[DetailSignal]", [
+                {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
+                for sig in io
+            ])
+
+        return DeviceDetail(
+            mode="modbus",
+            transport_ready=server is not None and server._sock is not None,
+            peer_connected=server is not None and server.client_count > 0,
+            clients=server.client_count if server is not None else 0,
+            input_block_hex="",
+            output_block_hex="",
+            input_fields=cast("list[DetailField]", [
                 _reg("T_FORCE", "Target force", "0x0000", "int", f"{s.force} (10*%)"),
                 _reg("T_DIA", "Target diameter", "0x0001", "int", f"{target_tenths} (.1 mm)"),
                 _reg("GRIP_TYPE", "Grip type", "0x0002", "int", str(s.grip_type)),
@@ -268,8 +276,8 @@ class OnRobot3FG25(Device):
                 _reg("SET_FLEN", "Set finger length", "0x0401", "int", f"{s.finger_length_tenths} (.1 mm)"),
                 _reg("SET_FPOS", "Set finger position", "0x0403", "int", str(s.finger_position)),
                 _reg("SET_FTOF", "Set fingertip offset", "0x0404", "int", f"{s.fingertip_offset_hundredths} (.01 mm)"),
-            ],
-            "output_fields": [
+            ]),
+            output_fields=cast("list[DetailField]", [
                 _reg("STATUS", "Status flags", "0x0100", "hex", f"0x{status:04X}"),
                 _reg("RAW_DIA", "Raw diameter", "0x0101", "int", f"{actual_tenths} (.1 mm)"),
                 _reg("DIA_OFF", "Diameter w/ offset", "0x0102", "int", f"{actual_tenths - s.fingertip_offset_hundredths // 10 * 2} (.1 mm)"),
@@ -281,14 +289,18 @@ class OnRobot3FG25(Device):
                 _reg("MAX_DIA", "Maximum diameter", "0x0202", "int", "1400 (.1 mm)"),
                 _reg("PROD", "Product code", "0x0600", "hex", f"0x{s.product_code:02X}"),
                 _reg("FW", "Firmware version", "0x0604", "hex", f"{s.fw_major}.{s.fw_minor}"),
-            ],
-            "derived_fields": [
+            ]),
+            derived_fields=cast("list[DetailField]", [
                 _reg("DIAMETER", "Actual diameter", "", "mm", f"{actual_tenths / 10:.1f}"),
                 _reg("ANGLE", "Finger angle", "", "deg", f"{s.actual_angle_tenths / 10:.1f}"),
                 _reg("BUSY", "Moving", "", "bit", "1" if s.busy else "0"),
                 _reg("GRIPPED", "Object gripped", "", "bit", "1" if s.gripped else "0"),
-            ],
-        }
+            ]),
+            signals=signals,
+        )
+
+    def modbus_snapshot(self) -> dict[str, object]:
+        return cast("dict[str, object]", self.build_detail())
 
     @staticmethod
     def _serial_register(address: int, serial: str) -> int:
