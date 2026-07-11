@@ -449,6 +449,15 @@ class DobotDashboard(LineServerDevice):
                 self._active_tool = idx
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
+            case "reljointmovj":
+                try:
+                    deltas = _parse_required_floats(args, count=len(s.joints))
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                target = tuple(j + d for j, d in zip(s.joints, deltas))
+                self.arm.movej(target)
+                self._current_command_id[0] += 1
+                return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
@@ -519,6 +528,26 @@ def _literal_eval_braced(text: str) -> tuple:
         else:
             out.append(ast.literal_eval(elt))
     return tuple(out)
+
+
+def _parse_required_floats(text: str, *, count: int) -> list[float]:
+    """Extract the first *count* float tokens from comma‑separated *text*.
+
+    Stops at the first non-float token (e.g. ``"keyword=value"``), so
+    trailing optional keyword arguments are silently ignored.
+    """
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    floats: list[float] = []
+    for p in parts:
+        try:
+            floats.append(float(p))
+        except ValueError:
+            break
+        if len(floats) == count:
+            break
+    if len(floats) != count:
+        raise ValueError(f"expected {count} floats, got {len(floats)} from {text!r}")
+    return floats
 
 
 def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:

@@ -559,3 +559,19 @@ def test_dobot_tool_fails_for_undefined_index(dobot: DobotDashboard) -> None:
 def test_dobot_tool_rejects_out_of_range(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "Tool(99)")
     assert reply.startswith("-40001,")
+
+
+def test_dobot_reljointmovj_moves_by_delta(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelJointMovJ(10,0,0,0,0,0)")
+    assert reply.startswith("0,") and "RelJointMovJ" in reply
+    assert "{1}" in reply  # command ID 1
+
+
+def test_dobot_reljointmovj_with_kwargs(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelJointMovJ(5,0,0,0,0,0,tool=1,user=0)")
+    assert reply.startswith("0,") and "RelJointMovJ" in reply
+
+
+def test_dobot_reljointmovj_fails_on_bad_args(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelJointMovJ(10,20)")
+    assert reply.startswith("-30001,")
