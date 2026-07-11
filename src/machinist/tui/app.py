@@ -212,9 +212,9 @@ class MachinistApp(App[None]):
 
             if input_fields or output_fields:
                 for field in input_fields:
-                    self.inputs.add_row(f"{_dot(field['signal'])} {field['name']}", field["offset"], field["value"])
+                    self.inputs.add_row(f"{_dot(field['signal'])} {field['signal']} {field['name']}", field["offset"], field["value"])
                 for field in output_fields:
-                    self.outputs.add_row(f"{_dot(field['signal'])} {field['name']}", field["offset"], field["value"])
+                    self.outputs.add_row(f"{_dot(field['signal'])} {field['signal']} {field['name']}", field["offset"], field["value"])
             else:
                 for sig in signals:
                     dot = "[green]●[/]" if sig["value"] else "[red]●[/]"
@@ -231,10 +231,10 @@ class MachinistApp(App[None]):
 
             if input_fields or output_fields:
                 for i, field in enumerate(input_fields):
-                    self.inputs.update_cell(input_keys[i], self._inputs_col_label, f"{_dot(field['signal'])} {field['name']}")
+                    self.inputs.update_cell(input_keys[i], self._inputs_col_label, f"{_dot(field['signal'])} {field['signal']} {field['name']}")
                     self.inputs.update_cell(input_keys[i], self._inputs_col_value, field["value"])
                 for i, field in enumerate(output_fields):
-                    self.outputs.update_cell(output_keys[i], self._outputs_col_label, f"{_dot(field['signal'])} {field['name']}")
+                    self.outputs.update_cell(output_keys[i], self._outputs_col_label, f"{_dot(field['signal'])} {field['signal']} {field['name']}")
                     self.outputs.update_cell(output_keys[i], self._outputs_col_value, field["value"])
             else:
                 for i, sig in enumerate(signals):
