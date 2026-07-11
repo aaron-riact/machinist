@@ -18,6 +18,7 @@ incoming-message boundaries).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -54,9 +55,16 @@ class _RobotModelInfo:
     dh_params: DHParams | None = None
 
 
+_CR5_DH = DHParams(
+    a=(0.0, 0.0, 0.427, 0.357, 0.0, 0.0),
+    d=(0.147, 0.147, 0.122, -0.116, 0.116, 0.0),
+    alpha=(0.0, math.pi / 2, math.pi, math.pi, -math.pi / 2, math.pi / 2),
+    theta_offset=(0.0, math.pi / 2, 0.0, math.pi / 2, 0.0, 0.0),
+)
+
 DOBOT_ROBOT_MODELS: dict[str, _RobotModelInfo] = {
     "cr3": _RobotModelInfo(type_code=3),
-    "cr5": _RobotModelInfo(type_code=5, tool_di_count=2, tool_do_count=2),
+    "cr5": _RobotModelInfo(type_code=5, tool_di_count=2, tool_do_count=2, dh_params=_CR5_DH),
     "cr7": _RobotModelInfo(type_code=7),
     "cr10": _RobotModelInfo(type_code=10, tool_di_count=2, tool_do_count=2),
     "cr12": _RobotModelInfo(type_code=12),
@@ -77,7 +85,7 @@ DOBOT_ROBOT_MODELS: dict[str, _RobotModelInfo] = {
     "magician_e6": _RobotModelInfo(type_code=150),
 }
 
-_DEFAULT_MODEL = _RobotModelInfo(type_code=5, tool_di_count=4, tool_do_count=4)
+_DEFAULT_MODEL = _RobotModelInfo(type_code=5, tool_di_count=4, tool_do_count=4, dh_params=_CR5_DH)
 
 DOBOT_ROBOT_TYPES: dict[str, int] = {
     name: info.type_code for name, info in DOBOT_ROBOT_MODELS.items()
@@ -475,7 +483,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     raw = dict(options)
     robot_type_raw = raw.pop("robot_type", "cr5")
     model_info = DOBOT_ROBOT_MODELS.get(robot_type_raw, _DEFAULT_MODEL)
-    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
+    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else model_info.dh_params
     kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
     feedback = raw.pop("feedback_ports", None)
     feedback_enabled = feedback is not False

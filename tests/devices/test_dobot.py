@@ -237,6 +237,17 @@ def test_dobot_robot_type_configured_via_factory() -> None:
     d.stop()
 
 
+def test_dobot_robot_type_cr5_via_factory_uses_dh_kinematics() -> None:
+    from machinist.devices.robots.dobot import _factory
+    bus = EventBus()
+    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
+    s = d.arm.state.snapshot()
+    assert any(abs(v) > 1e-9 for v in s.pose), "expected non-zero pose from CR5 DH kinematics"
+    assert d._tool_di_count == 2
+    assert d._tool_do_count == 2
+    d.stop()
+
+
 def test_dobot_robot_type_cr20_uses_max_io() -> None:
     from machinist.devices.robots.dobot import _factory
     bus = EventBus()
@@ -261,6 +272,7 @@ def test_dobot_cr5_rejects_tool_di_outside_bounds() -> None:
     d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
     d.start()
     try:
+        wait_running(d)
         reply = _send(d, "ToolDI(3)")
         assert reply.startswith("-40001,")
     finally:
@@ -273,6 +285,7 @@ def test_dobot_cr20_accepts_tool_di_inside_bounds() -> None:
     d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
     d.start()
     try:
+        wait_running(d)
         reply = _send(d, "ToolDI(3)")
         assert reply == "0,{0},ToolDI(3)"
     finally:
