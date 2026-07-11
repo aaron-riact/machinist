@@ -80,7 +80,7 @@ class Kinematics(Protocol):
     joint_count: int
 
     def forward(self, joints: Joints) -> Pose: ...
-    def inverse(self, pose: Pose, *, seed: Joints) -> Joints: ...
+    def inverse(self, pose: Pose, *, seed: Joints, damping: float = 0.05) -> Joints: ...
 
     def jacobian(self, joints: Joints) -> NDArray[np.float64]:
         """Geometric Jacobian (6×N) at the given joint configuration."""
@@ -155,7 +155,7 @@ class NoOpKinematics:
         padded = (*joints, *([0.0] * 6))[:6]
         return (padded[0], padded[1], padded[2], padded[3], padded[4], padded[5])
 
-    def inverse(self, pose: Pose, *, seed: Joints) -> Joints:
+    def inverse(self, pose: Pose, *, seed: Joints, damping: float = 0.05) -> Joints:
         return seed
 
     def jacobian(self, joints: Joints) -> NDArray:

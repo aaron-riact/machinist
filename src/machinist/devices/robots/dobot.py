@@ -375,7 +375,7 @@ class DobotDashboard(LineServerDevice):
             self._writer.start()
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
-        if os.environ.get("MACHINIST_VERBOSE"):
+        if os.environ.get("MACHINIST_LOG_STDERR"):
             print(f"[dobot/{self.name}] {line}", file=sys.stderr, flush=True)
         verb, args = _parse(line)
         s = self.arm.state.snapshot()

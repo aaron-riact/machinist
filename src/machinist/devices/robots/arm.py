@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
-from ...kinematics.dh_backend import pose_to_mat
+
 
 JOINT_COUNT_DEFAULT = 6
 
@@ -175,15 +175,13 @@ class RobotArm:
         self._begin_move(target_joints, duration=duration, kind="movel")
 
     def jog_cartesian(self, target_pose: Pose, *, damping: float = 0.05) -> None:
-        """Fast single-step cartesian move via damped least-squares Jacobian.
+        """Fast cartesian jog using full iterative IK (converges to tolerance).
 
-        Skips interpolation and full IK — the arm jumps to *target* within
-        one tick cycle.  Suitable only for *small* deltas (jogging).
+        Updates arm state in-place — no interpolation delay.  Suitable for
+        arbitrary step sizes since the IK converges fully.
         """
-        target = pose_to_mat(target_pose)
         with self.state._lock:
-            joints = self.state.joints
-            target_joints = self._kinematics.ik_step(target, joints, damping=damping)
+            target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints, damping=damping)
             self.state.joints = target_joints
             self.state.pose = self._kinematics.forward(target_joints)
             self.state._move = None
