@@ -317,8 +317,8 @@ class EtherNetIPAdapter:
             thread.start()
 
     def _client_loop(self, client: socket.socket) -> None:
-        client.settimeout(0.2)
         try:
+            client.settimeout(0.2)
             while not self._stop.is_set():
                 packet = _read_encapsulation_packet(client)
                 if packet is None:
