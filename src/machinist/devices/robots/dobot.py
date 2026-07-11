@@ -328,6 +328,16 @@ class DobotDashboard(LineServerDevice):
                 if idx < 1 or idx > 4:
                     return f"-40001,{{}},{verb}({args})"
                 return _ok(verb, args, value=str(int(self.io[f"tooldo{idx}"].value)))
+            case "ai":
+                if not args:
+                    return f"-20000,{{}},{verb}()"
+                try:
+                    idx = int(args.strip())
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                if idx < 1 or idx > len(self._ai):
+                    return f"-40001,{{}},{verb}({args})"
+                return _ok(verb, args, value=str(self._ai[idx - 1]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
