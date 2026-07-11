@@ -250,6 +250,8 @@ def _accept_loop(sock: socket.socket, clients: list[socket.socket], running: thr
             client, _addr = sock.accept()
         except socket.timeout:
             continue
+        except OSError:
+            return
         clients.append(client)
     sock.close()
 
