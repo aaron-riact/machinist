@@ -3,7 +3,7 @@ devices:
   - name: gripper
     kind: onrobot_3fg25
 
-  - name: smooth_eip_adapter
+  - name: mazak
     kind: mazak_smoothx
     options:
       interfaces: [ethernetip]
