@@ -194,6 +194,7 @@ def _feedback_writer(
     med: list[socket.socket],
     slow: list[socket.socket],
     command_id: list[int],
+    io: SignalBank,
     running: threading.Event,
 ) -> None:
     pkt = DobotFeedbackPacket()
@@ -203,6 +204,12 @@ def _feedback_writer(
         deadline = time.monotonic() + period
         s = arm.state.snapshot()
         _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0])
+        pkt.DigitalInputs = sum(
+            (1 << (i - 1)) for i in range(1, 5) if io[f"tooldi{i}"].value
+        )
+        pkt.DigitalOutputs = sum(
+            (1 << (i - 1)) for i in range(1, 5) if io[f"tooldo{i}"].value
+        )
         data = bytes(pkt)
         _send_to_all(fast, data)
         if tick % 25 == 0:
@@ -269,7 +276,7 @@ class DobotDashboard(LineServerDevice):
 
             self._writer = threading.Thread(
                 target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self._running),
+                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._running),
                 daemon=True,
             )
             self._writer.start()
