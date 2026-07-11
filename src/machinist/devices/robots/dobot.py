@@ -26,7 +26,9 @@ import socket
 import threading
 import time
 
+from ...core.device import DeviceDetail, DetailField
 from ...core.events import EventBus
+from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -241,6 +243,13 @@ class DobotDashboard(LineServerDevice):
         self._error_ids: list[int] = []
         self._tool_di: list[int] = [0] * 4
         self._tool_do: list[int] = [0] * 4
+        self._ai: list[float] = [0.0, 0.0]
+
+        self.io = SignalBank(name)
+        for i in range(1, 5):
+            self.io.declare(f"tooldi{i}", direction=Direction.INPUT)
+        for i in range(1, 5):
+            self.io.declare(f"tooldo{i}", direction=Direction.OUTPUT)
         self._feedback_socks: list[socket.socket] = []
         self._writer: threading.Thread | None = None
 
@@ -324,6 +333,14 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case _:
                 return f"-10000,{{}},{verb}({args})"
+
+    def build_detail(self) -> DeviceDetail:
+        detail = super().build_detail()
+        detail["derived_fields"] = [
+            DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
+            for i, v in enumerate(self._ai)
+        ]
+        return detail
 
     def _shutdown(self) -> None:
         super()._shutdown()
