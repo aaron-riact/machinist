@@ -27,7 +27,6 @@ from typing import Any
 import ctypes
 import os
 import socket
-import sys
 import threading
 import time
 
@@ -374,11 +373,9 @@ class DobotDashboard(LineServerDevice):
             )
             self._writer.start()
 
-    _VERBOSE = bool(os.environ.get("MACHINIST_VERBOSE"))
-
     def handle_line(self, line: str) -> Iterable[str] | str | None:
-        if self._VERBOSE:
-            print(f"[dobot/{self.name}] RX: {line}", file=sys.stderr, flush=True)
+        if os.environ.get("MACHINIST_VERBOSE"):
+            self.emit("rx", line=line)
         verb, args = _parse(line)
         s = self.arm.state.snapshot()
         match verb.lower():
