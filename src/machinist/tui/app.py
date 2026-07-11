@@ -51,6 +51,8 @@ class MachinistApp(App[None]):
 
     CSS = """
     #top { height: 60%; }
+    #top.log-small { height: 1fr; }
+    #top.log-large { height: 20%; }
     #devices { width: 44; border: round #6e6cd1; }
     #detail-pane { border: round #6e6cd1; }
     #detail-header { height: auto; padding: 0 1; }
@@ -60,6 +62,7 @@ class MachinistApp(App[None]):
     #files, #derived { width: 1fr; border-top: dashed #6e6cd1; }
     #detail-lower.hidden { display: none; }
     RichLog#log { height: 1fr; border: round #6e6cd1; padding: 0 1; }
+    RichLog#log.log-small { height: 3; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
     """
 
@@ -68,6 +71,7 @@ class MachinistApp(App[None]):
         Binding("e", "estop", "E-Stop selected"),
         Binding("r", "reset", "Reset selected"),
         Binding("f", "toggle_files", "Files panel"),
+        Binding("l", "toggle_log", "Log size"),
     ]
 
     def __init__(self, world: World) -> None:
@@ -78,6 +82,7 @@ class MachinistApp(App[None]):
             world.devices[0].name if world.devices else None
         )
         self._last_selected: Device | None = None
+        self._log_size: int = 0  # 0=medium, 1=small, 2=large
 
     # ----- widgets -----------------------------------------------------
 
@@ -326,6 +331,19 @@ class MachinistApp(App[None]):
 
     def action_toggle_files(self) -> None:
         self.query_one("#detail-lower").toggle_class("hidden")
+
+    def action_toggle_log(self) -> None:
+        top = self.query_one("#top")
+        log = self.query_one(RichLog)
+        top.remove_class("log-small", "log-large")
+        log.remove_class("log-small", "log-large")
+        self._log_size = (self._log_size + 1) % 3
+        if self._log_size == 1:
+            top.add_class("log-small")
+            log.add_class("log-small")
+        elif self._log_size == 2:
+            top.add_class("log-large")
+            log.add_class("log-large")
 
 
 # --- stateless helpers --------------------------------------------------
