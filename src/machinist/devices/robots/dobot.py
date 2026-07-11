@@ -375,9 +375,14 @@ class DobotDashboard(LineServerDevice):
             self._writer.start()
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
-        if os.environ.get("MACHINIST_LOG_STDERR"):
-            print(f"[dobot/{self.name}] {line}", file=sys.stderr, flush=True)
         verb, args = _parse(line)
+        if os.environ.get("MACHINIST_LOG_STDERR"):
+            try:
+                log_level = int(os.environ["MACHINIST_LOG_STDERR"])
+            except ValueError:
+                log_level = 1
+            if log_level >= 2 or verb.lower() not in self._quiet_commands:
+                print(f"[dobot/{self.name}] {line}", file=sys.stderr, flush=True)
         s = self.arm.state.snapshot()
         match verb.lower():
             case "enablerobot":
