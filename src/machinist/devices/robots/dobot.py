@@ -196,7 +196,9 @@ def _feedback_writer(
 ) -> None:
     pkt = DobotFeedbackPacket()
     tick = 0
+    period = 0.008
     while running.is_set():
+        deadline = time.monotonic() + period
         s = arm.state.snapshot()
         _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0])
         data = bytes(pkt)
@@ -206,7 +208,9 @@ def _feedback_writer(
             if tick % 125 == 0:
                 _send_to_all(slow, data)
         tick += 1
-        running.wait(0.008)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
 
 
 class DobotDashboard(LineServerDevice):
