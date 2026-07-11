@@ -281,6 +281,9 @@ class DobotDashboard(LineServerDevice):
                 self.arm.reset()
                 self._error_ids.clear()
                 return _ok(verb, args)
+            case "stop":
+                self.arm.stop()
+                return _ok(verb, args)
             case "geterrorid":
                 return _ok(verb, args, value="[" + ",".join(str(e) for e in self._error_ids) + "]")
             case "getpose":

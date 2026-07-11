@@ -90,7 +90,21 @@ def test_dobot_geterrorid_clears_after_clearerror(dobot: DobotDashboard) -> None
     reply = _send(dobot, "EmergencyStop()ClearError()GetErrorID()", expect=3)
     assert "0,{},EmergencyStop()" in reply
     assert "0,{},ClearError()" in reply
-    assert "0,{[]},GetErrorID()" in reply
+    assert "0,{[]},GetErrorID()"
+
+
+def test_dobot_stop_on_idle_robot_is_noop(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "Stop()RobotMode()", expect=2)
+    assert "0,{},Stop()" in reply
+    assert "0,{5},RobotMode()" in reply
+
+
+def test_dobot_stop_during_motion_returns_to_idle(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "EnableRobot()MovJ(10,20,30,40,50,60)Stop()RobotMode()", expect=4)
+    assert "0,{},EnableRobot()" in reply
+    assert "MovJ(10,20,30,40,50,60)" in reply
+    assert "0,{},Stop()" in reply
+    assert "0,{5},RobotMode()" in reply
 
 
 def test_feedback_packet_layout() -> None:

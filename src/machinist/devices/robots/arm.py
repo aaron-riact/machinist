@@ -151,6 +151,11 @@ class RobotArm:
             if self.state.mode is ArmMode.ESTOPPED:
                 self.state.mode = ArmMode.IDLE
 
+    def stop(self) -> None:
+        with self.state._lock:
+            self.state._move = None
+            self.state.mode = ArmMode.IDLE
+
     def set_servo(self, on: bool) -> None:
         with self.state._lock:
             self.state.servo_on = on
