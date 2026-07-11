@@ -384,7 +384,10 @@ class DobotDashboard(LineServerDevice):
 
     def build_detail(self) -> DeviceDetail:
         detail = super().build_detail()
+        s = self.arm.state.snapshot()
         detail["derived_fields"] = [
+            DetailField(signal="speedfactor", name="Speed factor", offset="0", type="int", value=f"{int(s.speed_fraction * 100)}%"),
+        ] + [
             DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._ai)
         ] + [

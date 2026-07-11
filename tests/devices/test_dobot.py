@@ -213,6 +213,14 @@ def test_dobot_speedfactor_sets_global_speed_ratio(dobot: DobotDashboard) -> Non
     assert dobot.arm.state.speed_fraction == 0.5
 
 
+def test_dobot_speedfactor_appears_in_build_detail(dobot: DobotDashboard) -> None:
+    _send(dobot, "SpeedFactor(75)")
+    detail = dobot.build_detail()
+    fields = detail["derived_fields"]
+    sf = next(f for f in fields if f["signal"] == "speedfactor")
+    assert sf["value"] == "75%"
+
+
 def test_dobot_speedfactor_rejects_missing_ratio(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "SpeedFactor()")
     assert reply.startswith("-20000,")
