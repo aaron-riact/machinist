@@ -29,7 +29,7 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...kinematics.api import DHParams, KinematicsOptions
 from ...transport.framing import PAREN
-from .arm import ArmOptions, RobotArm, arm_from_options
+from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
 DOBOT_FEEDBACK_FAST_PORT = 30004
@@ -130,6 +130,34 @@ class DobotFeedbackPacket(ctypes.Structure):
 
 
 assert ctypes.sizeof(DobotFeedbackPacket) == 1440
+
+_ARM_MODE_TO_ROBOT_MODE: dict[ArmMode, int] = {
+    ArmMode.IDLE: 5,
+    ArmMode.MOVING: 7,
+    ArmMode.ESTOPPED: 4,
+    ArmMode.FAULTED: 9,
+}
+
+
+def _update_feedback_packet(
+    pkt: DobotFeedbackPacket,
+    state: ArmStateView,
+    *,
+    now_us: int = 0,
+    command_id: int = 0,
+) -> None:
+    pkt.len = 1440
+    pkt.TestValue = 0x123456789abcdef
+    pkt.RobotMode = _ARM_MODE_TO_ROBOT_MODE.get(state.mode, 9)
+    pkt.TimeStamp = now_us
+    pkt.SpeedScaling = state.speed_fraction
+    pkt.QActual[:] = state.joints
+    pkt.ToolVectorActual[:] = state.pose
+    pkt.EnableStatus = 1 if state.servo_on else 0
+    pkt.BrakeStatus = 1 if state.mode in (ArmMode.IDLE, ArmMode.ESTOPPED) else 0
+    pkt.ErrorStatus = 1 if state.mode is ArmMode.FAULTED else 0
+    pkt.RunningStatus = 1 if state.mode is ArmMode.MOVING else 0
+    pkt.CurrentCommandId = command_id
 
 
 class DobotDashboard(LineServerDevice):

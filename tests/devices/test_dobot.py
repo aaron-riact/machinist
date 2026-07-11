@@ -7,7 +7,13 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.arm import ArmOptions
-from machinist.devices.robots.dobot import DobotDashboard, DobotFeedbackPacket
+from machinist.devices.robots.arm import ArmMode, ArmStateView
+from machinist.devices.robots.dobot import (
+    DobotDashboard,
+    DobotFeedbackPacket,
+    _ARM_MODE_TO_ROBOT_MODE,
+    _update_feedback_packet,
+)
 
 from ..conftest import free_port, wait_running
 
@@ -81,3 +87,44 @@ def test_feedback_packet_layout() -> None:
 
     assert int.from_bytes(buf[0:2], "little") == 1440
     assert int.from_bytes(buf[48:56], "little") == 0x123456789abcdef
+
+
+def test_robot_mode_mapping_covers_all_arm_modes() -> None:
+    for mode in ArmMode:
+        assert mode in _ARM_MODE_TO_ROBOT_MODE, f"missing mapping for {mode}"
+
+
+def test_update_feedback_packet_populates_fields() -> None:
+    pkt = DobotFeedbackPacket()
+    state = ArmStateView(
+        joints=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+        pose=(100.0, 200.0, 300.0, 0.1, 0.2, 0.3),
+        mode=ArmMode.MOVING,
+        servo_on=True,
+        program_running=False,
+        speed_fraction=0.8,
+    )
+    _update_feedback_packet(pkt, state, now_us=5000, command_id=42)
+
+    assert pkt.len == 1440
+    assert pkt.TestValue == 0x123456789abcdef
+    assert pkt.RobotMode == 7  # MOVING → ROBOT_MODE_RUNNING
+    assert pkt.TimeStamp == 5000
+    assert pkt.SpeedScaling == 0.8
+    assert list(pkt.QActual) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert list(pkt.ToolVectorActual) == [100.0, 200.0, 300.0, 0.1, 0.2, 0.3]
+    assert pkt.EnableStatus == 1
+    assert pkt.BrakeStatus == 0   # MOVING → brakes off
+    assert pkt.ErrorStatus == 0
+    assert pkt.RunningStatus == 1
+    assert pkt.CurrentCommandId == 42
+
+    # Modes that produce different outputs
+    idle = ArmStateView(joints=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), mode=ArmMode.IDLE, servo_on=False, program_running=False, speed_fraction=1.0)
+    _update_feedback_packet(pkt, idle, command_id=99)
+    assert pkt.RobotMode == 5       # IDLE → ROBOT_MODE_ENABLE
+    assert pkt.EnableStatus == 0    # servo_off
+    assert pkt.BrakeStatus == 1     # IDLE → brakes on
+    assert pkt.ErrorStatus == 0
+    assert pkt.RunningStatus == 0
+    assert pkt.CurrentCommandId == 99
