@@ -46,8 +46,8 @@ class DeviceDetail(TypedDict):
     transport_ready: bool
     peer_connected: bool
     clients: int | None
-    block_input_hex: str
-    block_output_hex: str
+    input_block_hex: str
+    output_block_hex: str
     input_fields: list[DetailField]
     output_fields: list[DetailField]
     derived_fields: list[DetailField]
@@ -145,8 +145,8 @@ class Device(ABC):
             "transport_ready": True,
             "peer_connected": True,
             "clients": None,
-            "block_input_hex": "",
-            "block_output_hex": "",
+            "input_block_hex": "",
+            "output_block_hex": "",
             "input_fields": input_fields,
             "output_fields": output_fields,
             "derived_fields": [],

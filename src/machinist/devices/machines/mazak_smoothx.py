@@ -5,9 +5,9 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from ...core.device import Device
+from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.registry import register
@@ -155,7 +155,7 @@ class MazakSmoothXOptions:
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.1
     heartbeat_interval_seconds: float = 2.0
-    heartbeat_timeout_seconds: float = 3.0
+    heartbeat_timeout_seconds: float = 6.0 # real mazak is ~10, but we are impatient
     interfaces: Any = None
     main_interface: Any = None
     ethernetip: dict[str, Any] | None = None
@@ -255,9 +255,22 @@ class MazakSmoothXEmulator(Device):
         with self._lock:
             return dict(self._state_snapshot)
 
-    def ethernetip_snapshot(self) -> dict[str, object] | None:
+    def build_detail(self) -> DeviceDetail:
+        """Assemble the normalized detail dict for this SmoothX device."""
         if "ethernetip" not in self._interfaces:
-            return None
+            return DeviceDetail(
+                mode="io",
+                transport_ready=False,
+                peer_connected=False,
+                clients=None,
+                input_block_hex="",
+                output_block_hex="",
+                input_fields=[],
+                output_fields=[],
+                derived_fields=[],
+                signals=[],
+            )
+
         with self._lock:
             input_block = bytes(self._input_block)
             output_block = bytes(self._output_block)
@@ -266,61 +279,82 @@ class MazakSmoothXEmulator(Device):
             connection_up = self._connection_up
             active_program = self.state.program
             transport = self._ethernetip
+
         transport_ready = bool(getattr(transport, "connected", False))
         peer_connected = bool(
             getattr(transport, "peer_connected", transport_ready)
         )
-        return {
-            "mode": self._ethernetip_mode,
-            "transport_ready": transport_ready,
-            "peer_connected": peer_connected,
-            "input_block_hex": input_block.hex(" "),
-            "output_block_hex": output_block.hex(" "),
-            "input_fields": _field_rows(
-                prefix="DI",
-                block=input_block,
-                bit_points=INPUT_SIGNAL_POINTS,
-                text_fields=INPUT_TEXT_FIELDS,
-                bit_fields={},
-            ),
-            "output_fields": _field_rows(
-                prefix="DO",
-                block=output_block,
-                bit_points=OUTPUT_SIGNAL_POINTS,
-                text_fields=OUTPUT_TEXT_FIELDS,
-                bit_fields=OUTPUT_BIT_FIELDS,
-            ),
-            "derived_fields": [
-                {
-                    "signal": "STATE",
-                    "name": "Active program",
-                    "offset": "-",
-                    "type": "string",
-                    "value": active_program or "",
-                },
-                {
-                    "signal": "STATE",
-                    "name": "Connection up",
-                    "offset": "-",
-                    "type": "bool",
-                    "value": "ON" if connection_up else "OFF",
-                },
-                {
-                    "signal": "STATE",
-                    "name": "Alarm code",
-                    "offset": "-",
-                    "type": "int",
-                    "value": "" if alarm_code is None else str(alarm_code),
-                },
-                {
-                    "signal": "STATE",
-                    "name": "Alarm message",
-                    "offset": "-",
-                    "type": "string",
-                    "value": alarm_message,
-                },
-            ],
-        }
+
+        signals: list[DetailSignal] = []
+        io = getattr(self, "io", None)
+        if io is not None:
+            signals = [
+                {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
+                for sig in io
+            ]
+
+        input_fields = cast("list[DetailField]", _field_rows(
+            prefix="DI",
+            block=input_block,
+            bit_points=INPUT_SIGNAL_POINTS,
+            text_fields=INPUT_TEXT_FIELDS,
+            bit_fields={},
+        ))
+        output_fields = cast("list[DetailField]", _field_rows(
+            prefix="DO",
+            block=output_block,
+            bit_points=OUTPUT_SIGNAL_POINTS,
+            text_fields=OUTPUT_TEXT_FIELDS,
+            bit_fields=OUTPUT_BIT_FIELDS,
+        ))
+        derived_fields: list[DetailField] = [
+            {
+                "signal": "STATE",
+                "name": "Active program",
+                "offset": "-",
+                "type": "string",
+                "value": active_program or "",
+            },
+            {
+                "signal": "STATE",
+                "name": "Connection up",
+                "offset": "-",
+                "type": "bool",
+                "value": "ON" if connection_up else "OFF",
+            },
+            {
+                "signal": "STATE",
+                "name": "Alarm code",
+                "offset": "-",
+                "type": "int",
+                "value": "" if alarm_code is None else str(alarm_code),
+            },
+            {
+                "signal": "STATE",
+                "name": "Alarm message",
+                "offset": "-",
+                "type": "string",
+                "value": alarm_message,
+            },
+        ]
+
+        return DeviceDetail(  # type: ignore[return-value]
+            mode=self._ethernetip_mode,
+            transport_ready=transport_ready,
+            peer_connected=peer_connected,
+            clients=None,
+            input_block_hex=input_block.hex(" "),
+            output_block_hex=output_block.hex(" "),
+            input_fields=input_fields,
+            output_fields=output_fields,
+            derived_fields=derived_fields,
+            signals=signals,
+        )
+
+    def ethernetip_snapshot(self) -> dict[str, object] | None:
+        if "ethernetip" not in self._interfaces:
+            return None
+        return cast("dict[str, object]", self.build_detail())
 
     def write_input_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:
         chunk = bytes(data)

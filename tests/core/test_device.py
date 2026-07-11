@@ -39,8 +39,8 @@ def test_build_detail_returns_device_detail_shape() -> None:
     assert detail["transport_ready"] is True
     assert detail["peer_connected"] is True
     assert detail["clients"] is None
-    assert detail["block_input_hex"] == ""
-    assert detail["block_output_hex"] == ""
+    assert detail["input_block_hex"] == ""
+    assert detail["output_block_hex"] == ""
     assert detail["derived_fields"] == []
 
 
