@@ -311,64 +311,34 @@ class DobotDashboard(LineServerDevice):
             case "robotmode":
                 return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
             case "tooldi":
-                if not args:
-                    return f"-20000,{{}},{verb}()"
-                try:
-                    idx = int(args.strip())
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if idx < 1 or idx > 4:
-                    return f"-40001,{{}},{verb}({args})"
+                idx, err = _int_arg(args, verb, hi=4)
+                if err:
+                    return err
                 return _ok(verb, args, value=str(int(self.io[f"tooldi{idx}"].value)))
             case "gettooldo":
-                if not args:
-                    return f"-20000,{{}},{verb}()"
-                try:
-                    idx = int(args.strip())
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if idx < 1 or idx > 4:
-                    return f"-40001,{{}},{verb}({args})"
+                idx, err = _int_arg(args, verb, hi=4)
+                if err:
+                    return err
                 return _ok(verb, args, value=str(int(self.io[f"tooldo{idx}"].value)))
             case "ai":
-                if not args:
-                    return f"-20000,{{}},{verb}()"
-                try:
-                    idx = int(args.strip())
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if idx < 1 or idx > len(self._ai):
-                    return f"-40001,{{}},{verb}({args})"
+                idx, err = _int_arg(args, verb, hi=len(self._ai))
+                if err:
+                    return err
                 return _ok(verb, args, value=str(self._ai[idx - 1]))
             case "getao":
-                if not args:
-                    return f"-20000,{{}},{verb}()"
-                try:
-                    idx = int(args.strip())
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if idx < 1 or idx > len(self._ao):
-                    return f"-40001,{{}},{verb}({args})"
+                idx, err = _int_arg(args, verb, hi=len(self._ao))
+                if err:
+                    return err
                 return _ok(verb, args, value=str(self._ao[idx - 1]))
             case "toolai":
-                if not args:
-                    return f"-20000,{{}},{verb}()"
-                try:
-                    idx = int(args.strip())
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if idx < 1 or idx > len(self._tool_ai):
-                    return f"-40001,{{}},{verb}({args})"
+                idx, err = _int_arg(args, verb, hi=len(self._tool_ai))
+                if err:
+                    return err
                 return _ok(verb, args, value=str(self._tool_ai[idx - 1]))
             case "speedfactor":
-                if not args:
-                    return f"-20000,{{}},{verb}()"
-                try:
-                    ratio = int(args.strip())
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if ratio < 1 or ratio > 100:
-                    return f"-40001,{{}},{verb}({args})"
+                ratio, err = _int_arg(args, verb, hi=100)
+                if err:
+                    return err
                 self.arm.set_speed_factor(ratio / 100)
                 return _ok(verb, args)
             case "movj":
@@ -424,6 +394,18 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
     if len(parts) != count:
         raise ValueError(f"expected {count} floats, got {len(parts)}")
     return [float(p) for p in parts]
+
+
+def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:
+    if not args:
+        return None, f"-20000,{{}},{verb}()"
+    try:
+        val = int(args.strip())
+    except ValueError:
+        return None, f"-30001,{{}},{verb}({args})"
+    if val < lo or val > hi:
+        return None, f"-40001,{{}},{verb}({args})"
+    return val, None
 
 
 def _ok(verb: str, args: str, *, value: str = "") -> str:
