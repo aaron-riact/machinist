@@ -37,9 +37,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
-from ..core.device import Device
+from ..core.device import Device, DetailField, DetailSignal
 from ..core.events import Event
-from ..core.io import Direction
+
 from ..core.types import DeviceState
 from ..core.world import World
 
@@ -185,53 +185,70 @@ class MachinistApp(App[None]):
             self._last_selected = None
             return
         self._refresh_detail_header(device)
-        bank = getattr(device, "io", None)
         snapshot = device.build_detail()
+
+        if snapshot is None:
+            return
+
+        input_fields: list[DetailField] = snapshot.get("input_fields", [])
+        output_fields: list[DetailField] = snapshot.get("output_fields", [])
+        derived_fields: list[DetailField] = snapshot.get("derived_fields", [])
+        signals: list[DetailSignal] = snapshot.get("signals", [])
+
+        # Case-insensitive lookup of raw signal values for the green/red dot.
+        io = getattr(device, "io", None)
+        signal_values: dict[str, bool] = {}
+        if io is not None:
+            for sig in io:
+                signal_values[sig.name.lower()] = bool(sig.value)
+
+        def _dot(field_signal: str) -> str:
+            return "[green]●[/]" if signal_values.get(field_signal.lower()) else "[red]●[/]"
 
         if device is not self._last_selected or self.inputs.row_count == 0:
             self.inputs.clear()
             self.outputs.clear()
             self.derived.clear()
-            if bank is not None:
-                for sig in bank:
-                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                    table = (
-                        self.outputs if sig.direction is Direction.OUTPUT else self.inputs
-                    )
-                    table.add_row(f"{dot} {sig.name}", "", str(sig.value))
-            if snapshot is not None:
-                for field in snapshot["input_fields"]:
-                    self.inputs.add_row(field["name"], field["offset"], field["value"])
-                for field in snapshot["output_fields"]:
-                    self.outputs.add_row(field["name"], field["offset"], field["value"])
-                for field in snapshot["derived_fields"]:
-                    self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
+
+            if input_fields or output_fields:
+                for field in input_fields:
+                    self.inputs.add_row(f"{_dot(field['signal'])} {field['name']}", field["offset"], field["value"])
+                for field in output_fields:
+                    self.outputs.add_row(f"{_dot(field['signal'])} {field['name']}", field["offset"], field["value"])
+            else:
+                for sig in signals:
+                    dot = "[green]●[/]" if sig["value"] else "[red]●[/]"
+                    table = self.outputs if sig["direction"] == "OUTPUT" else self.inputs
+                    table.add_row(f"{dot} {sig['name']}", "", str(sig["value"]))
+
+            for field in derived_fields:
+                self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
+
         else:
             input_keys = list(self.inputs.rows.keys())
             output_keys = list(self.outputs.rows.keys())
             derived_keys = list(self.derived.rows.keys())
-            i_in = 0
-            i_out = 0
-            if bank is not None:
-                for sig in bank:
-                    dot = "[green]●[/]" if sig.value else "[red]●[/]"
-                    if sig.direction is Direction.OUTPUT:
-                        self.outputs.update_cell(output_keys[i_out], self._outputs_col_label, f"{dot} {sig.name}")
-                        self.outputs.update_cell(output_keys[i_out], self._outputs_col_value, str(sig.value))
-                        i_out += 1
-                    else:
-                        self.inputs.update_cell(input_keys[i_in], self._inputs_col_label, f"{dot} {sig.name}")
-                        self.inputs.update_cell(input_keys[i_in], self._inputs_col_value, str(sig.value))
-                        i_in += 1
-            if snapshot is not None:
-                for field in snapshot["input_fields"]:
-                    self.inputs.update_cell(input_keys[i_in], self._inputs_col_value, field["value"])
-                    i_in += 1
-                for field in snapshot["output_fields"]:
-                    self.outputs.update_cell(output_keys[i_out], self._outputs_col_value, field["value"])
-                    i_out += 1
-                for i, field in enumerate(snapshot["derived_fields"]):
-                    self.derived.update_cell(derived_keys[i], self._derived_col_value, field["value"])
+
+            if input_fields or output_fields:
+                for i, field in enumerate(input_fields):
+                    self.inputs.update_cell(input_keys[i], self._inputs_col_label, f"{_dot(field['signal'])} {field['name']}")
+                    self.inputs.update_cell(input_keys[i], self._inputs_col_value, field["value"])
+                for i, field in enumerate(output_fields):
+                    self.outputs.update_cell(output_keys[i], self._outputs_col_label, f"{_dot(field['signal'])} {field['name']}")
+                    self.outputs.update_cell(output_keys[i], self._outputs_col_value, field["value"])
+            else:
+                for i, sig in enumerate(signals):
+                    dot = "[green]●[/]" if sig["value"] else "[red]●[/]"
+                    row_key = output_keys[i] if sig["direction"] == "OUTPUT" else input_keys[i]
+                    col_label = self._outputs_col_label if sig["direction"] == "OUTPUT" else self._inputs_col_label
+                    col_value = self._outputs_col_value if sig["direction"] == "OUTPUT" else self._inputs_col_value
+                    table = self.outputs if sig["direction"] == "OUTPUT" else self.inputs
+                    table.update_cell(row_key, col_label, f"{dot} {sig['name']}")
+                    table.update_cell(row_key, col_value, str(sig["value"]))
+
+            for i, field in enumerate(derived_fields):
+                self.derived.update_cell(derived_keys[i], self._derived_col_value, field["value"])
+
         self._last_selected = device
         self._refresh_files(device)
 

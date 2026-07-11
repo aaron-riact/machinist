@@ -212,21 +212,33 @@ def test_refresh_detail_populates_then_increments_then_rebuilds_on_switch() -> N
     Third call (different device): clear + add_row again.
     Fourth call (None selected): clears everything.
     """
-    from machinist.tui.app import Direction
+    from machinist.core.io import Direction
 
     sigs = [
         SimpleNamespace(name="i1", value=True, direction=Direction.INPUT),
         SimpleNamespace(name="o1", value=False, direction=Direction.OUTPUT),
     ]
+    _detail = {
+        "mode": "test",
+        "transport_ready": True,
+        "peer_connected": True,
+        "clients": None,
+        "input_block_hex": "",
+        "output_block_hex": "",
+        "input_fields": [{"signal": "i1", "name": "Input 1", "offset": "byte 0", "type": "bit", "value": "ON"}],
+        "output_fields": [{"signal": "o1", "name": "Output 1", "offset": "byte 0", "type": "bit", "value": "OFF"}],
+        "derived_fields": [],
+        "signals": [],
+    }
     device1 = SimpleNamespace(
         name="dev1", kind="test", endpoint="ep1",
         lifecycle=DeviceState.RUNNING, io=sigs,
-        build_detail=lambda: None,
+        build_detail=lambda: _detail,
     )
     device2 = SimpleNamespace(
         name="dev2", kind="test", endpoint="ep2",
         lifecycle=DeviceState.RUNNING, io=sigs,
-        build_detail=lambda: None,
+        build_detail=lambda: _detail,
     )
 
     in_label = ColumnKey("input")
