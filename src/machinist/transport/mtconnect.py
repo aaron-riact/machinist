@@ -55,7 +55,7 @@ class MTConnectAgent:
         self._server = ThreadingHTTPServer((self._host, self._port), _Handler)
         if ready is not None:
             ready.set()
-        self._server.serve_forever()
+        self._server.serve_forever(poll_interval=0.05)
 
     def shutdown(self) -> None:
         if self._server is not None:
