@@ -10,6 +10,7 @@ TUI launch, and graceful shutdown on Ctrl-C.
 
 from __future__ import annotations
 
+import os
 import signal
 import threading
 from pathlib import Path
@@ -84,10 +85,13 @@ def run(
     ] = None,
     tui: Annotated[bool, typer.Option(help="Launch the Textual UI.")] = True,
     web: Annotated[bool, typer.Option(help="Serve the live web UI.")] = False,
+    verbose: Annotated[bool, typer.Option(help="Print received commands to stderr.")] = False,
     web_host: Annotated[str, typer.Option(help="Host the web UI binds to.")] = "127.0.0.1",
     web_port: Annotated[int, typer.Option(help="Port the web UI binds to.")] = 8080,
 ) -> None:
     """Start a fleet of emulated devices from one or more YAML files."""
+    if verbose:
+        os.environ["MACHINIST_VERBOSE"] = "1"
     config = _build_config(configs, inline=device or [])
     world = WorldBuilder().build(config)
     console.print(f"[bold green]Starting[/] {len(world.devices)} device(s):")

@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import ctypes
+import os
 import socket
+import sys
 import threading
 import time
 
@@ -372,7 +374,11 @@ class DobotDashboard(LineServerDevice):
             )
             self._writer.start()
 
+    _VERBOSE = bool(os.environ.get("MACHINIST_VERBOSE"))
+
     def handle_line(self, line: str) -> Iterable[str] | str | None:
+        if self._VERBOSE:
+            print(f"[dobot/{self.name}] RX: {line}", file=sys.stderr, flush=True)
         verb, args = _parse(line)
         s = self.arm.state.snapshot()
         match verb.lower():
@@ -469,7 +475,7 @@ class DobotDashboard(LineServerDevice):
                 delta_m = [delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
                            delta[3], delta[4], delta[5]]
                 tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
-                R_tool = _pose_to_mat(tool_pose)[:3, :3]
+                R_tool = _pose_to_mat(tool_pose)[:3, :3]  # type: ignore[arg-type]
                 d_pos = R_tool @ np.array([delta_m[0], delta_m[1], delta_m[2]])
                 d_rot = R_tool @ np.array([delta_m[3], delta_m[4], delta_m[5]])
                 target_pose = (
