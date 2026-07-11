@@ -62,11 +62,25 @@ _CR5_DH = DHParams(
     theta_offset=(0.0, math.pi / 2, 0.0, math.pi / 2, 0.0, 0.0),
 )
 
+_CR10A_DH = DHParams(
+    a=(0.0, 0.0, -0.607, -0.568, 0.0, 0.0),
+    d=(0.1765, 0.0, 0.0, 0.191, 0.125, 0.1084),
+    alpha=(0.0, math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2),
+    theta_offset=(0.0, -math.pi / 2, 0.0, -math.pi / 2, 0.0, 0.0),
+)
+
+_CR20A_DH = DHParams(
+    a=(0.0, 0.0, -0.8252, -0.746, 0.0, 0.0),
+    d=(0.23, 0.0, 0.0468, 0.1288, 0.1288, 0.1365),
+    alpha=(0.0, math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2),
+    theta_offset=(0.0, -math.pi / 2, 0.0, -math.pi / 2, 0.0, 0.0),
+)
+
 DOBOT_ROBOT_MODELS: dict[str, _RobotModelInfo] = {
     "cr3": _RobotModelInfo(type_code=3),
     "cr5": _RobotModelInfo(type_code=5, tool_di_count=2, tool_do_count=2, dh_params=_CR5_DH),
     "cr7": _RobotModelInfo(type_code=7),
-    "cr10": _RobotModelInfo(type_code=10, tool_di_count=2, tool_do_count=2),
+    "cr10": _RobotModelInfo(type_code=10, tool_di_count=2, tool_do_count=2, dh_params=_CR10A_DH),
     "cr12": _RobotModelInfo(type_code=12),
     "cr16": _RobotModelInfo(type_code=16),
     "nova2": _RobotModelInfo(type_code=101),
@@ -75,13 +89,13 @@ DOBOT_ROBOT_MODELS: dict[str, _RobotModelInfo] = {
     "cr5a": _RobotModelInfo(type_code=115),
     "cr5af": _RobotModelInfo(type_code=116),
     "cr7a": _RobotModelInfo(type_code=117),
-    "cr10a": _RobotModelInfo(type_code=120),
+    "cr10a": _RobotModelInfo(type_code=120, tool_di_count=2, tool_do_count=2, dh_params=_CR10A_DH),
     "cr10af": _RobotModelInfo(type_code=121),
     "cr12a": _RobotModelInfo(type_code=122),
     "cr16a": _RobotModelInfo(type_code=126),
     "cr20af": _RobotModelInfo(type_code=127),
-    "cr20a": _RobotModelInfo(type_code=130, tool_di_count=4, tool_do_count=4),
-    "cr20": _RobotModelInfo(type_code=20, tool_di_count=4, tool_do_count=4),
+    "cr20a": _RobotModelInfo(type_code=130, tool_di_count=4, tool_do_count=4, dh_params=_CR20A_DH),
+    "cr20": _RobotModelInfo(type_code=20, tool_di_count=4, tool_do_count=4, dh_params=_CR20A_DH),
     "magician_e6": _RobotModelInfo(type_code=150),
 }
 
