@@ -479,7 +479,7 @@ class DobotDashboard(LineServerDevice):
                 T_tool_inv = np.linalg.inv(T_tool)
                 T_new = T_current @ T_tool @ T_delta @ T_tool_inv
                 target_pose = _mat_to_pose(T_new)
-                self.arm.movel(target_pose, duration=0.05)
+                self.arm.jog_cartesian(target_pose)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":

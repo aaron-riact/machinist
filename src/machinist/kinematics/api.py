@@ -25,6 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import numpy as np
+from numpy.typing import NDArray
+
 Joints = tuple[float, ...]
 Pose = tuple[float, float, float, float, float, float]  # x y z rx ry rz (RPY)
 
@@ -78,6 +81,14 @@ class Kinematics(Protocol):
 
     def forward(self, joints: Joints) -> Pose: ...
     def inverse(self, pose: Pose, *, seed: Joints) -> Joints: ...
+
+    def jacobian(self, joints: Joints) -> NDArray[np.float64]:
+        """Geometric Jacobian (6×N) at the given joint configuration."""
+        ...
+
+    def ik_step(self, target: NDArray[np.float64], joints: Joints, *, damping: float = 0.05) -> Joints:
+        """Single damped-least-squares IK step (fast, approximate)."""
+        ...
 
 
 # --- registry ---------------------------------------------------------
@@ -146,6 +157,13 @@ class NoOpKinematics:
 
     def inverse(self, pose: Pose, *, seed: Joints) -> Joints:
         return seed
+
+    def jacobian(self, joints: Joints) -> NDArray:
+        n = len(joints)
+        return np.zeros((6, n))
+
+    def ik_step(self, target: NDArray, joints: Joints, *, damping: float = 0.05) -> Joints:
+        return joints
 
 
 register_backend("noop", NoOpKinematics)

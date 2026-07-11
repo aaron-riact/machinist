@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .api import Joints, Kinematics, Pose, RobotModel
-from .dh_backend import _mat_to_pose, _pose_to_mat, _se3_error
+from .dh_backend import _mat_to_pose, pose_to_mat, _se3_error
 
 
 @dataclass(slots=True)
@@ -51,7 +51,7 @@ class UrdfKinematics(Kinematics):
         self, pose: Pose, *, seed: Joints,
         max_iter: int = 200, tolerance: float = 1e-4, damping: float = 0.05,
     ) -> Joints:
-        target = _pose_to_mat(pose)
+        target = pose_to_mat(pose)
         q = np.array(seed, dtype=float)
         if q.size != self.joint_count:
             raise ValueError(f"seed length {q.size} != joint_count {self.joint_count}")
@@ -169,7 +169,7 @@ def urdf_to_dh(urdf_path: str, *, joint_count: int | None = None) -> DHParams:
 
     from .api import DHParams  # noqa: F811
     from .dh_backend import DHKinematics  # noqa: F811
-    from .dh_backend import _dh_matrix, _mat_to_pose, _pose_to_mat  # noqa: F401, F811
+    from .dh_backend import _dh_matrix, _mat_to_pose, pose_to_mat  # noqa: F401, F811
 
     tree = ET.parse(urdf_path)
     root = tree.getroot()
@@ -299,7 +299,7 @@ from pathlib import Path
 
 from .api import DHParams  # noqa: F811 (re-import for urdf_to_dh above)
 from .dh_backend import DHKinematics  # noqa: F811
-from .dh_backend import _dh_matrix, _mat_to_pose, _pose_to_mat, _se3_error  # noqa: F401, F811
+from .dh_backend import _dh_matrix, _mat_to_pose, pose_to_mat, _se3_error  # noqa: F401, F811
 
 
 def _compose_transform(xyz: NDArray[np.float64], rpy: NDArray[np.float64]) -> NDArray[np.float64]:

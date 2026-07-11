@@ -18,7 +18,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from pathlib import Path
 
+import numpy as np
+
 from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
+from ...kinematics.dh_backend import pose_to_mat
 
 JOINT_COUNT_DEFAULT = 6
 
@@ -170,6 +173,21 @@ class RobotArm:
     def movel(self, target_pose: Pose, *, duration: float = 1.0) -> None:
         target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
         self._begin_move(target_joints, duration=duration, kind="movel")
+
+    def jog_cartesian(self, target_pose: Pose, *, damping: float = 0.05) -> None:
+        """Fast single-step cartesian move via damped least-squares Jacobian.
+
+        Skips interpolation and full IK — the arm jumps to *target* within
+        one tick cycle.  Suitable only for *small* deltas (jogging).
+        """
+        target = pose_to_mat(target_pose)
+        with self.state._lock:
+            joints = self.state.joints
+            target_joints = self._kinematics.ik_step(target, joints, damping=damping)
+            self.state.joints = target_joints
+            self.state.pose = self._kinematics.forward(target_joints)
+            self.state._move = None
+            self.state.mode = ArmMode.IDLE
 
     # ----- background tick -------------------------------------------
 

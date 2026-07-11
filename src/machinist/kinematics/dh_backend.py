@@ -54,13 +54,28 @@ class DHKinematics(Kinematics):
             T = T @ _dh_matrix(a, d, alpha, q + theta_off)
         return T
 
+    def jacobian(self, joints: Joints) -> NDArray[np.float64]:
+        q = np.array(joints, dtype=float)
+        current = self._fk_matrix(joints)
+        return self._numerical_jacobian(q, current)
+
+    def ik_step(self, target: NDArray[np.float64], joints: Joints, *, damping: float = 0.05) -> Joints:
+        """Single damped-least-squares IK step — fast, approximate, no iteration."""
+        q = np.array(joints, dtype=float)
+        current = self._fk_matrix(joints)
+        err = _se3_error(target, current)
+        J = self._numerical_jacobian(q, current)
+        JJt = J @ J.T + damping ** 2 * np.eye(6)
+        dq = J.T @ np.linalg.solve(JJt, err)
+        return tuple((q + dq).tolist())
+
     # ----- inverse (damped least-squares Jacobian) --------------------
 
     def inverse(
         self, pose: Pose, *, seed: Joints,
         max_iter: int = 200, tolerance: float = 1e-4, damping: float = 0.05,
     ) -> Joints:
-        target = _pose_to_mat(pose)
+        target = pose_to_mat(pose)
         q = np.array(seed, dtype=float)
         if q.size != self.joint_count:
             raise ValueError(f"seed length {q.size} != joint_count {self.joint_count}")
@@ -113,7 +128,7 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
     return (float(x), float(y), float(z), rx, ry, rz)
 
 
-def _pose_to_mat(pose: Pose) -> NDArray[np.float64]:
+def pose_to_mat(pose: Pose) -> NDArray[np.float64]:
     x, y, z, rx, ry, rz = pose
     cx, sx = math.cos(rx), math.sin(rx)
     cy, sy = math.cos(ry), math.sin(ry)
