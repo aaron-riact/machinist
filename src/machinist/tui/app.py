@@ -32,6 +32,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import ClassVar
 
+from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -206,7 +207,9 @@ class MachinistApp(App[None]):
         def _dot(field: DetailField) -> Text:
             if field["type"] in ("bit", "bool"):
                 on = signal_values.get(field["signal"].lower())
-                return Text("●", style="green" if on else "red")
+                t = Text("●")
+                t.stylize(Style(color="green" if on else "red"))
+                return t
             return Text(" ")
 
         if device is not self._last_selected or self.inputs.row_count == 0:
