@@ -20,10 +20,38 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypedDict
 
 from .events import Event, EventBus
+from .io import Direction
 from .types import DeviceState, Endpoint
+
+
+class DetailSignal(TypedDict):
+    name: str
+    direction: str
+    value: bool
+
+
+class DetailField(TypedDict):
+    signal: str
+    name: str
+    offset: str
+    type: str
+    value: str
+
+
+class DeviceDetail(TypedDict):
+    mode: str
+    transport_ready: bool
+    peer_connected: bool
+    clients: int | None
+    block_input_hex: str
+    block_output_hex: str
+    input_fields: list[DetailField]
+    output_fields: list[DetailField]
+    derived_fields: list[DetailField]
+    signals: list[DetailSignal]
 
 
 class Device(ABC):
@@ -79,6 +107,51 @@ class Device(ABC):
     def emit(self, kind: str, **payload: Any) -> None:
         """Publish a status :class:`Event` for this device."""
         self._bus.publish(Event(device=self.name, kind=kind, payload=payload))
+
+    def build_detail(self) -> DeviceDetail:
+        """Assemble a normalized detail dict for display / transport.
+
+        Subclasses override to add transport status, text/bit fields,
+        and derived state.  The dict format is the single source for
+        both the TUI and the web API.
+        """
+        bank = getattr(self, "io", None)
+        signals: list[DetailSignal] = []
+        if bank is not None:
+            signals = [
+                {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
+                for sig in bank
+            ]
+
+        input_fields: list[DetailField] = []
+        output_fields: list[DetailField] = []
+        if bank is not None:
+            for sig in bank:
+                val = "ON" if sig.value else "OFF"
+                field: DetailField = {
+                    "signal": sig.name.upper(),
+                    "name": getattr(sig, "description", sig.name),
+                    "offset": getattr(sig, "offset", ""),
+                    "type": "bit",
+                    "value": val,
+                }
+                if sig.direction is Direction.INPUT:
+                    input_fields.append(field)
+                else:
+                    output_fields.append(field)
+
+        return {
+            "mode": "io",
+            "transport_ready": True,
+            "peer_connected": True,
+            "clients": None,
+            "block_input_hex": "",
+            "block_output_hex": "",
+            "input_fields": input_fields,
+            "output_fields": output_fields,
+            "derived_fields": [],
+            "signals": signals,
+        }
 
     # ----- subclass hooks ---------------------------------------------
 
