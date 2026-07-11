@@ -387,10 +387,15 @@ class MazakSmoothXEmulator(Device):
         self._set_alarm(code, message)
 
     def clear_alarm(self) -> None:
+        was_set = False
         with self._lock:
-            self._alarm_code = None
-            self._alarm_message = ""
-        self._refresh_outputs()
+            if self._alarm_code is not None:
+                was_set = True
+                self._alarm_code = None
+                self._alarm_message = ""
+        if was_set:
+            self._refresh_outputs()
+            self.emit("alarm", code=0, message="cleared")
 
     def _declare_signals(self) -> None:
         for point in INPUT_SIGNAL_POINTS.values():
@@ -481,7 +486,10 @@ class MazakSmoothXEmulator(Device):
             self._connection_up = False
             self.emit("ethernetip.error", message=str(exc))
             return
+        was_down = not self._connection_up
         self._connection_up = bool(getattr(transport, "peer_connected", transport.connected))
+        if was_down and self._connection_up:
+            self.emit("ethernetip.connected", message="connection established")
         self.write_input_block(incoming)
         gen = getattr(transport, "connection_generation", -1)
         if gen != self._last_connection_gen:
