@@ -57,6 +57,11 @@ def test_dobot_uses_paren_framing_not_semicolon(dobot: DobotDashboard) -> None:
     assert reply == "0,{},EnableRobot()"
 
 
+def test_dobot_robotmode_returns_enable_idle(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RobotMode()")
+    assert reply == "0,{5},RobotMode()"
+
+
 def test_dobot_movj_ack(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "EnableRobot()MovJ(0,0,0,0,0,0)", expect=2)
     # Two replies concatenated. MovJ returns a command ID in the value field.
@@ -154,3 +159,24 @@ def test_update_feedback_packet_populates_fields() -> None:
     assert pkt.ErrorStatus == 0
     assert pkt.RunningStatus == 0
     assert pkt.CurrentCommandId == 99
+
+    # ESTOPPED and FAULTED both map to RobotMode 9 (ERROR)
+    estop = ArmStateView(
+        joints=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        mode=ArmMode.ESTOPPED, servo_on=False, program_running=False, speed_fraction=1.0,
+    )
+    _update_feedback_packet(pkt, estop, command_id=100)
+    assert pkt.RobotMode == 9
+    assert pkt.BrakeStatus == 1
+    assert pkt.ErrorStatus == 1
+
+    faulted = ArmStateView(
+        joints=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        mode=ArmMode.FAULTED, servo_on=False, program_running=False, speed_fraction=1.0,
+    )
+    _update_feedback_packet(pkt, faulted, command_id=101)
+    assert pkt.RobotMode == 9
+    assert pkt.BrakeStatus == 0  # FAULTED → brakes off
+    assert pkt.ErrorStatus == 1

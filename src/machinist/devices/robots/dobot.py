@@ -137,7 +137,7 @@ assert ctypes.sizeof(DobotFeedbackPacket) == 1440
 _ARM_MODE_TO_ROBOT_MODE: dict[ArmMode, int] = {
     ArmMode.IDLE: 5,
     ArmMode.MOVING: 7,
-    ArmMode.ESTOPPED: 4,
+    ArmMode.ESTOPPED: 9,
     ArmMode.FAULTED: 9,
 }
 
@@ -158,7 +158,7 @@ def _update_feedback_packet(
     pkt.ToolVectorActual[:] = state.pose
     pkt.EnableStatus = 1 if state.servo_on else 0
     pkt.BrakeStatus = 1 if state.mode in (ArmMode.IDLE, ArmMode.ESTOPPED) else 0
-    pkt.ErrorStatus = 1 if state.mode is ArmMode.FAULTED else 0
+    pkt.ErrorStatus = 1 if state.mode in (ArmMode.FAULTED, ArmMode.ESTOPPED) else 0
     pkt.RunningStatus = 1 if state.mode is ArmMode.MOVING else 0
     pkt.CurrentCommandId = command_id
 
@@ -280,6 +280,8 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=",".join(f"{p:.4f}" for p in s.pose))
             case "getangle":
                 return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
+            case "robotmode":
+                return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE.get(s.mode, 9)))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
