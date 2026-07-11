@@ -187,6 +187,26 @@ def test_dobot_getao_rejects_out_of_range_index(dobot: DobotDashboard) -> None:
     assert reply.startswith("-40001,")
 
 
+def test_dobot_toolai_returns_zero_for_valid_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "ToolAI(1)")
+    assert reply == "0,{0.0},ToolAI(1)"
+
+
+def test_dobot_toolai_rejects_missing_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "ToolAI()")
+    assert reply.startswith("-20000,")
+
+
+def test_dobot_toolai_rejects_non_numeric_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "ToolAI(a)")
+    assert reply.startswith("-30001,")
+
+
+def test_dobot_toolai_rejects_out_of_range_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "ToolAI(3)")
+    assert reply.startswith("-40001,")
+
+
 def test_feedback_packet_layout() -> None:
     import ctypes
     assert ctypes.sizeof(DobotFeedbackPacket) == 1440
