@@ -83,7 +83,8 @@ class WebServer:
 
     def start(self) -> None:
         self._thread = threading.Thread(
-            target=self._httpd.serve_forever, name="machinist-web", daemon=True
+            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05},
+            name="machinist-web", daemon=True,
         )
         self._thread.start()
 
