@@ -351,11 +351,6 @@ class MazakSmoothXEmulator(Device):
             signals=signals,
         )
 
-    def ethernetip_snapshot(self) -> DeviceDetail | None:
-        if "ethernetip" not in self._interfaces:
-            return None
-        return self.build_detail()
-
     def write_input_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:
         chunk = bytes(data)
         if offset < 0 or offset + len(chunk) > BLOCK_SIZE:

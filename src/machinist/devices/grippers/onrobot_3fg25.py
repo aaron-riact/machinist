@@ -299,9 +299,6 @@ class OnRobot3FG25(Device):
             signals=signals,
         )
 
-    def modbus_snapshot(self) -> DeviceDetail:
-        return self.build_detail()
-
     @staticmethod
     def _serial_register(address: int, serial: str) -> int:
         idx = (address - REG_SERIAL_BASE) * 2

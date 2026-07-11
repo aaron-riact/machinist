@@ -235,9 +235,12 @@ def test_heartbeat_timeout_raises_alarm_when_echo_does_not_follow() -> None:
     assert device.io["do004"].value is True
 
 
-def test_io_only_device_hides_ethernetip_snapshot() -> None:
+def test_io_only_device_returns_bare_detail() -> None:
     device = _make(interfaces=["io"])
-    assert device.ethernetip_snapshot() is None
+    detail = device.build_detail()
+    assert detail["mode"] == "io"
+    assert detail["transport_ready"] is False
+    assert detail["input_fields"] == []
 
 
 def test_world_builds_mazak_smoothx_device() -> None:
