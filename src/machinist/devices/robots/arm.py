@@ -160,6 +160,10 @@ class RobotArm:
         with self.state._lock:
             self.state.servo_on = on
 
+    def set_speed_factor(self, fraction: float) -> None:
+        with self.state._lock:
+            self.state.speed_fraction = fraction
+
     def movej(self, target: Joints, *, duration: float = 1.0) -> None:
         self._begin_move(target, duration=duration, kind="movej")
 

@@ -360,6 +360,17 @@ class DobotDashboard(LineServerDevice):
                 if idx < 1 or idx > len(self._tool_ai):
                     return f"-40001,{{}},{verb}({args})"
                 return _ok(verb, args, value=str(self._tool_ai[idx - 1]))
+            case "speedfactor":
+                if not args:
+                    return f"-20000,{{}},{verb}()"
+                try:
+                    ratio = int(args.strip())
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                if ratio < 1 or ratio > 100:
+                    return f"-40001,{{}},{verb}({args})"
+                self.arm.set_speed_factor(ratio / 100)
+                return _ok(verb, args)
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1

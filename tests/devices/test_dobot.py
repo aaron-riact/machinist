@@ -207,6 +207,32 @@ def test_dobot_toolai_rejects_out_of_range_index(dobot: DobotDashboard) -> None:
     assert reply.startswith("-40001,")
 
 
+def test_dobot_speedfactor_sets_global_speed_ratio(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "SpeedFactor(50)")
+    assert reply == "0,{},SpeedFactor(50)"
+    assert dobot.arm.state.speed_fraction == 0.5
+
+
+def test_dobot_speedfactor_rejects_missing_ratio(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "SpeedFactor()")
+    assert reply.startswith("-20000,")
+
+
+def test_dobot_speedfactor_rejects_non_numeric_ratio(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "SpeedFactor(a)")
+    assert reply.startswith("-30001,")
+
+
+def test_dobot_speedfactor_rejects_out_of_range_ratio(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "SpeedFactor(0)")
+    assert reply.startswith("-40001,")
+
+
+def test_dobot_speedfactor_rejects_above_100(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "SpeedFactor(101)")
+    assert reply.startswith("-40001,")
+
+
 def test_feedback_packet_layout() -> None:
     import ctypes
     assert ctypes.sizeof(DobotFeedbackPacket) == 1440
