@@ -239,6 +239,7 @@ class DobotDashboard(LineServerDevice):
         self._running = threading.Event()
         self._running.set()
         self._error_ids: list[int] = []
+        self._tool_di: list[int] = [0] * 4
         self._feedback_socks: list[socket.socket] = []
         self._writer: threading.Thread | None = None
 
@@ -292,6 +293,16 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
             case "robotmode":
                 return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
+            case "tooldi":
+                if not args:
+                    return f"-20000,{{}},{verb}()"
+                try:
+                    idx = int(args.strip())
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                if idx < 1 or idx > len(self._tool_di):
+                    return f"-40001,{{}},{verb}({args})"
+                return _ok(verb, args, value=str(self._tool_di[idx - 1]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
