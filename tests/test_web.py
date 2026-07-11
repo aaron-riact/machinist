@@ -35,6 +35,7 @@ def test_snapshot_device_reports_core_identity() -> None:
         kind="ur_dashboard",
         endpoint="127.0.0.1:29999",
         lifecycle="running",
+        build_detail=lambda: None,
     )
     snap = snapshot_device(device)
     assert snap == {
@@ -49,7 +50,8 @@ def test_snapshot_device_includes_arm_snapshot() -> None:
     arm = RobotArm(joint_count=6)
     arm.estop()
     device = SimpleNamespace(
-        name="arm1", kind="robot", endpoint="127.0.0.1:15001", lifecycle="running", arm=arm
+        name="arm1", kind="robot", endpoint="127.0.0.1:15001", lifecycle="running", arm=arm,
+        build_detail=lambda: None,
     )
     snap = snapshot_device(device)
     assert snap["arm"]["mode"] == "estopped"
@@ -67,7 +69,8 @@ def test_snapshot_device_includes_machine_state() -> None:
     state.parts = 7
     state.position.x = 12.0
     device = SimpleNamespace(
-        name="mill", kind="haas_ngc", endpoint="127.0.0.1:5051", lifecycle="running", state=state
+        name="mill", kind="haas_ngc", endpoint="127.0.0.1:5051", lifecycle="running", state=state,
+        build_detail=lambda: None,
     )
     machine = snapshot_device(device)["machine"]
     assert machine["program"] == "O0001"
@@ -84,7 +87,7 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
         kind="mazak_smoothx",
         endpoint="127.0.0.1:44818",
         lifecycle="running",
-        ethernetip_snapshot=lambda: {
+        build_detail=lambda: {
             "mode": "adapter",
             "transport_ready": True,
             "peer_connected": False,
@@ -93,6 +96,7 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
             "input_fields": [{"signal": "DI100", "name": "Target work number data"}],
             "output_fields": [{"signal": "DO100", "name": "Current work number"}],
             "derived_fields": [{"signal": "STATE", "name": "Alarm message"}],
+            "signals": [],
         },
     )
     snap = snapshot_device(device)
@@ -107,7 +111,7 @@ def test_snapshot_device_omits_ethernetip_when_snapshot_is_disabled() -> None:
         kind="mazak_smoothx",
         endpoint="127.0.0.1:44818",
         lifecycle="running",
-        ethernetip_snapshot=lambda: None,
+        build_detail=lambda: None,
     )
     snap = snapshot_device(device)
     assert "ethernetip" not in snap

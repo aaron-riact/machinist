@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core.io import SignalBank
 from ..core.world import World
 
 
@@ -32,34 +31,24 @@ def snapshot_device(device: Any) -> dict[str, Any]:
         "endpoint": str(device.endpoint),
         "lifecycle": str(device.lifecycle),
     }
-    signals = _signals(getattr(device, "io", None))
-    if signals is not None:
-        snap["signals"] = signals
+    detail = device.build_detail()
+    if detail is not None:
+        snap["signals"] = detail.get("signals", [])
+        mode = detail.get("mode", "")
+        if mode == "modbus":
+            snap["modbus"] = detail
+        else:
+            snap["ethernetip"] = detail
     arm = _arm(getattr(device, "arm", None))
     if arm is not None:
         snap["arm"] = arm
     machine = _machine(getattr(device, "state", None))
     if machine is not None:
         snap["machine"] = machine
-    ethernetip = _ethernetip(device)
-    if ethernetip is not None:
-        snap["ethernetip"] = ethernetip
-    modbus = _modbus(device)
-    if modbus is not None:
-        snap["modbus"] = modbus
     programs = getattr(device, "programs", None)
     if programs is not None and hasattr(programs, "list"):
         snap["programs"] = list(programs.list())
     return snap
-
-
-def _signals(bank: SignalBank | None) -> list[dict[str, Any]] | None:
-    if bank is None:
-        return None
-    return [
-        {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
-        for sig in bank
-    ]
 
 
 def _arm(arm: Any) -> dict[str, Any] | None:
@@ -97,19 +86,6 @@ def _machine(state: Any) -> dict[str, Any] | None:
         "doors": {name: door.open for name, door in state.doors.items()},
         "chucks": {name: chuck.open for name, chuck in state.chucks.items()},
     }
-
-
-def _ethernetip(device: Any) -> dict[str, Any] | None:
-    snapshot = getattr(device, "ethernetip_snapshot", None)
-    if snapshot is None or not callable(snapshot):
-        return None
-    return snapshot()
-
-def _modbus(device: Any) -> dict[str, Any] | None:
-    snapshot = getattr(device, "modbus_snapshot", None)
-    if snapshot is None or not callable(snapshot):
-        return None
-    return snapshot()
 
 
 # --- command dispatch ---------------------------------------------------
