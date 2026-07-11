@@ -159,6 +159,7 @@ def _lazy(name: str, module: str, attr: str) -> None:
 
 
 _lazy("dh", "dh_backend", "DHKinematics")
+_lazy("urdf", "urdf_backend", "UrdfKinematics")
 _lazy("pinocchio", "pinocchio_backend", "PinocchioKinematics")
 _lazy("pykdl", "pykdl_backend", "PyKDLKinematics")
 _lazy("ik-geo", "ikgeo_backend", "IKGeoKinematics")

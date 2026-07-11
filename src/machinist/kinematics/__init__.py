@@ -22,3 +22,4 @@ from .api import (  # noqa: F401
     get_backend,
     register_backend,
 )
+from .urdf_backend import UrdfKinematics  # noqa: F401
