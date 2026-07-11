@@ -19,6 +19,7 @@ incoming-message boundaries).
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import ctypes
@@ -41,26 +42,45 @@ DOBOT_FEEDBACK_FAST_PORT = 30004
 DOBOT_FEEDBACK_MED_PORT = 30005
 DOBOT_FEEDBACK_SLOW_PORT = 30006
 
+
+@dataclass(frozen=True, slots=True)
+class _RobotModelInfo:
+    type_code: int
+    tool_di_count: int = 4
+    tool_do_count: int = 4
+    tool_ai_count: int = 2
+    ai_count: int = 2
+    ao_count: int = 2
+    dh_params: DHParams | None = None
+
+
+DOBOT_ROBOT_MODELS: dict[str, _RobotModelInfo] = {
+    "cr3": _RobotModelInfo(type_code=3),
+    "cr5": _RobotModelInfo(type_code=5, tool_di_count=2, tool_do_count=2),
+    "cr7": _RobotModelInfo(type_code=7),
+    "cr10": _RobotModelInfo(type_code=10, tool_di_count=2, tool_do_count=2),
+    "cr12": _RobotModelInfo(type_code=12),
+    "cr16": _RobotModelInfo(type_code=16),
+    "nova2": _RobotModelInfo(type_code=101),
+    "nova5": _RobotModelInfo(type_code=103),
+    "cr3a": _RobotModelInfo(type_code=113),
+    "cr5a": _RobotModelInfo(type_code=115),
+    "cr5af": _RobotModelInfo(type_code=116),
+    "cr7a": _RobotModelInfo(type_code=117),
+    "cr10a": _RobotModelInfo(type_code=120),
+    "cr10af": _RobotModelInfo(type_code=121),
+    "cr12a": _RobotModelInfo(type_code=122),
+    "cr16a": _RobotModelInfo(type_code=126),
+    "cr20af": _RobotModelInfo(type_code=127),
+    "cr20a": _RobotModelInfo(type_code=130, tool_di_count=4, tool_do_count=4),
+    "cr20": _RobotModelInfo(type_code=20, tool_di_count=4, tool_do_count=4),
+    "magician_e6": _RobotModelInfo(type_code=150),
+}
+
+_DEFAULT_MODEL = _RobotModelInfo(type_code=5, tool_di_count=4, tool_do_count=4)
+
 DOBOT_ROBOT_TYPES: dict[str, int] = {
-    "cr3": 3,
-    "cr5": 5,
-    "cr7": 7,
-    "cr10": 10,
-    "cr12": 12,
-    "cr16": 16,
-    "nova2": 101,
-    "nova5": 103,
-    "cr3a": 113,
-    "cr5a": 115,
-    "cr5af": 116,
-    "cr7a": 117,
-    "cr10a": 120,
-    "cr10af": 121,
-    "cr12a": 122,
-    "cr16a": 126,
-    "cr20af": 127,
-    "cr20a": 130,
-    "magician_e6": 150,
+    name: info.type_code for name, info in DOBOT_ROBOT_MODELS.items()
 }
 
 
@@ -220,6 +240,8 @@ def _feedback_writer(
     command_id: list[int],
     io: SignalBank,
     robot_type_code: int,
+    tool_di_count: int,
+    tool_do_count: int,
     running: threading.Event,
 ) -> None:
     pkt = DobotFeedbackPacket()
@@ -230,10 +252,10 @@ def _feedback_writer(
         s = arm.state.snapshot()
         _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code)
         pkt.DigitalInputs = sum(
-            (1 << (i - 1)) for i in range(1, 5) if io[f"tooldi{i}"].value
+            (1 << (i - 1)) for i in range(1, tool_di_count + 1) if io[f"tooldi{i}"].value
         )
         pkt.DigitalOutputs = sum(
-            (1 << (i - 1)) for i in range(1, 5) if io[f"tooldo{i}"].value
+            (1 << (i - 1)) for i in range(1, tool_do_count + 1) if io[f"tooldo{i}"].value
         )
         data = bytes(pkt)
         _send_to_all(fast, data)
@@ -265,24 +287,32 @@ class DobotDashboard(LineServerDevice):
         *,
         feedback_enabled: bool = True,
         robot_type_code: int = 5,
+        model_info: _RobotModelInfo | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
         self.arm.start_ticker()
-        self._robot_type_code = robot_type_code
+        self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
+        self._robot_type_code = self._model_info.type_code
+
+        self._tool_di_count = self._model_info.tool_di_count
+        self._tool_do_count = self._model_info.tool_do_count
+        self._tool_ai_count = self._model_info.tool_ai_count
+        self._ai_count = self._model_info.ai_count
+        self._ao_count = self._model_info.ao_count
 
         self._current_command_id: list[int] = [0]
         self._running = threading.Event()
         self._running.set()
         self._error_ids: list[int] = []
-        self._ai: list[float] = [0.0, 0.0]
-        self._tool_ai: list[float] = [0.0, 0.0]
-        self._ao: list[float] = [0.0, 0.0]
+        self._ai: list[float] = [0.0] * self._ai_count
+        self._tool_ai: list[float] = [0.0] * self._tool_ai_count
+        self._ao: list[float] = [0.0] * self._ao_count
 
         self.io = SignalBank(name)
-        for i in range(1, 5):
+        for i in range(1, self._tool_di_count + 1):
             self.io.declare(f"tooldi{i}", direction=Direction.INPUT)
-        for i in range(1, 5):
+        for i in range(1, self._tool_do_count + 1):
             self.io.declare(f"tooldo{i}", direction=Direction.OUTPUT)
         self._feedback_socks: list[socket.socket] = []
         self._writer: threading.Thread | None = None
@@ -305,7 +335,7 @@ class DobotDashboard(LineServerDevice):
 
             self._writer = threading.Thread(
                 target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._running),
+                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running),
                 daemon=True,
             )
             self._writer.start()
@@ -338,12 +368,12 @@ class DobotDashboard(LineServerDevice):
             case "robotmode":
                 return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
             case "tooldi":
-                idx, err = _int_arg(args, verb, hi=4)
+                idx, err = _int_arg(args, verb, hi=self._tool_di_count)
                 if err:
                     return err
                 return _ok(verb, args, value=str(int(self.io[f"tooldi{idx}"].value)))
             case "gettooldo":
-                idx, err = _int_arg(args, verb, hi=4)
+                idx, err = _int_arg(args, verb, hi=self._tool_do_count)
                 if err:
                     return err
                 return _ok(verb, args, value=str(int(self.io[f"tooldo{idx}"].value)))
@@ -443,14 +473,14 @@ def _ok(verb: str, args: str, *, value: str = "") -> str:
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
     raw = dict(options)
+    robot_type_raw = raw.pop("robot_type", "cr5")
+    model_info = DOBOT_ROBOT_MODELS.get(robot_type_raw, _DEFAULT_MODEL)
     dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
     kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
     feedback = raw.pop("feedback_ports", None)
     feedback_enabled = feedback is not False
-    robot_type_raw = raw.pop("robot_type", "cr5")
-    robot_type_code = DOBOT_ROBOT_TYPES.get(robot_type_raw, 5)
     return DobotDashboard(
         name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw),
         feedback_enabled=feedback_enabled,
-        robot_type_code=robot_type_code,
+        model_info=model_info,
     )

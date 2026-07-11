@@ -232,7 +232,51 @@ def test_dobot_robot_type_configured_via_factory() -> None:
     bus = EventBus()
     d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
     assert d._robot_type_code == 10
+    assert d._tool_di_count == 2
+    assert d._tool_do_count == 2
     d.stop()
+
+
+def test_dobot_robot_type_cr20_uses_max_io() -> None:
+    from machinist.devices.robots.dobot import _factory
+    bus = EventBus()
+    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
+    assert d._tool_di_count == 4
+    assert d._tool_do_count == 4
+    d.stop()
+
+
+def test_dobot_unknown_robot_type_defaults_to_max_io() -> None:
+    from machinist.devices.robots.dobot import _factory
+    bus = EventBus()
+    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "nonexistent", "feedback_ports": False})
+    assert d._tool_di_count == 4
+    assert d._tool_do_count == 4
+    d.stop()
+
+
+def test_dobot_cr5_rejects_tool_di_outside_bounds() -> None:
+    from machinist.devices.robots.dobot import _factory
+    bus = EventBus()
+    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
+    d.start()
+    try:
+        reply = _send(d, "ToolDI(3)")
+        assert reply.startswith("-40001,")
+    finally:
+        d.stop()
+
+
+def test_dobot_cr20_accepts_tool_di_inside_bounds() -> None:
+    from machinist.devices.robots.dobot import _factory
+    bus = EventBus()
+    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
+    d.start()
+    try:
+        reply = _send(d, "ToolDI(3)")
+        assert reply == "0,{0},ToolDI(3)"
+    finally:
+        d.stop()
 
 
 def test_dobot_speedfactor_rejects_missing_ratio(dobot: DobotDashboard) -> None:
