@@ -474,15 +474,14 @@ class DobotDashboard(LineServerDevice):
                     return f"-30001,{{}},{verb}({args})"
                 delta_m = [delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
                            delta[3], delta[4], delta[5]]
+                T_current = _pose_to_mat(s.pose)
+                T_delta = _pose_to_mat(tuple(delta_m))  # type: ignore[arg-type]
                 tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
-                R_tool = _pose_to_mat(tool_pose)[:3, :3]  # type: ignore[arg-type]
-                d_pos = R_tool @ np.array([delta_m[0], delta_m[1], delta_m[2]])
-                d_rot = R_tool @ np.array([delta_m[3], delta_m[4], delta_m[5]])
-                target_pose = (
-                    s.pose[0] + d_pos[0], s.pose[1] + d_pos[1], s.pose[2] + d_pos[2],
-                    s.pose[3] + d_rot[0], s.pose[4] + d_rot[1], s.pose[5] + d_rot[2],
-                )
-                self.arm.movel(target_pose, duration=0.2)
+                T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
+                T_tool_inv = np.linalg.inv(T_tool)
+                T_new = T_current @ T_tool @ T_delta @ T_tool_inv
+                target_pose = _mat_to_pose(T_new)
+                self.arm.movel(target_pose, duration=0.05)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
