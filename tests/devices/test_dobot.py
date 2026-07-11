@@ -221,6 +221,20 @@ def test_dobot_speedfactor_appears_in_build_detail(dobot: DobotDashboard) -> Non
     assert sf["value"] == "75%"
 
 
+def test_dobot_robot_type_defaults_to_cr5() -> None:
+    bus = EventBus()
+    d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(), feedback_enabled=False)
+    assert d._robot_type_code == 5
+
+
+def test_dobot_robot_type_configured_via_factory() -> None:
+    from machinist.devices.robots.dobot import _factory
+    bus = EventBus()
+    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
+    assert d._robot_type_code == 10
+    d.stop()
+
+
 def test_dobot_speedfactor_rejects_missing_ratio(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "SpeedFactor()")
     assert reply.startswith("-20000,")
@@ -315,6 +329,11 @@ def test_update_feedback_packet_populates_fields() -> None:
     assert pkt.ErrorStatus == 0
     assert pkt.RunningStatus == 1
     assert pkt.CurrentCommandId == 42
+    assert pkt.CRRobotType == 5  # default CR5
+
+    # Custom robot type code
+    _update_feedback_packet(pkt, state, now_us=5001, command_id=43, robot_type_code=10)
+    assert pkt.CRRobotType == 10
 
     # Modes that produce different outputs
     idle = ArmStateView(joints=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), mode=ArmMode.IDLE, servo_on=False, program_running=False, speed_fraction=1.0)

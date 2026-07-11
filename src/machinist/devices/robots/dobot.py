@@ -41,6 +41,28 @@ DOBOT_FEEDBACK_FAST_PORT = 30004
 DOBOT_FEEDBACK_MED_PORT = 30005
 DOBOT_FEEDBACK_SLOW_PORT = 30006
 
+DOBOT_ROBOT_TYPES: dict[str, int] = {
+    "cr3": 3,
+    "cr5": 5,
+    "cr7": 7,
+    "cr10": 10,
+    "cr12": 12,
+    "cr16": 16,
+    "nova2": 101,
+    "nova5": 103,
+    "cr3a": 113,
+    "cr5a": 115,
+    "cr5af": 116,
+    "cr7a": 117,
+    "cr10a": 120,
+    "cr10af": 121,
+    "cr12a": 122,
+    "cr16a": 126,
+    "cr20af": 127,
+    "cr20a": 130,
+    "magician_e6": 150,
+}
+
 
 class DobotFeedbackPacket(ctypes.Structure):
     """1440-byte binary feedback packet, layout matches ``MyType`` from the
@@ -150,11 +172,13 @@ def _update_feedback_packet(
     *,
     now_us: int = 0,
     command_id: int = 0,
+    robot_type_code: int = 5,
 ) -> None:
     pkt.len = 1440
     pkt.TestValue = 0x123456789abcdef
     pkt.RobotMode = _ARM_MODE_TO_ROBOT_MODE[state.mode]
     pkt.TimeStamp = now_us
+    pkt.CRRobotType = robot_type_code
     pkt.SpeedScaling = state.speed_fraction
     pkt.QActual[:] = state.joints
     pkt.ToolVectorActual[:] = state.pose
@@ -195,6 +219,7 @@ def _feedback_writer(
     slow: list[socket.socket],
     command_id: list[int],
     io: SignalBank,
+    robot_type_code: int,
     running: threading.Event,
 ) -> None:
     pkt = DobotFeedbackPacket()
@@ -203,7 +228,7 @@ def _feedback_writer(
     while running.is_set():
         deadline = time.monotonic() + period
         s = arm.state.snapshot()
-        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0])
+        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code)
         pkt.DigitalInputs = sum(
             (1 << (i - 1)) for i in range(1, 5) if io[f"tooldi{i}"].value
         )
@@ -239,10 +264,12 @@ class DobotDashboard(LineServerDevice):
         options: ArmOptions,
         *,
         feedback_enabled: bool = True,
+        robot_type_code: int = 5,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
         self.arm.start_ticker()
+        self._robot_type_code = robot_type_code
 
         self._current_command_id: list[int] = [0]
         self._running = threading.Event()
@@ -278,7 +305,7 @@ class DobotDashboard(LineServerDevice):
 
             self._writer = threading.Thread(
                 target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._running),
+                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._running),
                 daemon=True,
             )
             self._writer.start()
@@ -356,6 +383,7 @@ class DobotDashboard(LineServerDevice):
         detail = super().build_detail()
         s = self.arm.state.snapshot()
         detail["derived_fields"] = [
+            DetailField(signal="robottype", name="Robot type", offset="0", type="int", value=str(self._robot_type_code)),
             DetailField(signal="speedfactor", name="Speed factor", offset="0", type="int", value=f"{int(s.speed_fraction * 100)}%"),
         ] + [
             DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
@@ -419,7 +447,10 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
     feedback = raw.pop("feedback_ports", None)
     feedback_enabled = feedback is not False
+    robot_type_raw = raw.pop("robot_type", "cr5")
+    robot_type_code = DOBOT_ROBOT_TYPES.get(robot_type_raw, 5)
     return DobotDashboard(
         name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw),
         feedback_enabled=feedback_enabled,
+        robot_type_code=robot_type_code,
     )
