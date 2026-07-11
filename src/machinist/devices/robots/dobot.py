@@ -466,8 +466,10 @@ class DobotDashboard(LineServerDevice):
                     delta = _parse_required_floats(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
+                delta_m = [delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
+                           delta[3], delta[4], delta[5]]
                 T_current = _pose_to_mat(s.pose)
-                T_delta = _pose_to_mat(tuple(delta))  # type: ignore[arg-type]
+                T_delta = _pose_to_mat(tuple(delta_m))  # type: ignore[arg-type]
                 tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
                 T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
                 T_tool_inv = np.linalg.inv(T_tool)
@@ -486,9 +488,11 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
                 try:
-                    pose = _parse_motion_args(args, count=6)
+                    pose_mm = _parse_motion_args(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
+                pose = [pose_mm[0] * 1e-3, pose_mm[1] * 1e-3, pose_mm[2] * 1e-3,
+                        pose_mm[3], pose_mm[4], pose_mm[5]]
                 self.arm.movel(tuple(pose))  # type: ignore[arg-type]
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
