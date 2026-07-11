@@ -7,7 +7,7 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.arm import ArmOptions
-from machinist.devices.robots.dobot import DobotDashboard
+from machinist.devices.robots.dobot import DobotDashboard, DobotFeedbackPacket
 
 from ..conftest import free_port, wait_running
 
@@ -58,3 +58,26 @@ def test_dobot_movj_ack(dobot: DobotDashboard) -> None:
 def test_dobot_unknown_command_returns_error_code(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "Nonsense()")
     assert reply.startswith("-10000,")
+
+
+def test_feedback_packet_layout() -> None:
+    import ctypes
+    assert ctypes.sizeof(DobotFeedbackPacket) == 1440
+
+    pkt = DobotFeedbackPacket()
+    assert all(b == 0 for b in bytes(pkt))
+
+    pkt.len = 1440
+    pkt.TestValue = 0x123456789abcdef
+    pkt.RobotMode = 5
+    pkt.QActual[:] = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    pkt.ToolVectorActual[:] = (100.0, 200.0, 300.0, 0.0, 0.0, 0.0)
+    pkt.EnableStatus = 1
+    pkt.BrakeStatus = 1
+    pkt.SpeedScaling = 1.0
+
+    buf = bytes(pkt)
+    assert len(buf) == 1440
+
+    assert int.from_bytes(buf[0:2], "little") == 1440
+    assert int.from_bytes(buf[48:56], "little") == 0x123456789abcdef

@@ -21,6 +21,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+import ctypes
+
 from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
@@ -30,6 +32,104 @@ from ...transport.framing import PAREN
 from .arm import ArmOptions, RobotArm, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
+DOBOT_FEEDBACK_FAST_PORT = 30004
+DOBOT_FEEDBACK_MED_PORT = 30005
+DOBOT_FEEDBACK_SLOW_PORT = 30006
+
+
+class DobotFeedbackPacket(ctypes.Structure):
+    """1440-byte binary feedback packet, layout matches ``MyType`` from the
+    Dobot TCP/IP client library at ``dobot_api.py:MyType``."""
+
+    _layout_ = "ms"
+    _fields_ = [
+        ("len", ctypes.c_uint16),
+        ("reserve", ctypes.c_byte * 6),
+        ("DigitalInputs", ctypes.c_uint64),
+        ("DigitalOutputs", ctypes.c_uint64),
+        ("RobotMode", ctypes.c_uint64),
+        ("TimeStamp", ctypes.c_uint64),
+        ("RunTime", ctypes.c_uint64),
+        ("TestValue", ctypes.c_uint64),
+        ("reserve2", ctypes.c_byte * 8),
+        ("SpeedScaling", ctypes.c_double),
+        ("reserve3", ctypes.c_byte * 16),
+        ("VRobot", ctypes.c_double),
+        ("IRobot", ctypes.c_double),
+        ("ProgramState", ctypes.c_double),
+        ("SafetyOIn", ctypes.c_uint16),
+        ("SafetyOOut", ctypes.c_uint16),
+        ("reserve4", ctypes.c_byte * 76),
+        ("QTarget", ctypes.c_double * 6),
+        ("QDTarget", ctypes.c_double * 6),
+        ("QDDTarget", ctypes.c_double * 6),
+        ("ITarget", ctypes.c_double * 6),
+        ("MTarget", ctypes.c_double * 6),
+        ("QActual", ctypes.c_double * 6),
+        ("QDActual", ctypes.c_double * 6),
+        ("IActual", ctypes.c_double * 6),
+        ("ActualTCPForce", ctypes.c_double * 6),
+        ("ToolVectorActual", ctypes.c_double * 6),
+        ("TCPSpeedActual", ctypes.c_double * 6),
+        ("TCPForce", ctypes.c_double * 6),
+        ("ToolVectorTarget", ctypes.c_double * 6),
+        ("TCPSpeedTarget", ctypes.c_double * 6),
+        ("MotorTemperatures", ctypes.c_double * 6),
+        ("JointModes", ctypes.c_double * 6),
+        ("VActual", ctypes.c_double * 6),
+        ("HandType", ctypes.c_byte * 4),
+        ("User", ctypes.c_byte),
+        ("Tool", ctypes.c_byte),
+        ("RunQueuedCmd", ctypes.c_byte),
+        ("PauseCmdFlag", ctypes.c_byte),
+        ("VelocityRatio", ctypes.c_byte),
+        ("AccelerationRatio", ctypes.c_byte),
+        ("reserve5", ctypes.c_byte),
+        ("XYZVelocityRatio", ctypes.c_byte),
+        ("RVelocityRatio", ctypes.c_byte),
+        ("XYZAccelerationRatio", ctypes.c_byte),
+        ("RAccelerationRatio", ctypes.c_byte),
+        ("reserve6", ctypes.c_byte * 2),
+        ("BrakeStatus", ctypes.c_byte),
+        ("EnableStatus", ctypes.c_byte),
+        ("DragStatus", ctypes.c_byte),
+        ("RunningStatus", ctypes.c_byte),
+        ("ErrorStatus", ctypes.c_byte),
+        ("JogStatusCR", ctypes.c_byte),
+        ("CRRobotType", ctypes.c_byte),
+        ("DragButtonSignal", ctypes.c_byte),
+        ("EnableButtonSignal", ctypes.c_byte),
+        ("RecordButtonSignal", ctypes.c_byte),
+        ("ReappearButtonSignal", ctypes.c_byte),
+        ("JawButtonSignal", ctypes.c_byte),
+        ("SixForceOnline", ctypes.c_byte),
+        ("CollisionState", ctypes.c_byte),
+        ("ArmApproachState", ctypes.c_byte),
+        ("J4ApproachState", ctypes.c_byte),
+        ("J5ApproachState", ctypes.c_byte),
+        ("J6ApproachState", ctypes.c_byte),
+        ("reserve7", ctypes.c_byte * 61),
+        ("VibrationDisZ", ctypes.c_double),
+        ("CurrentCommandId", ctypes.c_uint64),
+        ("MActual", ctypes.c_double * 6),
+        ("Load", ctypes.c_double),
+        ("CenterX", ctypes.c_double),
+        ("CenterY", ctypes.c_double),
+        ("CenterZ", ctypes.c_double),
+        ("UserValue", ctypes.c_double * 6),
+        ("ToolValue", ctypes.c_double * 6),
+        ("reserve8", ctypes.c_byte * 8),
+        ("SixForceValue", ctypes.c_double * 6),
+        ("TargetQuaternion", ctypes.c_double * 4),
+        ("ActualQuaternion", ctypes.c_double * 4),
+        ("AutoManualMode", ctypes.c_uint16),
+        ("ExportStatus", ctypes.c_uint16),
+        ("SafetyState", ctypes.c_byte),
+        ("reserve9", ctypes.c_byte * 19),
+    ]
+
+
+assert ctypes.sizeof(DobotFeedbackPacket) == 1440
 
 
 class DobotDashboard(LineServerDevice):
