@@ -220,6 +220,8 @@ class DobotDashboard(LineServerDevice):
     DEFAULT_PORT = DOBOT_DASHBOARD_PORT
     FRAMER = PAREN
 
+    _FEEDBACK_PORTS = (DOBOT_FEEDBACK_FAST_PORT, DOBOT_FEEDBACK_MED_PORT, DOBOT_FEEDBACK_SLOW_PORT)
+
     def __init__(
         self,
         name: str,
@@ -227,7 +229,7 @@ class DobotDashboard(LineServerDevice):
         bus: EventBus,
         options: ArmOptions,
         *,
-        feedback_ports: tuple[int, int, int] | None = None,
+        feedback_enabled: bool = True,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options)
@@ -239,12 +241,12 @@ class DobotDashboard(LineServerDevice):
         self._feedback_socks: list[socket.socket] = []
         self._writer: threading.Thread | None = None
 
-        if feedback_ports is not None:
+        if feedback_enabled:
             self._clients_fast: list[socket.socket] = []
             self._clients_med: list[socket.socket] = []
             self._clients_slow: list[socket.socket] = []
 
-            for port, clients in zip(feedback_ports, (self._clients_fast, self._clients_med, self._clients_slow)):
+            for port, clients in zip(self._FEEDBACK_PORTS, (self._clients_fast, self._clients_med, self._clients_slow)):
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("", port))
@@ -325,12 +327,9 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     raw = dict(options)
     dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
     kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
-    feedback_raw = raw.pop("feedback_ports", None)
-    feedback_ports: tuple[int, int, int] | None = None
-    if feedback_raw is not None:
-        parts = [int(p) for p in feedback_raw.split(",")]
-        feedback_ports = (parts[0], parts[1], parts[2])
+    feedback = raw.pop("feedback_ports", None)
+    feedback_enabled = feedback is not False
     return DobotDashboard(
         name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw),
-        feedback_ports=feedback_ports,
+        feedback_enabled=feedback_enabled,
     )

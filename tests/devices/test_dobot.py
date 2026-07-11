@@ -23,7 +23,8 @@ from ..conftest import free_port, wait_running
 @pytest.fixture
 def dobot() -> DobotDashboard:
     bus = EventBus()
-    d = DobotDashboard("dobot1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions())
+    d = DobotDashboard("dobot1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
+                       feedback_enabled=False)
     d.start()
     try:
         wait_running(d)
@@ -100,15 +101,13 @@ def test_robot_mode_mapping_covers_all_arm_modes() -> None:
 def test_feedback_server_streams_packets() -> None:
     """Connect to the fast feedback port and verify we receive 1440-byte packets."""
     bus = EventBus()
-    fast, med, slow = free_port(), free_port(), free_port()
     d = DobotDashboard(
         "dobot_fb", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
-        feedback_ports=(fast, med, slow),
     )
     d.start()
     try:
         wait_running(d)
-        s = socket.create_connection(("127.0.0.1", fast), timeout=2)
+        s = socket.create_connection(("127.0.0.1", DOBOT_FEEDBACK_FAST_PORT), timeout=2)
         try:
             data = s.recv(1440, socket.MSG_WAITALL)
             assert len(data) == 1440
