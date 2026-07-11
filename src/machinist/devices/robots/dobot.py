@@ -29,6 +29,9 @@ import socket
 import threading
 import time
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ...core.device import DeviceDetail, DetailField
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -458,6 +461,21 @@ class DobotDashboard(LineServerDevice):
                 self.arm.movej(target)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
+            case "relmovltool":
+                try:
+                    delta = _parse_required_floats(args, count=6)
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                T_current = _pose_to_mat(s.pose)
+                T_delta = _pose_to_mat(tuple(delta))  # type: ignore[arg-type]
+                tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
+                T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
+                T_tool_inv = np.linalg.inv(T_tool)
+                T_new = T_current @ T_tool @ T_delta @ T_tool_inv
+                target_pose = _mat_to_pose(T_new)
+                self.arm.movel(target_pose)
+                self._current_command_id[0] += 1
+                return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
@@ -564,6 +582,30 @@ def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None,
 
 def _ok(verb: str, args: str, *, value: str = "") -> str:
     return f"0,{{{value}}},{verb}({args})"
+
+
+def _pose_to_mat(pose: Pose) -> NDArray[np.float64]:
+    """4×4 homogeneous from ``(x,y,z,rx,ry,rz)`` (ZYX RPY)."""
+    x, y, z, rx, ry, rz = pose
+    cx, sx = math.cos(rx), math.sin(rx)
+    cy, sy = math.cos(ry), math.sin(ry)
+    cz, sz = math.cos(rz), math.sin(rz)
+    R = np.array([
+        [cy * cz, cz * sx * sy - cx * sz, cx * cz * sy + sx * sz],
+        [cy * sz, cx * cz + sx * sy * sz, -cz * sx + cx * sy * sz],
+        [-sy,     cy * sx,                 cx * cy],
+    ])
+    T = np.eye(4); T[:3, :3] = R; T[:3, 3] = [x, y, z]
+    return T
+
+
+def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
+    """Inverse of :func:`_pose_to_mat`."""
+    x, y, z = T[0, 3], T[1, 3], T[2, 3]
+    rz = math.atan2(T[1, 0], T[0, 0])
+    ry = math.atan2(-T[2, 0], math.hypot(T[2, 1], T[2, 2]))
+    rx = math.atan2(T[2, 1], T[2, 2])
+    return (float(x), float(y), float(z), rx, ry, rz)
 
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)

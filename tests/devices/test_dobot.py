@@ -575,3 +575,29 @@ def test_dobot_reljointmovj_with_kwargs(dobot: DobotDashboard) -> None:
 def test_dobot_reljointmovj_fails_on_bad_args(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "RelJointMovJ(10,20)")
     assert reply.startswith("-30001,")
+
+
+def test_dobot_relmovltool_moves(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelMovLTool(10,0,0,0,0,0)")
+    assert reply.startswith("0,") and "RelMovLTool" in reply
+    assert "{1}" in reply  # command ID 1
+
+
+def test_dobot_relmovltool_moves_in_tool_frame(dobot: DobotDashboard) -> None:
+    _send(dobot, "SetTool(1,{0,0,0,0.785,0,0})Tool(1)RelMovLTool(10,0,0,0,0,0)", expect=3)
+    assert dobot._current_command_id[0] == 2  # Tool + RelMovLTool (SetTool is non-queued)
+
+
+def test_dobot_relmovltool_fails_on_bad_args(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelMovLTool(10,20,30)")
+    assert reply.startswith("-30001,")
+
+
+def test_dobot_relmovltool_with_kwargs(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelMovLTool(0,0,0,0,0,0,tool=1,user=0)")
+    assert reply.startswith("0,") and "RelMovLTool" in reply
+
+
+def test_dobot_relmovltool_with_speed_kwarg(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "RelMovLTool(5,0,0,0,0,0,speed=20)")
+    assert reply.startswith("0,") and "RelMovLTool" in reply
