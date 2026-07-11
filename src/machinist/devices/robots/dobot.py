@@ -18,6 +18,7 @@ incoming-message boundaries).
 
 from __future__ import annotations
 
+import ast
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, KinematicsOptions
+from ...kinematics.api import DHParams, KinematicsOptions, Pose
 from ...transport.framing import PAREN
 from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
 
@@ -299,7 +300,7 @@ class DobotDashboard(LineServerDevice):
     kind = "dobot_dashboard"
     DEFAULT_PORT = DOBOT_DASHBOARD_PORT
     FRAMER = PAREN
-    _quiet_commands = frozenset({"tooldi", "gettooldo", "ai", "getao", "toolai"})
+    _quiet_commands = frozenset({"tooldi", "gettooldo", "ai", "getao", "toolai", "geterrorid"})
 
     _FEEDBACK_PORTS = (DOBOT_FEEDBACK_FAST_PORT, DOBOT_FEEDBACK_MED_PORT, DOBOT_FEEDBACK_SLOW_PORT)
 
@@ -333,6 +334,9 @@ class DobotDashboard(LineServerDevice):
         self._ai: list[float] = [0.0] * self._ai_count
         self._tool_ai: list[float] = [0.0] * self._tool_ai_count
         self._ao: list[float] = [0.0] * self._ao_count
+
+        self._tool_frames: dict[int, Pose] = {}
+        self._active_tool: int = 0
 
         self.io = SignalBank(name)
         for i in range(1, self._tool_di_count + 1):
@@ -423,6 +427,19 @@ class DobotDashboard(LineServerDevice):
                     return err
                 self.arm.set_speed_factor(ratio / 100)
                 return _ok(verb, args)
+            case "settool":
+                try:
+                    vals = _literal_eval_braced(args)
+                    index = int(vals[0])
+                    if index < 1 or index > 50:
+                        return f"-40001,{{}},{verb}({args})"
+                    pose = tuple(float(v) for v in vals[1])
+                    if len(pose) != 6:
+                        return f"-30001,{{}},{verb}({args})"
+                except Exception:
+                    return f"-30001,{{}},{verb}({args})"
+                self._tool_frames[index] = pose
+                return _ok(verb, args)
             case "movj":
                 self.arm.movej(tuple(_parse_floats(args, count=len(s.joints))))
                 self._current_command_id[0] += 1
@@ -477,6 +494,22 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
     if len(parts) != count:
         raise ValueError(f"expected {count} floats, got {len(parts)}")
     return [float(p) for p in parts]
+
+
+def _literal_eval_braced(text: str) -> tuple:
+    """Parse comma‑separated args, converting ``{x,y,z}`` Set nodes to tuples.
+
+    For example ``"1,{10,20,30,0,0,0}"`` becomes ``(1, (10.0, 20.0, …, 0.0))``.
+    """
+    tree = ast.parse(f"({text},)", mode="eval")
+    assert isinstance(tree.body, ast.Tuple)
+    out: list[Any] = []
+    for elt in tree.body.elts:
+        if isinstance(elt, ast.Set):
+            out.append(tuple(ast.literal_eval(e) for e in elt.elts))
+        else:
+            out.append(ast.literal_eval(elt))
+    return tuple(out)
 
 
 def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:
