@@ -34,20 +34,20 @@ def _wait_port(host: str, port: int, *, timeout: float = 10.0) -> None:
 
 @pytest.fixture(scope="module")
 def opcua_devices(tmp_path_factory: pytest.TempPathFactory) -> tuple[Device, Device]:
+    opcua_port = free_port()
+
     srci_port = free_port()
-    robot_opcua_port = free_port()
     robot = default_registry.create(
         "robot",
         "arm-opc",
         Endpoint("127.0.0.1", srci_port),
         EventBus(),
-        {"joint_count": 6, "opcua": {"port": robot_opcua_port}},
+        {"joint_count": 6, "opcua": {"port": opcua_port}},
     )
     robot.start()
 
     tmp_path = tmp_path_factory.mktemp("opcua_haas")
     mdc_port = free_port()
-    haas_opcua_port = free_port()
     haas = default_registry.create(
         "haas_ngc",
         "haas-opc",
@@ -56,22 +56,21 @@ def opcua_devices(tmp_path_factory: pytest.TempPathFactory) -> tuple[Device, Dev
         {
             "program_folder": str(tmp_path),
             "doors": ["main"],
-            "opcua": {"port": haas_opcua_port},
+            "opcua": {"port": opcua_port},
         },
     )
     haas.start()
 
     try:
         wait_running(robot, timeout=10.0)
-        _wait_port("127.0.0.1", robot_opcua_port)
         wait_running(haas, timeout=10.0)
-        _wait_port("127.0.0.1", haas_opcua_port)
+        _wait_port("127.0.0.1", opcua_port)
     except RuntimeError:
         robot.stop()
         haas.stop()
         raise
-    robot._opcua_port = robot_opcua_port  # type: ignore[attr-defined]
-    haas._opcua_port = haas_opcua_port  # type: ignore[attr-defined]
+    robot._opcua_port = opcua_port  # type: ignore[attr-defined]
+    haas._opcua_port = opcua_port  # type: ignore[attr-defined]
     yield robot, haas
     robot.stop()
     haas.stop()
