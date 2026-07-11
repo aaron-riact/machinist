@@ -186,7 +186,7 @@ class MachinistApp(App[None]):
             return
         self._refresh_detail_header(device)
         bank = getattr(device, "io", None)
-        snapshot = _device_snapshot(device)
+        snapshot = device.build_detail()
 
         if device is not self._last_selected or self.inputs.row_count == 0:
             self.inputs.clear()
@@ -372,7 +372,7 @@ def _machine_summary(device: Device) -> str:
 
 
 def _snapshot_summary(device: Device) -> str:
-    snapshot = _device_snapshot(device)
+    snapshot = device.build_detail()
     if snapshot is None:
         return ""
     clients = snapshot.get("clients")
@@ -381,16 +381,6 @@ def _snapshot_summary(device: Device) -> str:
     peer = "peer up" if snapshot["peer_connected"] else "waiting"
     ready = "ready" if snapshot["transport_ready"] else "offline"
     return f"\n{snapshot['mode']}   transport {ready}   link {peer}"
-
-
-def _device_snapshot(device: Device) -> dict[str, object] | None:
-    for attr in ("ethernetip_snapshot", "modbus_snapshot"):
-        fn = getattr(device, attr, None)
-        if fn is not None and callable(fn):
-            snap = fn()
-            if snap is not None:
-                return snap
-    return None
 
 
 def _format_event(event: Event) -> str:

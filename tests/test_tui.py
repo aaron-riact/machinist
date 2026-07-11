@@ -83,6 +83,7 @@ def test_detail_header_combines_static_and_dynamic_sections() -> None:
         endpoint="127.0.0.1:5051",
         lifecycle=DeviceState.RUNNING,
         state=state,
+        build_detail=lambda: None,
     )
     out = _detail_header(device)
     assert "mill" in out
@@ -92,7 +93,7 @@ def test_detail_header_combines_static_and_dynamic_sections() -> None:
 
 def test_snapshot_summary_reports_mode_and_link_state() -> None:
     device = SimpleNamespace(
-        ethernetip_snapshot=lambda: {
+        build_detail=lambda: {
             "mode": "adapter",
             "transport_ready": True,
             "peer_connected": False,
@@ -220,10 +221,12 @@ def test_refresh_detail_populates_then_increments_then_rebuilds_on_switch() -> N
     device1 = SimpleNamespace(
         name="dev1", kind="test", endpoint="ep1",
         lifecycle=DeviceState.RUNNING, io=sigs,
+        build_detail=lambda: None,
     )
     device2 = SimpleNamespace(
         name="dev2", kind="test", endpoint="ep2",
         lifecycle=DeviceState.RUNNING, io=sigs,
+        build_detail=lambda: None,
     )
 
     in_label = ColumnKey("input")
