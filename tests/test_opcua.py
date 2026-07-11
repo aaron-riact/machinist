@@ -33,34 +33,22 @@ def _wait_port(host: str, port: int, *, timeout: float = 10.0) -> None:
 
 
 @pytest.fixture(scope="module")
-def robot_with_opcua() -> Device:
+def opcua_devices(tmp_path_factory: pytest.TempPathFactory) -> tuple[Device, Device]:
     srci_port = free_port()
-    opcua_port = free_port()
-    device = default_registry.create(
+    robot_opcua_port = free_port()
+    robot = default_registry.create(
         "robot",
         "arm-opc",
         Endpoint("127.0.0.1", srci_port),
         EventBus(),
-        {"joint_count": 6, "opcua": {"port": opcua_port}},
+        {"joint_count": 6, "opcua": {"port": robot_opcua_port}},
     )
-    device.start()
-    try:
-        wait_running(device, timeout=10.0)
-        _wait_port("127.0.0.1", opcua_port)
-    except RuntimeError:
-        device.stop()
-        raise
-    device._opcua_port = opcua_port  # type: ignore[attr-defined]
-    yield device
-    device.stop()
+    robot.start()
 
-
-@pytest.fixture(scope="module")
-def haas_with_opcua(tmp_path_factory: pytest.TempPathFactory) -> Device:
     tmp_path = tmp_path_factory.mktemp("opcua_haas")
     mdc_port = free_port()
-    opcua_port = free_port()
-    device = default_registry.create(
+    haas_opcua_port = free_port()
+    haas = default_registry.create(
         "haas_ngc",
         "haas-opc",
         Endpoint("127.0.0.1", mdc_port),
@@ -68,23 +56,29 @@ def haas_with_opcua(tmp_path_factory: pytest.TempPathFactory) -> Device:
         {
             "program_folder": str(tmp_path),
             "doors": ["main"],
-            "opcua": {"port": opcua_port},
+            "opcua": {"port": haas_opcua_port},
         },
     )
-    device.start()
+    haas.start()
+
     try:
-        wait_running(device, timeout=10.0)
-        _wait_port("127.0.0.1", opcua_port)
+        wait_running(robot, timeout=10.0)
+        _wait_port("127.0.0.1", robot_opcua_port)
+        wait_running(haas, timeout=10.0)
+        _wait_port("127.0.0.1", haas_opcua_port)
     except RuntimeError:
-        device.stop()
+        robot.stop()
+        haas.stop()
         raise
-    device._opcua_port = opcua_port  # type: ignore[attr-defined]
-    yield device
-    device.stop()
+    robot._opcua_port = robot_opcua_port  # type: ignore[attr-defined]
+    haas._opcua_port = haas_opcua_port  # type: ignore[attr-defined]
+    yield robot, haas
+    robot.stop()
+    haas.stop()
 
 
-async def test_robot_publishes_state_over_opcua(robot_with_opcua: Device) -> None:
-    device = robot_with_opcua
+async def test_robot_publishes_state_over_opcua(opcua_devices: tuple[Device, Device]) -> None:
+    device = opcua_devices[0]
     async with Client(f"opc.tcp://127.0.0.1:{device._opcua_port}/machinist/server/") as client:
         idx = await client.get_namespace_index("urn:machinist")
         objects = client.nodes.objects
@@ -95,8 +89,8 @@ async def test_robot_publishes_state_over_opcua(robot_with_opcua: Device) -> Non
         assert isinstance(await joints_node.read_value(), str)
 
 
-async def test_haas_publishes_state_over_opcua(haas_with_opcua: Device) -> None:
-    device = haas_with_opcua
+async def test_haas_publishes_state_over_opcua(opcua_devices: tuple[Device, Device]) -> None:
+    device = opcua_devices[1]
     async with Client(f"opc.tcp://127.0.0.1:{device._opcua_port}/machinist/server/") as client:
         idx = await client.get_namespace_index("urn:machinist")
         machine = await client.nodes.objects.get_child([f"{idx}:haas-opc"])
