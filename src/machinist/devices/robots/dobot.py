@@ -475,16 +475,23 @@ class DobotDashboard(LineServerDevice):
                     delta = _parse_required_floats(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                delta_m = [delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
-                           delta[3], delta[4], delta[5]]
-                T_current = _pose_to_mat(s.pose)
-                T_delta = _pose_to_mat(tuple(delta_m))  # type: ignore[arg-type]
+                delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
+                                    delta[3], delta[4], delta[5]], dtype=float)
+                T_cur = _pose_to_mat(s.pose)
+                R = T_cur[:3, :3]
                 tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
                 T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
-                T_tool_inv = np.linalg.inv(T_tool)
-                T_new = T_current @ T_tool @ T_delta @ T_tool_inv
-                target_pose = _mat_to_pose(T_new)
-                self.arm.jog_cartesian(target_pose)
+                R_tool = T_tool[:3, :3]
+                R_tcp = R @ R_tool
+                p = R @ np.array([tool_pose[0], tool_pose[1], tool_pose[2]], dtype=float)
+                twist = np.zeros(6, dtype=float)
+                twist[:3] = R_tcp @ delta_m[:3]
+                twist[3:] = R_tcp @ delta_m[3:]
+                skew_p = np.array([[0, -p[2], p[1]],
+                                   [p[2], 0, -p[0]],
+                                   [-p[1], p[0], 0]], dtype=float)
+                twist[:3] = twist[:3] + skew_p @ twist[3:]
+                self.arm.jog_cartesian(twist, dt=1.0)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":

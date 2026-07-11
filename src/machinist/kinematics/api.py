@@ -90,6 +90,21 @@ class Kinematics(Protocol):
         """Single damped-least-squares IK step (fast, approximate)."""
         ...
 
+    def velocity_step(self, joints: Joints, twist: NDArray[np.float64], *, damping: float = 0.01) -> Joints:
+        """Single-step velocity-based jog via SVD-damped Jacobian pseudoinverse.
+
+        Returns joints that achieve the given *twist* (6-vector: m/s + rad/s)
+        in one tick.  Default implementation uses the numerical Jacobian from
+        :meth:`jacobian` and an SVD pseudoinverse with Levenberg–Marquardt
+        damping — subclasses with analytic Jacobians may override.
+        """
+        J = self.jacobian(joints)
+        U, S, Vt = np.linalg.svd(J, full_matrices=False)
+        S_damped = S / (S * S + damping * damping)
+        J_dls = Vt.T @ np.diag(S_damped) @ U.T
+        dq = J_dls @ twist
+        return tuple((np.array(joints, dtype=float) + dq).tolist())
+
 
 # --- registry ---------------------------------------------------------
 
@@ -163,6 +178,9 @@ class NoOpKinematics:
         return np.zeros((6, n))
 
     def ik_step(self, target: NDArray, joints: Joints, *, damping: float = 0.05) -> Joints:
+        return joints
+
+    def velocity_step(self, joints: Joints, twist: NDArray, *, damping: float = 0.01) -> Joints:
         return joints
 
 

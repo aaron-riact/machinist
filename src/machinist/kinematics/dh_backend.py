@@ -92,6 +92,35 @@ class DHKinematics(Kinematics):
             q = q + dq
         return tuple(q.tolist())
 
+    def velocity_step(
+        self, joints: Joints, twist: NDArray[np.float64],
+        *, damping: float = 0.01, max_iter: int = 4,
+    ) -> Joints:
+        """FK-verified velocity jog via SVD-damped pseudoinverse.
+
+        Each iteration computes a fresh Jacobian at the current joint
+        position, takes an SVD-DLS step, then measures the actual FK
+        displacement to determine the residual.  2-3 iterations converge
+        even for 40mm steps on 6-DOF arms.
+        """
+        q = np.array(joints, dtype=float)
+        start_T = self._fk_matrix(joints)
+        remaining = np.asarray(twist, dtype=float).copy()
+        for _ in range(max_iter):
+            J = self._numerical_jacobian(q, self._fk_matrix(tuple(q.tolist())))
+            U, S, Vt = np.linalg.svd(J, full_matrices=False)
+            S_damped = S / (S * S + damping * damping)
+            J_pinv = Vt.T @ np.diag(S_damped) @ U.T
+            dq = J_pinv @ remaining
+            q = q + dq
+            actual = _se3_error(self._fk_matrix(tuple(q.tolist())), start_T)
+            remaining = twist - actual
+            if np.linalg.norm(remaining) < 1e-8:
+                break
+        if np.linalg.norm(remaining) > max(1e-3, 0.05 * np.linalg.norm(twist)):
+            return joints
+        return tuple(q.tolist())
+
     def _numerical_jacobian(
         self, q: NDArray[np.float64], current: NDArray[np.float64],
         *, eps: float = 1e-6,

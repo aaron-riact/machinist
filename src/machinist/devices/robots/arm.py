@@ -19,6 +19,7 @@ from enum import StrEnum, auto
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
 
@@ -174,16 +175,16 @@ class RobotArm:
         target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
         self._begin_move(target_joints, duration=duration, kind="movel")
 
-    def jog_cartesian(self, target_pose: Pose, *, damping: float = 0.05) -> None:
-        """Fast cartesian jog using full iterative IK (converges to tolerance).
+    def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
+        """Single-step velocity-based cartesian jog via SVD Jacobian pseudoinverse.
 
-        Updates arm state in-place — no interpolation delay.  Suitable for
-        arbitrary step sizes since the IK converges fully.
+        Updates arm state in-place — no interpolation delay.
+        The *twist* is a 6-vector (m/s + rad/s) in the **flange** world frame.
         """
         with self.state._lock:
-            target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints, damping=damping)
-            self.state.joints = target_joints
-            self.state.pose = self._kinematics.forward(target_joints)
+            new_joints = self._kinematics.velocity_step(self.state.joints, twist * dt, damping=damping)
+            self.state.joints = new_joints
+            self.state.pose = self._kinematics.forward(new_joints)
             self.state._move = None
             self.state.mode = ArmMode.IDLE
 
