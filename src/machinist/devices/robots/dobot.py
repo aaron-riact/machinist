@@ -241,7 +241,6 @@ class DobotDashboard(LineServerDevice):
         self._running = threading.Event()
         self._running.set()
         self._error_ids: list[int] = []
-        self._tool_di: list[int] = [0] * 4
         self._tool_do: list[int] = [0] * 4
         self._ai: list[float] = [0.0, 0.0]
 
@@ -310,9 +309,9 @@ class DobotDashboard(LineServerDevice):
                     idx = int(args.strip())
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                if idx < 1 or idx > len(self._tool_di):
+                if idx < 1 or idx > 4:
                     return f"-40001,{{}},{verb}({args})"
-                return _ok(verb, args, value=str(self._tool_di[idx - 1]))
+                return _ok(verb, args, value=str(int(self.io[f"tooldi{idx}"].value)))
             case "gettooldo":
                 if not args:
                     return f"-20000,{{}},{verb}()"
