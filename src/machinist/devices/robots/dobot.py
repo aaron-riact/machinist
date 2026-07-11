@@ -394,11 +394,9 @@ class DobotDashboard(LineServerDevice):
             case "geterrorid":
                 return _ok(verb, args, value="[" + ",".join(str(e) for e in self._error_ids) + "]")
             case "getpose":
-                mm_deg = _pose_mrad_to_mmdeg(s.pose)
-                return _ok(verb, args, value=",".join(f"{v:.4f}" for v in mm_deg))
+                return _ok(verb, args, value=",".join(f"{p:.4f}" for p in s.pose))
             case "getangle":
-                dobot_joints = [math.degrees(j) for j in s.joints]
-                return _ok(verb, args, value=",".join(f"{j:.4f}" for j in dobot_joints))
+                return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
             case "robotmode":
                 return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
             case "tooldi":
@@ -456,20 +454,18 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "reljointmovj":
                 try:
-                    deltas_deg = _parse_required_floats(args, count=len(s.joints))
+                    deltas = _parse_required_floats(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                deltas = [math.radians(d) for d in deltas_deg]
                 target = tuple(j + d for j, d in zip(s.joints, deltas))
                 self.arm.movej(target)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "relmovltool":
                 try:
-                    delta_mm_deg = _parse_required_floats(args, count=6)
+                    delta = _parse_required_floats(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                delta = _pose_mmdeg_to_mrad(delta_mm_deg)
                 T_current = _pose_to_mat(s.pose)
                 T_delta = _pose_to_mat(tuple(delta))  # type: ignore[arg-type]
                 tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
@@ -482,19 +478,17 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
                 try:
-                    joints_deg = _parse_motion_args(args, count=len(s.joints))
+                    joints = _parse_motion_args(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                joints = [math.radians(j) for j in joints_deg]
                 self.arm.movej(tuple(joints))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
                 try:
-                    pose_mm_deg = _parse_motion_args(args, count=6)
+                    pose = _parse_motion_args(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                pose = _pose_mmdeg_to_mrad(pose_mm_deg)
                 self.arm.movel(tuple(pose))  # type: ignore[arg-type]
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
@@ -642,18 +636,6 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
     ry = math.atan2(-T[2, 0], math.hypot(T[2, 1], T[2, 2]))
     rx = math.atan2(T[2, 1], T[2, 2])
     return (float(x), float(y), float(z), rx, ry, rz)
-
-
-def _pose_mmdeg_to_mrad(pose: list[float]) -> list[float]:
-    """Convert (mm, degrees) to (m, radians) — Dobot protocol → internal."""
-    return [pose[0] * 1e-3, pose[1] * 1e-3, pose[2] * 1e-3,
-            math.radians(pose[3]), math.radians(pose[4]), math.radians(pose[5])]
-
-
-def _pose_mrad_to_mmdeg(pose: Pose) -> list[float]:
-    """Convert (m, radians) to (mm, degrees) — internal → Dobot protocol."""
-    return [pose[0] * 1e3, pose[1] * 1e3, pose[2] * 1e3,
-            math.degrees(pose[3]), math.degrees(pose[4]), math.degrees(pose[5])]
 
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
