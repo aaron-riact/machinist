@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
 from ...core.events import EventBus
@@ -285,28 +285,28 @@ class MazakSmoothXEmulator(Device):
             getattr(transport, "peer_connected", transport_ready)
         )
 
-        signals: list[DetailSignal] = []
         io = getattr(self, "io", None)
+        signals: list[DetailSignal] = []
         if io is not None:
             signals = [
-                {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
+                DetailSignal(name=sig.name, direction=str(sig.direction), value=sig.value)
                 for sig in io
             ]
 
-        input_fields = cast("list[DetailField]", _field_rows(
+        input_fields = _field_rows(
             prefix="DI",
             block=input_block,
             bit_points=INPUT_SIGNAL_POINTS,
             text_fields=INPUT_TEXT_FIELDS,
             bit_fields={},
-        ))
-        output_fields = cast("list[DetailField]", _field_rows(
+        )
+        output_fields = _field_rows(
             prefix="DO",
             block=output_block,
             bit_points=OUTPUT_SIGNAL_POINTS,
             text_fields=OUTPUT_TEXT_FIELDS,
             bit_fields=OUTPUT_BIT_FIELDS,
-        ))
+        )
         derived_fields: list[DetailField] = [
             {
                 "signal": "STATE",
@@ -338,7 +338,7 @@ class MazakSmoothXEmulator(Device):
             },
         ]
 
-        return DeviceDetail(  # type: ignore[return-value]
+        return DeviceDetail(
             mode=self._ethernetip_mode,
             transport_ready=transport_ready,
             peer_connected=peer_connected,
@@ -351,10 +351,10 @@ class MazakSmoothXEmulator(Device):
             signals=signals,
         )
 
-    def ethernetip_snapshot(self) -> dict[str, object] | None:
+    def ethernetip_snapshot(self) -> DeviceDetail | None:
         if "ethernetip" not in self._interfaces:
             return None
-        return cast("dict[str, object]", self.build_detail())
+        return self.build_detail()
 
     def write_input_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:
         chunk = bytes(data)
@@ -782,8 +782,8 @@ def _field_rows(
     bit_points: dict[int, BitPoint],
     text_fields: dict[int, TextField],
     bit_fields: dict[int, BitField],
-) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
+) -> list[DetailField]:
+    rows: list[DetailField] = []
     numbers = sorted(set(bit_points) | set(text_fields) | set(bit_fields))
     for number in numbers:
         if number in text_fields:
