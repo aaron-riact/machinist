@@ -154,7 +154,7 @@ class MazakSmoothXOptions:
     door_move_seconds: float = 2.0
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.1
-    heartbeat_interval_seconds: float = 0.1
+    heartbeat_interval_seconds: float = 2.0
     heartbeat_timeout_seconds: float = 3.0
     interfaces: Any = None
     main_interface: Any = None
@@ -469,12 +469,11 @@ class MazakSmoothXEmulator(Device):
         self._refresh_outputs()
 
     def _update_heartbeat(self, now: float) -> None:
-        output_state = self._read_output_bit(0)
-        if now - self._last_heartbeat_toggle_at >= self._heartbeat_interval:
-            self._write_output_bit(0, not output_state)
+        di000 = self._read_input_bit(0)
+        if di000 or now - self._last_heartbeat_toggle_at >= self._heartbeat_interval:
+            self._write_output_bit(0, not di000)
             self._last_heartbeat_toggle_at = now
 
-        di000 = self._read_input_bit(0)
         prev_time, prev_value = self._di000_toggle
         if prev_value is not None and di000 != prev_value:
             self._di000_toggle = (now, di000)
