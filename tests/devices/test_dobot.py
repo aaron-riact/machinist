@@ -524,13 +524,13 @@ def test_dobot_quiet_commands_suppress_rx_tx_events() -> None:
 def test_dobot_settool_defines_new_frame(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "SetTool(1,{10,20,30,0,0,0})")
     assert reply == "0,{},SetTool(1,{10,20,30,0,0,0})"
-    assert dobot._tool_frames[1] == (10.0, 20.0, 30.0, 0.0, 0.0, 0.0)
+    assert dobot._tool_frames[1] == (0.01, 0.02, 0.03, 0.0, 0.0, 0.0)
 
 
 def test_dobot_settool_with_type_arg(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "SetTool(1,{10,20,30,0,0,0},0)")
     assert reply == "0,{},SetTool(1,{10,20,30,0,0,0},0)"
-    assert dobot._tool_frames[1] == (10.0, 20.0, 30.0, 0.0, 0.0, 0.0)
+    assert dobot._tool_frames[1] == (0.01, 0.02, 0.03, 0.0, 0.0, 0.0)
 
 
 def test_dobot_settool_rejects_out_of_range_index(dobot: DobotDashboard) -> None:

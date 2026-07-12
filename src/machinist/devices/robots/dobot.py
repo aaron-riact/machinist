@@ -298,11 +298,18 @@ def _feedback_writer(
         )
         idx = active_tool[0] if active_tool else 0
         if idx > 0 and tool_frames and idx in tool_frames:
-            T_f = _pose_to_mat(tuple(pkt.ToolVectorActual[:6]))
+            tva = pkt.ToolVectorActual
+            tva_m = (
+                tva[0] * 1e-3, tva[1] * 1e-3, tva[2] * 1e-3,
+                math.radians(tva[3]), math.radians(tva[4]), math.radians(tva[5]),
+            )
+            T_f = _pose_to_mat(tva_m)
             T_t = _pose_to_mat(tool_frames[idx])
-            T_tcp = T_f @ T_t
-            tcp = _mat_to_pose(T_tcp)
-            pkt.ToolVectorActual[:] = tcp
+            tcp = _mat_to_pose(T_f @ T_t)
+            pkt.ToolVectorActual[:] = (
+                tcp[0] * 1000, tcp[1] * 1000, tcp[2] * 1000,
+                math.degrees(tcp[3]), math.degrees(tcp[4]), math.degrees(tcp[5]),
+            )
         data = bytes(pkt)
         _send_to_all(fast, data)
         if tick % 25 == 0:
@@ -450,17 +457,8 @@ class DobotDashboard(LineServerDevice):
 
                 pose = s.pose
                 if tool_idx is not None and tool_idx != 0:
-                    tool_pose = self._tool_frames[tool_idx]
-                    tool_m = (
-                        tool_pose[0] * 1e-3,
-                        tool_pose[1] * 1e-3,
-                        tool_pose[2] * 1e-3,
-                        math.radians(tool_pose[3]),
-                        math.radians(tool_pose[4]),
-                        math.radians(tool_pose[5]),
-                    )
                     T_f = _pose_to_mat(pose)
-                    T_t = _pose_to_mat(tool_m)
+                    T_t = _pose_to_mat(self._tool_frames[tool_idx])
                     pose = _mat_to_pose(T_f @ T_t)
                 pose_mm = (
                     pose[0] * 1000,
@@ -517,7 +515,14 @@ class DobotDashboard(LineServerDevice):
                         return f"-30001,{{}},{verb}({args})"
                 except Exception:
                     return f"-30001,{{}},{verb}({args})"
-                self._tool_frames[index] = pose
+                self._tool_frames[index] = (
+                    pose[0] * 1e-3,
+                    pose[1] * 1e-3,
+                    pose[2] * 1e-3,
+                    math.radians(pose[3]),
+                    math.radians(pose[4]),
+                    math.radians(pose[5]),
+                )
                 return _ok(verb, args)
             case "tool":
                 idx, err = _int_arg(args, verb, lo=0, hi=50)
