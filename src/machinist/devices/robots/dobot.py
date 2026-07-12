@@ -222,6 +222,7 @@ def _update_feedback_packet(
     now_us: int = 0,
     command_id: int = 0,
     robot_type_code: int = 5,
+    payload: list[float] | None = None,
 ) -> None:
     pkt.len = 1440
     pkt.TestValue = 0x123456789abcdef
@@ -243,6 +244,8 @@ def _update_feedback_packet(
     pkt.ErrorStatus = 1 if state.mode in (ArmMode.FAULTED, ArmMode.ESTOPPED) else 0
     pkt.RunningStatus = 1 if state.mode is ArmMode.MOVING else 0
     pkt.CurrentCommandId = command_id
+    if payload is not None:
+        pkt.Load, pkt.CenterX, pkt.CenterY, pkt.CenterZ = payload
 
 
 def _send_to_all(clients: list[socket.socket], data: bytes) -> None:
@@ -283,6 +286,7 @@ def _feedback_writer(
     running: threading.Event,
     tool_frames: dict[int, Pose] | None = None,
     active_tool: list[int] | None = None,
+    payload: list[float] | None = None,
 ) -> None:
     pkt = DobotFeedbackPacket()
     tick = 0
@@ -290,7 +294,7 @@ def _feedback_writer(
     while running.is_set():
         deadline = time.monotonic() + period
         s = arm.state.snapshot()
-        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code)
+        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, payload=payload)
         pkt.DigitalInputs = sum(
             (1 << (i - 1)) for i in range(1, tool_di_count + 1) if io[f"tooldi{i}"].value
         )
@@ -369,7 +373,7 @@ class DobotDashboard(LineServerDevice):
 
         self._tool_frames: dict[int, Pose] = {}
         self._active_tool: list[int] = [0]
-        self._payload: tuple[float, float | None, float | None, float | None] = (0.0, None, None, None)
+        self._payload: list[float] = [0.0, 0.0, 0.0, 0.0]  # load, cx, cy, cz
 
         self.io = SignalBank(name)
         for i in range(1, self._tool_di_count + 1):
@@ -397,7 +401,7 @@ class DobotDashboard(LineServerDevice):
 
             self._writer = threading.Thread(
                 target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running, self._tool_frames, self._active_tool),
+                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running, self._tool_frames, self._active_tool, self._payload),
                 daemon=True,
             )
             self._writer.start()
@@ -534,12 +538,12 @@ class DobotDashboard(LineServerDevice):
                     return f"-30001,{{}},{verb}({args})"
                 if len(parts) == 4:
                     try:
-                        x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                        cx, cy, cz = float(parts[1]), float(parts[2]), float(parts[3])
                     except ValueError:
                         return f"-30001,{{}},{verb}({args})"
-                    self._payload = (load, x, y, z)
+                    self._payload[:] = [load, cx, cy, cz]
                 elif len(parts) == 1:
-                    self._payload = (load, None, None, None)
+                    self._payload[:] = [load, 0.0, 0.0, 0.0]
                 else:
                     return f"-30001,{{}},{verb}({args})"
                 self._current_command_id[0] += 1
