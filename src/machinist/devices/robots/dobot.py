@@ -305,17 +305,10 @@ def _feedback_writer(
             (1 << (i - 1)) for i in range(1, tool_do_count + 1) if io[f"tooldo{i}"].value
         )
         if active_tool_idx > 0 and tool_frames and active_tool_idx in tool_frames:
-            tva = pkt.ToolVectorActual
-            tva_m: Pose = (
-                Meters(tva[0] * 1e-3), Meters(tva[1] * 1e-3), Meters(tva[2] * 1e-3),
-                Radians(math.radians(tva[3])), Radians(math.radians(tva[4])), Radians(math.radians(tva[5])),
-            )
-            T_f = _pose_to_mat(tva_m)
-            T_t = _pose_to_mat(tool_frames[active_tool_idx])
-            tcp = _mat_to_pose(T_f @ T_t)
-            pkt.ToolVectorActual[:] = (
-                tcp[0] * 1000, tcp[1] * 1000, tcp[2] * 1000,
-                math.degrees(tcp[3]), math.degrees(tcp[4]), math.degrees(tcp[5]),
+            t = tool_frames[active_tool_idx]
+            pkt.ToolValue[:] = (
+                t[0] * 1000, t[1] * 1000, t[2] * 1000,
+                math.degrees(t[3]), math.degrees(t[4]), math.degrees(t[5]),
             )
         data = bytes(pkt)
         _send_to_all(fast, data)
