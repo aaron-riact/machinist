@@ -380,7 +380,7 @@ def test_update_feedback_packet_populates_fields() -> None:
     assert pkt.RobotMode == 7  # MOVING → ROBOT_MODE_RUNNING
     assert pkt.TimeStamp == 5000
     assert pkt.SpeedScaling == 0.8
-    assert list(pkt.QActual) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert list(pkt.QActual) == pytest.approx([math.degrees(1.0), math.degrees(2.0), math.degrees(3.0), math.degrees(4.0), math.degrees(5.0), math.degrees(6.0)])
     assert pkt.ToolVectorActual[:3] == pytest.approx((100000.0, 200000.0, 300000.0))
     assert pkt.ToolVectorActual[3:] == pytest.approx((math.degrees(0.1), math.degrees(0.2), math.degrees(0.3)))
     assert pkt.EnableStatus == 1

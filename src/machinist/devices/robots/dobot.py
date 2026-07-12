@@ -228,7 +228,7 @@ def _update_feedback_packet(
     pkt.TimeStamp = now_us
     pkt.CRRobotType = robot_type_code
     pkt.SpeedScaling = state.speed_fraction
-    pkt.QActual[:] = state.joints
+    pkt.QActual[:] = [math.degrees(j) for j in state.joints]
     pkt.ToolVectorActual[:] = (
         state.pose[0] * 1000,
         state.pose[1] * 1000,
@@ -470,7 +470,7 @@ class DobotDashboard(LineServerDevice):
                 )
                 return _ok(verb, args, value=",".join(f"{p:.4f}" for p in pose_mm))
             case "getangle":
-                return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
+                return _ok(verb, args, value=",".join(f"{math.degrees(j):.4f}" for j in s.joints))
             case "robotmode":
                 return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
             case "tooldi":
