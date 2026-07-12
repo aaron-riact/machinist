@@ -72,7 +72,7 @@ _CR10A_DH = DHParams(
     a=(0.0, 0.0, -0.607, -0.568, 0.0, 0.0),
     d=(0.1765, 0.0, 0.0, 0.191, 0.125, 0.1084),
     alpha=(0.0, math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2),
-    theta_offset=(0.0, -math.pi / 2, 0.0, 0.0, 0.0, 0.0),
+    theta_offset=(0.0, -math.pi / 2, 0.0, -math.pi / 2, 0.0, 0.0),
 )
 
 _CR20A_DH = DHParams(
