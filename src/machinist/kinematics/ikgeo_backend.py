@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .api import Joints, Kinematics, Pose, RobotModel
+from .units import Radians
 
 
 @dataclass(slots=True)
@@ -55,4 +56,4 @@ class IKGeoKinematics(Kinematics):
             return seed
         # Return the solution closest to the seed.
         best = min(solutions, key=lambda q: np.linalg.norm(np.array(q) - np.array(seed)))
-        return tuple(best)
+        return tuple(Radians(v) for v in best)

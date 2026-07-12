@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from machinist.kinematics.units import Radians
 from machinist.devices.machines.state import MachineState, Toggle, machine_readers
 from machinist.devices.robots.arm import RobotArm, arm_readers
 
@@ -31,7 +32,7 @@ def test_arm_readers_reflect_state_change() -> None:
 def test_arm_readers_during_move() -> None:
     arm = RobotArm(joint_count=6)
     readers = arm_readers(arm)
-    target = (1.0,) * 6
+    target = tuple(Radians(1.0) for _ in range(6))
     arm.movej(target, duration=5.0)
     assert readers["mode"]() == "moving"
     assert readers["moving"]() is True

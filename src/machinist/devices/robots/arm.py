@@ -22,6 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...kinematics.api import DHParams, Joints, Kinematics, KinematicsOptions, NoOpKinematics, Pose, RobotModel
+from ...kinematics.units import Meters, Radians
 
 
 JOINT_COUNT_DEFAULT = 6
@@ -74,8 +75,8 @@ class _Move:
 class ArmState:
     """Mutable, lock-protected robot state."""
 
-    joints: Joints = (0.0,) * JOINT_COUNT_DEFAULT
-    pose: Pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    joints: Joints = (Radians(0.0),) * JOINT_COUNT_DEFAULT
+    pose: Pose = (Meters(0.0), Meters(0.0), Meters(0.0), Radians(0.0), Radians(0.0), Radians(0.0))
     mode: ArmMode = ArmMode.IDLE
     servo_on: bool = True
     program_running: bool = False
@@ -130,7 +131,7 @@ class RobotArm:
         joint_count: int = JOINT_COUNT_DEFAULT,
         kinematics: Kinematics | None = None,
     ) -> None:
-        home_joints = (0.0,) * joint_count
+        home_joints: Joints = (Radians(0.0),) * joint_count
         self._kinematics: Kinematics = kinematics or NoOpKinematics(
             RobotModel(joint_count=joint_count)
         )
@@ -225,7 +226,7 @@ class RobotArm:
             elapsed = time.monotonic() - move.started_at
             t = min(elapsed / move.duration, 1.0)
             s.joints = tuple(
-                _lerp(a, b, t) for a, b in zip(move.started_joints, move.target, strict=False)
+                Radians(_lerp(a, b, t)) for a, b in zip(move.started_joints, move.target, strict=False)
             )
             s.pose = self._kinematics.forward(s.joints)
             if t >= 1.0:

@@ -29,7 +29,8 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, KinematicsOptions
+from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.units import Meters, Radians
 from ...transport.framing import CRLF
 from ...transport.line_server import Reply, SessionHandler
 from .arm import ArmOptions, ArmMode, RobotArm, arm_from_options
@@ -115,10 +116,12 @@ class _Session:
             case "RESET":
                 arm.reset(); return "0000"
             case "MOVJ":
-                arm.movej(tuple(_parse_floats(data, count=len(s.joints))))
+                arm.movej(tuple(Radians(j) for j in _parse_floats(data, count=len(s.joints))))
                 return "0000"
             case "MOVL":
-                arm.movel(tuple(_parse_floats(data, count=6)))  # type: ignore[arg-type]
+                raw = _parse_floats(data, count=6)
+                arm.movel((Meters(raw[0]), Meters(raw[1]), Meters(raw[2]),
+                           Radians(raw[3]), Radians(raw[4]), Radians(raw[5])))
                 return "0000"
             case _:
                 return "ERROR:E2010"

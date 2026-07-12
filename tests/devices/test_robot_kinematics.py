@@ -7,6 +7,8 @@ import time
 
 import pytest
 
+from machinist.kinematics.units import Radians
+
 pytest.importorskip("numpy")
 
 from machinist.core.events import EventBus
@@ -33,7 +35,7 @@ def test_robot_uses_configured_kinematics_backend() -> None:
     )
     ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options)
     try:
-        pose = ur.arm._kinematics.forward((0.0,) * 6)  # noqa: SLF001
+        pose = ur.arm._kinematics.forward(tuple(Radians(0.0) for _ in range(6)))  # noqa: SLF001
         # Non-identity pose because DH parameters are substantial.
         assert any(abs(x) > 0.01 for x in pose[:3])
     finally:
@@ -51,7 +53,7 @@ def test_arm_accepts_top_level_dh_options() -> None:
         home = arm.state.snapshot()
         assert any(abs(value) > 0.01 for value in home.pose[:3])
         arm.start_ticker()
-        arm.movej((0.1, -0.4, 0.2, -0.1, 0.3, 0.2), duration=0.01)
+        arm.movej(tuple(Radians(v) for v in (0.1, -0.4, 0.2, -0.1, 0.3, 0.2)), duration=0.01)
         time.sleep(0.03)
         moved = arm.state.snapshot()
         assert moved.pose != moved.joints[:6]

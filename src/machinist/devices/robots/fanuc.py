@@ -21,7 +21,8 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
-from ...kinematics.api import DHParams, KinematicsOptions
+from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.units import Meters, Radians
 from .arm import ArmOptions, RobotArm, arm_from_options
 
 FANUC_PORT = 18735  # fanucpy default Karel port
@@ -66,11 +67,12 @@ class FanucKarelServer(LineServerDevice):
                 return ",".join(f"{p:.4f}" for p in s.pose)
             case "movej":
                 joints = _parse_floats(args, count=len(s.joints))
-                self.arm.movej(tuple(joints))
+                self.arm.movej(tuple(Radians(j) for j in joints))
                 return "OK"
             case "movel":
-                pose = tuple(_parse_floats(args, count=6))
-                self.arm.movel(pose)  # type: ignore[arg-type]
+                raw = _parse_floats(args, count=6)
+                self.arm.movel((Meters(raw[0]), Meters(raw[1]), Meters(raw[2]),
+                                Radians(raw[3]), Radians(raw[4]), Radians(raw[5])))
                 return "OK"
             case "setdo":
                 idx, val = args.split(",")

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .api import Joints, Kinematics, Pose, RobotModel
+from .units import Meters, Radians
 
 
 @dataclass(slots=True)
@@ -70,7 +71,7 @@ class PinocchioKinematics(Kinematics):
             )
             dq = np.linalg.lstsq(J, err, rcond=None)[0]
             q = pin.integrate(self._model, q, dq * step)
-        return tuple(q.tolist())
+        return tuple(Radians(v) for v in q.tolist())
 
 
 # ----- helpers -------------------------------------------------------
@@ -115,7 +116,8 @@ def _se3_to_pose(se3) -> Pose:  # type: ignore[no-untyped-def]
     rz = math.atan2(R[1, 0], R[0, 0])
     ry = math.atan2(-R[2, 0], math.hypot(R[2, 1], R[2, 2]))
     rx = math.atan2(R[2, 1], R[2, 2])
-    return (float(t[0]), float(t[1]), float(t[2]), rx, ry, rz)
+    return (Meters(float(t[0])), Meters(float(t[1])), Meters(float(t[2])),
+            Radians(rx), Radians(ry), Radians(rz))
 
 
 def _pose_to_se3(pin, pose: Pose):  # type: ignore[no-untyped-def]

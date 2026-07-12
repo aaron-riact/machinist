@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .api import Joints, Kinematics, Pose, RobotModel
+from .units import Meters, Radians
 
 
 @dataclass(slots=True)
@@ -63,7 +64,7 @@ class PyKDLKinematics(Kinematics):
         target = _pose_to_frame(PyKDL, pose)
         q_out = PyKDL.JntArray(self.joint_count)
         self._ik.CartToJnt(q_init, target, q_out)
-        return tuple(q_out[i] for i in range(self.joint_count))
+        return tuple(Radians(q_out[i]) for i in range(self.joint_count))
 
 
 # ----- helpers -------------------------------------------------------
@@ -71,7 +72,8 @@ class PyKDLKinematics(Kinematics):
 
 def _frame_to_pose(f) -> Pose:  # type: ignore[no-untyped-def]
     rx, ry, rz = f.M.GetRPY()
-    return (f.p.x(), f.p.y(), f.p.z(), rx, ry, rz)
+    return (Meters(f.p.x()), Meters(f.p.y()), Meters(f.p.z()),
+            Radians(rx), Radians(ry), Radians(rz))
 
 
 def _pose_to_frame(PyKDL, pose: Pose):  # type: ignore[no-untyped-def]

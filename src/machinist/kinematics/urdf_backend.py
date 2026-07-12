@@ -20,6 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .api import Joints, Kinematics, Pose, RobotModel
+from .units import Meters, Radians
 from .dh_backend import _mat_to_pose, pose_to_mat, _se3_error
 
 
@@ -65,7 +66,7 @@ class UrdfKinematics(Kinematics):
             JJt = J @ J.T + (damping ** 2) * np.eye(6)
             dq = J.T @ np.linalg.solve(JJt, err)
             q = q + dq
-        return tuple(q.tolist())
+        return tuple(Radians(v) for v in q.tolist())
 
     def _fk_matrix(self, q: NDArray[np.float64]) -> NDArray[np.float64]:
         T = np.eye(4)

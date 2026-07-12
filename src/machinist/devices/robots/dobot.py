@@ -40,7 +40,8 @@ from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, KinematicsOptions, Pose
+from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.units import Meters, Radians
 from ...transport.framing import PAREN
 from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
 
@@ -299,9 +300,9 @@ def _feedback_writer(
         idx = active_tool[0] if active_tool else 0
         if idx > 0 and tool_frames and idx in tool_frames:
             tva = pkt.ToolVectorActual
-            tva_m = (
-                tva[0] * 1e-3, tva[1] * 1e-3, tva[2] * 1e-3,
-                math.radians(tva[3]), math.radians(tva[4]), math.radians(tva[5]),
+            tva_m: Pose = (
+                Meters(tva[0] * 1e-3), Meters(tva[1] * 1e-3), Meters(tva[2] * 1e-3),
+                Radians(math.radians(tva[3])), Radians(math.radians(tva[4])), Radians(math.radians(tva[5])),
             )
             T_f = _pose_to_mat(tva_m)
             T_t = _pose_to_mat(tool_frames[idx])
@@ -516,12 +517,12 @@ class DobotDashboard(LineServerDevice):
                 except Exception:
                     return f"-30001,{{}},{verb}({args})"
                 self._tool_frames[index] = (
-                    pose[0] * 1e-3,
-                    pose[1] * 1e-3,
-                    pose[2] * 1e-3,
-                    math.radians(pose[3]),
-                    math.radians(pose[4]),
-                    math.radians(pose[5]),
+                    Meters(pose[0] * 1e-3),
+                    Meters(pose[1] * 1e-3),
+                    Meters(pose[2] * 1e-3),
+                    Radians(math.radians(pose[3])),
+                    Radians(math.radians(pose[4])),
+                    Radians(math.radians(pose[5])),
                 )
                 return _ok(verb, args)
             case "tool":
@@ -538,7 +539,7 @@ class DobotDashboard(LineServerDevice):
                     deltas = _parse_required_floats(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                target = tuple(j + math.radians(d) for j, d in zip(s.joints, deltas))
+                target: Joints = tuple(Radians(j + math.radians(d)) for j, d in zip(s.joints, deltas))
                 self.arm.movej(target)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
@@ -575,7 +576,7 @@ class DobotDashboard(LineServerDevice):
                     joints = _parse_motion_args(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                self.arm.movej(tuple(math.radians(j) for j in joints))
+                self.arm.movej(tuple(Radians(math.radians(j)) for j in joints))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
@@ -583,9 +584,10 @@ class DobotDashboard(LineServerDevice):
                     pose_mm = _parse_motion_args(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                pose = [pose_mm[0] * 1e-3, pose_mm[1] * 1e-3, pose_mm[2] * 1e-3,
-                        math.radians(pose_mm[3]), math.radians(pose_mm[4]), math.radians(pose_mm[5])]
-                self.arm.movel(tuple(pose))  # type: ignore[arg-type]
+                self.arm.movel((
+                    Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
+                    Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
+                ))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case _:
@@ -731,7 +733,8 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
     rz = math.atan2(T[1, 0], T[0, 0])
     ry = math.atan2(-T[2, 0], math.hypot(T[2, 1], T[2, 2]))
     rx = math.atan2(T[2, 1], T[2, 2])
-    return (float(x), float(y), float(z), rx, ry, rz)
+    return (Meters(float(x)), Meters(float(y)), Meters(float(z)),
+            Radians(rx), Radians(ry), Radians(rz))
 
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
