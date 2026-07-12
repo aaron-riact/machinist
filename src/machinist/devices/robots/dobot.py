@@ -548,7 +548,7 @@ class DobotDashboard(LineServerDevice):
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
                 delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
-                                    delta[3], delta[4], delta[5]], dtype=float)
+                                    math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
                 T_cur = _pose_to_mat(s.pose)
                 R = T_cur[:3, :3]
                 tool_pose = self._tool_frames.get(self._active_tool[0], (0.0,) * 6)
