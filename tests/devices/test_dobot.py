@@ -633,3 +633,38 @@ def test_dobot_movl_pose_braces_rejects_wrong_count(dobot: DobotDashboard) -> No
 def test_dobot_movl_rejects_bad_args(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "MovL(not_valid)")
     assert reply.startswith("-30001,")
+
+
+def test_dobot_getpose_returns_mm_and_degrees(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "GetPose()")
+    assert reply.startswith("0,")
+    assert reply.endswith("GetPose()")
+    body = reply.split(",{", 1)[1].rsplit("},", 1)[0]
+    vals = [float(v) for v in body.split(",")]
+    assert len(vals) == 6
+    # At home (0,0,0,0,0,0) with NoOpKinematics pose = (0,0,0,0,0,0).
+
+
+def test_dobot_getpose_with_tool_frame(dobot: DobotDashboard) -> None:
+    _send(dobot, "SetTool(1,{100,0,0,0,0,0})Tool(1)", expect=2)
+    reply = _send(dobot, "GetPose(tool=1)")
+    assert reply.startswith("0,{")
+    body = reply.split(",{", 1)[1].rsplit("},", 1)[0]
+    vals = [float(v) for v in body.split(",")]
+    # Tool frame {100,0,0,0,0,0} mm/deg composed onto identity flange → {100,0,0,0,0,0}
+    assert vals == pytest.approx([100.0, 0.0, 0.0, 0.0, 0.0, 0.0], abs=1e-4)
+
+
+def test_dobot_getpose_rejects_bad_tool_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "GetPose(tool=99)")
+    assert reply.startswith("-40001,")
+
+
+def test_dobot_getpose_rejects_undefined_tool(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "GetPose(tool=5)")
+    assert reply.startswith("-1,")  # frame not defined
+
+
+def test_dobot_getpose_rejects_bad_user_index(dobot: DobotDashboard) -> None:
+    reply = _send(dobot, "GetPose(user=99)")
+    assert reply.startswith("-40001,")

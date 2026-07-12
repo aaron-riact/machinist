@@ -422,7 +422,55 @@ class DobotDashboard(LineServerDevice):
             case "geterrorid":
                 return _ok(verb, args, value="[" + ",".join(str(e) for e in self._error_ids) + "]")
             case "getpose":
-                return _ok(verb, args, value=",".join(f"{p:.4f}" for p in s.pose))
+                tool_idx = None
+                if args.strip():
+                    for part in args.split(","):
+                        part = part.strip()
+                        if "=" not in part:
+                            continue
+                        key, _, val = part.partition("=")
+                        key = key.strip()
+                        val = val.strip()
+                        if key == "tool":
+                            try:
+                                tool_idx = int(val)
+                            except ValueError:
+                                return f"-30001,{{}},{verb}({args})"
+                            if tool_idx < 0 or tool_idx > 50:
+                                return f"-40001,{{}},{verb}({args})"
+                            if tool_idx != 0 and tool_idx not in self._tool_frames:
+                                return f"-1,{{}},{verb}({args})"
+                        elif key == "user":
+                            try:
+                                user_idx = int(val)
+                            except ValueError:
+                                return f"-30001,{{}},{verb}({args})"
+                            if user_idx < 0 or user_idx > 50:
+                                return f"-40001,{{}},{verb}({args})"
+
+                pose = s.pose
+                if tool_idx is not None and tool_idx != 0:
+                    tool_pose = self._tool_frames[tool_idx]
+                    tool_m = (
+                        tool_pose[0] * 1e-3,
+                        tool_pose[1] * 1e-3,
+                        tool_pose[2] * 1e-3,
+                        math.radians(tool_pose[3]),
+                        math.radians(tool_pose[4]),
+                        math.radians(tool_pose[5]),
+                    )
+                    T_f = _pose_to_mat(pose)
+                    T_t = _pose_to_mat(tool_m)
+                    pose = _mat_to_pose(T_f @ T_t)
+                pose_mm = (
+                    pose[0] * 1000,
+                    pose[1] * 1000,
+                    pose[2] * 1000,
+                    math.degrees(pose[3]),
+                    math.degrees(pose[4]),
+                    math.degrees(pose[5]),
+                )
+                return _ok(verb, args, value=",".join(f"{p:.4f}" for p in pose_mm))
             case "getangle":
                 return _ok(verb, args, value=",".join(f"{j:.4f}" for j in s.joints))
             case "robotmode":
