@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -21,7 +21,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
-from ...kinematics.api import DHParams, KinematicsOptions
+from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
 from .arm import ArmOptions, RobotArm, arm_from_options
 
 FANUC_PORT = 18735  # fanucpy default Karel port
@@ -66,11 +66,11 @@ class FanucKarelServer(LineServerDevice):
                 return ",".join(f"{p:.4f}" for p in s.pose)
             case "movej":
                 joints = _parse_floats(args, count=len(s.joints))
-                self.arm.movej(tuple(joints))
+                self.arm.movej(cast(Joints, tuple(joints)))
                 return "OK"
             case "movel":
                 pose = tuple(_parse_floats(args, count=6))
-                self.arm.movel(pose)  # type: ignore[arg-type]
+                self.arm.movel(cast(Pose, pose))
                 return "OK"
             case "setdo":
                 idx, val = args.split(",")

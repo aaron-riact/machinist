@@ -17,11 +17,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
+from ...kinematics.api import DHParams, Joints, Kinematics, KinematicsOptions, NoOpKinematics, Pose, RobotModel
 
 
 JOINT_COUNT_DEFAULT = 6
@@ -52,9 +53,6 @@ class ArmOptions:
     backend: str | None = None
     dh_params: DHParams | None = None
     urdf: str | None = None
-Pose = tuple[float, float, float, float, float, float]  # x,y,z,rx,ry,rz
-Joints = tuple[float, ...]
-
 
 class ArmMode(StrEnum):
     IDLE = auto()
@@ -76,8 +74,8 @@ class _Move:
 class ArmState:
     """Mutable, lock-protected robot state."""
 
-    joints: Joints = (0.0,) * JOINT_COUNT_DEFAULT
-    pose: Pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    joints: Joints = cast(Joints, (0.0,) * JOINT_COUNT_DEFAULT)
+    pose: Pose = cast(Pose, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
     mode: ArmMode = ArmMode.IDLE
     servo_on: bool = True
     program_running: bool = False
@@ -132,7 +130,7 @@ class RobotArm:
         joint_count: int = JOINT_COUNT_DEFAULT,
         kinematics: Kinematics | None = None,
     ) -> None:
-        home_joints = (0.0,) * joint_count
+        home_joints: Joints = cast(Joints, (0.0,) * joint_count)
         self._kinematics: Kinematics = kinematics or NoOpKinematics(
             RobotModel(joint_count=joint_count)
         )
@@ -226,9 +224,9 @@ class RobotArm:
                 return
             elapsed = time.monotonic() - move.started_at
             t = min(elapsed / move.duration, 1.0)
-            s.joints = tuple(
+            s.joints = cast(Joints, tuple(
                 _lerp(a, b, t) for a, b in zip(move.started_joints, move.target, strict=False)
-            )
+            ))
             s.pose = self._kinematics.forward(s.joints)
             if t >= 1.0:
                 s._move = None
