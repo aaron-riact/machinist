@@ -22,7 +22,7 @@ import ast
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import ctypes
 import os
@@ -40,7 +40,7 @@ from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.api import DHParams, KinematicsOptions, Pose
 from ...transport.framing import PAREN
 from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
 
@@ -299,10 +299,10 @@ def _feedback_writer(
         idx = active_tool[0] if active_tool else 0
         if idx > 0 and tool_frames and idx in tool_frames:
             tva = pkt.ToolVectorActual
-            tva_m: Pose = cast(Pose, (
+            tva_m = (
                 tva[0] * 1e-3, tva[1] * 1e-3, tva[2] * 1e-3,
                 math.radians(tva[3]), math.radians(tva[4]), math.radians(tva[5]),
-            ))
+            )
             T_f = _pose_to_mat(tva_m)
             T_t = _pose_to_mat(tool_frames[idx])
             tcp = _mat_to_pose(T_f @ T_t)
@@ -515,14 +515,14 @@ class DobotDashboard(LineServerDevice):
                         return f"-30001,{{}},{verb}({args})"
                 except Exception:
                     return f"-30001,{{}},{verb}({args})"
-                self._tool_frames[index] = cast(Pose, (
+                self._tool_frames[index] = (
                     pose[0] * 1e-3,
                     pose[1] * 1e-3,
                     pose[2] * 1e-3,
                     math.radians(pose[3]),
                     math.radians(pose[4]),
                     math.radians(pose[5]),
-                ))
+                )
                 return _ok(verb, args)
             case "tool":
                 idx, err = _int_arg(args, verb, lo=0, hi=50)
@@ -538,7 +538,7 @@ class DobotDashboard(LineServerDevice):
                     deltas = _parse_required_floats(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                target: Joints = cast(Joints, tuple(j + math.radians(d) for j, d in zip(s.joints, deltas)))
+                target = tuple(j + math.radians(d) for j, d in zip(s.joints, deltas))
                 self.arm.movej(target)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
@@ -575,7 +575,7 @@ class DobotDashboard(LineServerDevice):
                     joints = _parse_motion_args(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                self.arm.movej(cast(Joints, tuple(math.radians(j) for j in joints)))
+                self.arm.movej(tuple(math.radians(j) for j in joints))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
@@ -585,7 +585,7 @@ class DobotDashboard(LineServerDevice):
                     return f"-30001,{{}},{verb}({args})"
                 pose = [pose_mm[0] * 1e-3, pose_mm[1] * 1e-3, pose_mm[2] * 1e-3,
                         math.radians(pose_mm[3]), math.radians(pose_mm[4]), math.radians(pose_mm[5])]
-                self.arm.movel(cast(Pose, tuple(pose)))
+                self.arm.movel(tuple(pose))  # type: ignore[arg-type]
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case _:
@@ -731,7 +731,7 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
     rz = math.atan2(T[1, 0], T[0, 0])
     ry = math.atan2(-T[2, 0], math.hypot(T[2, 1], T[2, 2]))
     rx = math.atan2(T[2, 1], T[2, 2])
-    return cast(Pose, (float(x), float(y), float(z), rx, ry, rz))
+    return (float(x), float(y), float(z), rx, ry, rz)
 
 
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)

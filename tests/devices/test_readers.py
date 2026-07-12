@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from machinist.devices.machines.state import MachineState, Toggle, machine_readers
-from typing import cast
-
-from machinist.devices.robots.arm import Joints, RobotArm, arm_readers
+from machinist.devices.robots.arm import RobotArm, arm_readers
 
 
 def test_arm_readers_initial_state() -> None:
@@ -33,7 +31,7 @@ def test_arm_readers_reflect_state_change() -> None:
 def test_arm_readers_during_move() -> None:
     arm = RobotArm(joint_count=6)
     readers = arm_readers(arm)
-    target: Joints = cast(Joints, (1.0,) * 6)
+    target = (1.0,) * 6
     arm.movej(target, duration=5.0)
     assert readers["mode"]() == "moving"
     assert readers["moving"]() is True

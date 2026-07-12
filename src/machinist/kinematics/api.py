@@ -28,10 +28,8 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from .units import Meters, Radians
-
-Joints = tuple[Radians, ...]
-Pose = tuple[Meters, Meters, Meters, Radians, Radians, Radians]  # x y z rx ry rz
+Joints = tuple[float, ...]
+Pose = tuple[float, float, float, float, float, float]  # x y z rx ry rz (RPY)
 
 
 # --- model description ------------------------------------------------
@@ -170,10 +168,7 @@ class NoOpKinematics:
 
     def forward(self, joints: Joints) -> Pose:
         padded = (*joints, *([0.0] * 6))[:6]
-        return (
-            Meters(float(padded[0])), Meters(float(padded[1])), Meters(float(padded[2])),
-            Radians(float(padded[3])), Radians(float(padded[4])), Radians(float(padded[5])),
-        )
+        return (padded[0], padded[1], padded[2], padded[3], padded[4], padded[5])
 
     def inverse(self, pose: Pose, *, seed: Joints, damping: float = 0.05) -> Joints:
         return seed

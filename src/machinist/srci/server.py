@@ -9,9 +9,8 @@ it with raw bytes.
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+from typing import Protocol
 
-from ..kinematics.api import Joints, Pose
 from .codec import CommandTelegram, Function, StatusFlag, StatusTelegram
 
 _MOVE_DURATION = 1.0
@@ -85,9 +84,9 @@ class SrciServer:
         elif fn is Function.RESET:
             self._arm.reset()
         elif fn is Function.MOVE_JOINT:
-            self._arm.movej(cast(Joints, command.args), duration=_MOVE_DURATION / max(command.speed, 1e-3))
+            self._arm.movej(command.args, duration=_MOVE_DURATION / max(command.speed, 1e-3))
         elif fn is Function.MOVE_LINEAR:
-            self._arm.movel(cast(Pose, command.pose), duration=_MOVE_DURATION / max(command.speed, 1e-3))
+            self._arm.movel(command.pose, duration=_MOVE_DURATION / max(command.speed, 1e-3))
         # NOP / READ_STATUS: just report current state.
 
     def _status(self, *, job_id: int, error_code: int) -> StatusTelegram:

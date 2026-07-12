@@ -17,13 +17,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
 
 from .api import DHParams, Joints, Kinematics, Pose, RobotModel
-from .units import Meters, Radians
 
 
 @dataclass(slots=True)
@@ -69,7 +67,7 @@ class DHKinematics(Kinematics):
         J = self._numerical_jacobian(q, current)
         JJt = J @ J.T + damping ** 2 * np.eye(6)
         dq = J.T @ np.linalg.solve(JJt, err)
-        return cast(Joints, tuple((q + dq).tolist()))
+        return tuple((q + dq).tolist())
 
     # ----- inverse (damped least-squares Jacobian) --------------------
 
@@ -92,7 +90,7 @@ class DHKinematics(Kinematics):
             JJt = J @ J.T + (damping ** 2) * np.eye(6)
             dq = J.T @ np.linalg.solve(JJt, err)
             q = q + dq
-        return cast(Joints, tuple(q.tolist()))
+        return tuple(q.tolist())
 
     def velocity_step(
         self, joints: Joints, twist: NDArray[np.float64],
@@ -121,7 +119,7 @@ class DHKinematics(Kinematics):
                 break
         if np.linalg.norm(remaining) > max(1e-3, 0.05 * np.linalg.norm(twist)):
             return joints
-        return cast(Joints, tuple(q.tolist()))
+        return tuple(q.tolist())
 
     def _numerical_jacobian(
         self, q: NDArray[np.float64], current: NDArray[np.float64],
@@ -156,8 +154,7 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
     rz = math.atan2(T[1, 0], T[0, 0])
     ry = math.atan2(-T[2, 0], math.hypot(T[2, 1], T[2, 2]))
     rx = math.atan2(T[2, 1], T[2, 2])
-    return (Meters(float(x)), Meters(float(y)), Meters(float(z)),
-            Radians(rx), Radians(ry), Radians(rz))
+    return (float(x), float(y), float(z), rx, ry, rz)
 
 
 def pose_to_mat(pose: Pose) -> NDArray[np.float64]:

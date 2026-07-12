@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...transport.framing import CRLF
 from ...transport.line_server import Reply, SessionHandler
 from .arm import ArmOptions, ArmMode, RobotArm, arm_from_options
@@ -115,10 +115,10 @@ class _Session:
             case "RESET":
                 arm.reset(); return "0000"
             case "MOVJ":
-                arm.movej(cast(Joints, tuple(_parse_floats(data, count=len(s.joints)))))
+                arm.movej(tuple(_parse_floats(data, count=len(s.joints))))
                 return "0000"
             case "MOVL":
-                arm.movel(cast(Pose, tuple(_parse_floats(data, count=6))))
+                arm.movel(tuple(_parse_floats(data, count=6)))  # type: ignore[arg-type]
                 return "0000"
             case _:
                 return "ERROR:E2010"

@@ -15,7 +15,6 @@ import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -66,7 +65,7 @@ class UrdfKinematics(Kinematics):
             JJt = J @ J.T + (damping ** 2) * np.eye(6)
             dq = J.T @ np.linalg.solve(JJt, err)
             q = q + dq
-        return cast(Joints, tuple(q.tolist()))
+        return tuple(q.tolist())
 
     def _fk_matrix(self, q: NDArray[np.float64]) -> NDArray[np.float64]:
         T = np.eye(4)
