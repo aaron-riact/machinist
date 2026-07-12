@@ -538,7 +538,7 @@ class DobotDashboard(LineServerDevice):
                     deltas = _parse_required_floats(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                target = tuple(j + d for j, d in zip(s.joints, deltas))
+                target = tuple(j + math.radians(d) for j, d in zip(s.joints, deltas))
                 self.arm.movej(target)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
@@ -575,7 +575,7 @@ class DobotDashboard(LineServerDevice):
                     joints = _parse_motion_args(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                self.arm.movej(tuple(joints))
+                self.arm.movej(tuple(math.radians(j) for j in joints))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
