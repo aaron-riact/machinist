@@ -273,6 +273,8 @@ def _feedback_writer(
     tool_di_count: int,
     tool_do_count: int,
     running: threading.Event,
+    tool_frames: dict[int, Pose] | None = None,
+    active_tool: list[int] | None = None,
 ) -> None:
     pkt = DobotFeedbackPacket()
     tick = 0
@@ -287,12 +289,22 @@ def _feedback_writer(
         pkt.DigitalOutputs = sum(
             (1 << (i - 1)) for i in range(1, tool_do_count + 1) if io[f"tooldo{i}"].value
         )
+        idx = active_tool[0] if active_tool else 0
+        if idx > 0 and tool_frames and idx in tool_frames:
+            T_f = _pose_to_mat(tuple(pkt.ToolVectorActual[:6]))
+            T_t = _pose_to_mat(tool_frames[idx])
+            T_tcp = T_f @ T_t
+            tcp = _mat_to_pose(T_tcp)
+            pkt.ToolVectorActual[:] = tcp
         data = bytes(pkt)
         _send_to_all(fast, data)
         if tick % 25 == 0:
             _send_to_all(med, data)
             if tick % 125 == 0:
                 _send_to_all(slow, data)
+                qa = [f"{pkt.QActual[i]:+.4f}" for i in range(6)]
+                tv = [f"{pkt.ToolVectorActual[i]:+.4f}" for i in range(6)]
+                print(f"[fb] QActual=({','.join(qa)})  ToolVec=({','.join(tv)})", file=sys.stderr, flush=True)
         tick += 1
         remaining = deadline - time.monotonic()
         if remaining > 0:
@@ -341,7 +353,7 @@ class DobotDashboard(LineServerDevice):
         self._ao: list[float] = [0.0] * self._ao_count
 
         self._tool_frames: dict[int, Pose] = {}
-        self._active_tool: int = 0
+        self._active_tool: list[int] = [0]
 
         self.io = SignalBank(name)
         for i in range(1, self._tool_di_count + 1):
@@ -369,7 +381,7 @@ class DobotDashboard(LineServerDevice):
 
             self._writer = threading.Thread(
                 target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running),
+                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running, self._tool_frames, self._active_tool),
                 daemon=True,
             )
             self._writer.start()
@@ -458,7 +470,7 @@ class DobotDashboard(LineServerDevice):
                     return err
                 if idx != 0 and idx not in self._tool_frames:
                     return f"-1,{{}},Tool({idx})"
-                self._active_tool = idx
+                self._active_tool[0] = idx
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "reljointmovj":
@@ -479,7 +491,7 @@ class DobotDashboard(LineServerDevice):
                                     delta[3], delta[4], delta[5]], dtype=float)
                 T_cur = _pose_to_mat(s.pose)
                 R = T_cur[:3, :3]
-                tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
+                tool_pose = self._tool_frames.get(self._active_tool[0], (0.0,) * 6)
                 T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
                 R_tool = T_tool[:3, :3]
                 R_tcp = R @ R_tool
@@ -491,6 +503,10 @@ class DobotDashboard(LineServerDevice):
                                    [p[2], 0, -p[0]],
                                    [-p[1], p[0], 0]], dtype=float)
                 twist[:3] = twist[:3] + skew_p @ twist[3:]
+                print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
+                print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in s.pose)})  tool={self._active_tool[0]}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
+                print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
+                print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
                 self.arm.jog_cartesian(twist, dt=1.0)
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
