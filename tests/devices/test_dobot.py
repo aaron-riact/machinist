@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import socket
 import time
 
@@ -380,7 +381,8 @@ def test_update_feedback_packet_populates_fields() -> None:
     assert pkt.TimeStamp == 5000
     assert pkt.SpeedScaling == 0.8
     assert list(pkt.QActual) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-    assert list(pkt.ToolVectorActual) == [100.0, 200.0, 300.0, 0.1, 0.2, 0.3]
+    assert pkt.ToolVectorActual[:3] == pytest.approx((100000.0, 200000.0, 300000.0))
+    assert pkt.ToolVectorActual[3:] == pytest.approx((math.degrees(0.1), math.degrees(0.2), math.degrees(0.3)))
     assert pkt.EnableStatus == 1
     assert pkt.BrakeStatus == 0   # MOVING → brakes off
     assert pkt.ErrorStatus == 0
@@ -548,7 +550,7 @@ def test_dobot_tool_zero_always_succeeds(dobot: DobotDashboard) -> None:
 
 def test_dobot_tool_with_frame_selects_active(dobot: DobotDashboard) -> None:
     _send(dobot, "SetTool(1,{0,0,0,0,0,0})Tool(1)", expect=2)
-    assert dobot._active_tool == 1
+    assert dobot._active_tool[0] == 1
 
 
 def test_dobot_tool_fails_for_undefined_index(dobot: DobotDashboard) -> None:

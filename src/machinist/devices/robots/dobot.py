@@ -229,7 +229,14 @@ def _update_feedback_packet(
     pkt.CRRobotType = robot_type_code
     pkt.SpeedScaling = state.speed_fraction
     pkt.QActual[:] = state.joints
-    pkt.ToolVectorActual[:] = state.pose
+    pkt.ToolVectorActual[:] = (
+        state.pose[0] * 1000,
+        state.pose[1] * 1000,
+        state.pose[2] * 1000,
+        math.degrees(state.pose[3]),
+        math.degrees(state.pose[4]),
+        math.degrees(state.pose[5]),
+    )
     pkt.EnableStatus = 1 if state.servo_on else 0
     pkt.BrakeStatus = 1 if state.mode in (ArmMode.IDLE, ArmMode.ESTOPPED) else 0
     pkt.ErrorStatus = 1 if state.mode in (ArmMode.FAULTED, ArmMode.ESTOPPED) else 0
