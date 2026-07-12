@@ -222,6 +222,7 @@ def _update_feedback_packet(
     now_us: int = 0,
     command_id: int = 0,
     robot_type_code: int = 5,
+    tool: int = 0,
     payload: list[float] | None = None,
 ) -> None:
     pkt.len = 1440
@@ -244,6 +245,7 @@ def _update_feedback_packet(
     pkt.ErrorStatus = 1 if state.mode in (ArmMode.FAULTED, ArmMode.ESTOPPED) else 0
     pkt.RunningStatus = 1 if state.mode is ArmMode.MOVING else 0
     pkt.CurrentCommandId = command_id
+    pkt.Tool = tool
     if payload is not None:
         pkt.Load, pkt.CenterX, pkt.CenterY, pkt.CenterZ = payload
 
@@ -294,22 +296,22 @@ def _feedback_writer(
     while running.is_set():
         deadline = time.monotonic() + period
         s = arm.state.snapshot()
-        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, payload=payload)
+        active_tool_idx = active_tool[0] if active_tool else 0
+        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, tool=active_tool_idx, payload=payload)
         pkt.DigitalInputs = sum(
             (1 << (i - 1)) for i in range(1, tool_di_count + 1) if io[f"tooldi{i}"].value
         )
         pkt.DigitalOutputs = sum(
             (1 << (i - 1)) for i in range(1, tool_do_count + 1) if io[f"tooldo{i}"].value
         )
-        idx = active_tool[0] if active_tool else 0
-        if idx > 0 and tool_frames and idx in tool_frames:
+        if active_tool_idx > 0 and tool_frames and active_tool_idx in tool_frames:
             tva = pkt.ToolVectorActual
             tva_m: Pose = (
                 Meters(tva[0] * 1e-3), Meters(tva[1] * 1e-3), Meters(tva[2] * 1e-3),
                 Radians(math.radians(tva[3])), Radians(math.radians(tva[4])), Radians(math.radians(tva[5])),
             )
             T_f = _pose_to_mat(tva_m)
-            T_t = _pose_to_mat(tool_frames[idx])
+            T_t = _pose_to_mat(tool_frames[active_tool_idx])
             tcp = _mat_to_pose(T_f @ T_t)
             pkt.ToolVectorActual[:] = (
                 tcp[0] * 1000, tcp[1] * 1000, tcp[2] * 1000,
