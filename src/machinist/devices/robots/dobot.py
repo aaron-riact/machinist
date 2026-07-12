@@ -584,7 +584,7 @@ class DobotDashboard(LineServerDevice):
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
                 pose = [pose_mm[0] * 1e-3, pose_mm[1] * 1e-3, pose_mm[2] * 1e-3,
-                        pose_mm[3], pose_mm[4], pose_mm[5]]
+                        math.radians(pose_mm[3]), math.radians(pose_mm[4]), math.radians(pose_mm[5])]
                 self.arm.movel(tuple(pose))  # type: ignore[arg-type]
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
