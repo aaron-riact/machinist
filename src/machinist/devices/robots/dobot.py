@@ -244,6 +244,7 @@ def _update_feedback_packet(
     pkt.BrakeStatus = 1 if state.mode in (ArmMode.IDLE, ArmMode.ESTOPPED) else 0
     pkt.ErrorStatus = 1 if state.mode in (ArmMode.FAULTED, ArmMode.ESTOPPED) else 0
     pkt.RunningStatus = 1 if state.mode is ArmMode.MOVING else 0
+    pkt.RunQueuedCmd = 1 if state.mode is ArmMode.MOVING else 0
     pkt.CurrentCommandId = command_id
     pkt.Tool = tool
     if payload is not None:
@@ -524,6 +525,10 @@ class DobotDashboard(LineServerDevice):
                     Radians(math.radians(pose[4])),
                     Radians(math.radians(pose[5])),
                 )
+                # SetTool silently bumps CurrentCommandId even though the
+                # response carries no value field (it's "immediate" per the
+                # protocol docs, but the real Dobot queues it internally).
+                self._current_command_id[0] += 1
                 return _ok(verb, args)
             case "setpayload":
                 parts = [p.strip() for p in args.split(",")]

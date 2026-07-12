@@ -587,7 +587,7 @@ def test_dobot_relmovltool_moves(dobot: DobotDashboard) -> None:
 
 def test_dobot_relmovltool_moves_in_tool_frame(dobot: DobotDashboard) -> None:
     _send(dobot, "SetTool(1,{0,0,0,0.785,0,0})Tool(1)RelMovLTool(10,0,0,0,0,0)", expect=3)
-    assert dobot._current_command_id[0] == 2  # Tool + RelMovLTool (SetTool is non-queued)
+    assert dobot._current_command_id[0] == 3  # SetTool + Tool + RelMovLTool
 
 
 def test_dobot_relmovltool_fails_on_bad_args(dobot: DobotDashboard) -> None:
