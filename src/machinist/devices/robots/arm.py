@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from ...kinematics.api import DHParams, Kinematics, KinematicsOptions, NoOpKinematics, RobotModel
+from ...kinematics.api import DHParams, Joints, Kinematics, KinematicsOptions, NoOpKinematics, Pose, RobotModel
 
 
 JOINT_COUNT_DEFAULT = 6
@@ -52,8 +52,6 @@ class ArmOptions:
     backend: str | None = None
     dh_params: DHParams | None = None
     urdf: str | None = None
-Pose = tuple[float, float, float, float, float, float]  # x,y,z,rx,ry,rz
-Joints = tuple[float, ...]
 
 
 class ArmMode(StrEnum):

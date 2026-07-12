@@ -28,8 +28,10 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-Joints = tuple[float, ...]
-Pose = tuple[float, float, float, float, float, float]  # x y z rx ry rz (RPY)
+from .units import Meters, Radians
+
+Joints = tuple[Radians, ...]
+Pose = tuple[Meters, Meters, Meters, Radians, Radians, Radians]  # x y z rx ry rz
 
 
 # --- model description ------------------------------------------------
