@@ -369,6 +369,7 @@ class DobotDashboard(LineServerDevice):
 
         self._tool_frames: dict[int, Pose] = {}
         self._active_tool: list[int] = [0]
+        self._payload: tuple[float, float | None, float | None, float | None] = (0.0, None, None, None)
 
         self.io = SignalBank(name)
         for i in range(1, self._tool_di_count + 1):
@@ -525,6 +526,24 @@ class DobotDashboard(LineServerDevice):
                     Radians(math.radians(pose[5])),
                 )
                 return _ok(verb, args)
+            case "setpayload":
+                parts = [p.strip() for p in args.split(",")]
+                try:
+                    load = float(parts[0])
+                except (ValueError, IndexError):
+                    return f"-30001,{{}},{verb}({args})"
+                if len(parts) == 4:
+                    try:
+                        x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                    except ValueError:
+                        return f"-30001,{{}},{verb}({args})"
+                    self._payload = (load, x, y, z)
+                elif len(parts) == 1:
+                    self._payload = (load, None, None, None)
+                else:
+                    return f"-30001,{{}},{verb}({args})"
+                self._current_command_id[0] += 1
+                return _ok(verb, args, value=str(self._current_command_id[0]))
             case "tool":
                 idx, err = _int_arg(args, verb, lo=0, hi=50)
                 if err:
