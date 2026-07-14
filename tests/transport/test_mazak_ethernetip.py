@@ -71,7 +71,7 @@ def test_mazak_is_a_distinct_class_from_base() -> None:
 
 
 def test_build_adapter_selects_class_by_behaviour() -> None:
-    from machinist.devices.machines.mazak_smoothx import _build_adapter
+    from machinist.devices.machines.mazak_smooth import _build_adapter
 
     generic = _build_adapter(EtherNetIPAdapterConfig(host="127.0.0.1", behaviour="generic"))
     assert type(generic) is EtherNetIPAdapter
@@ -86,7 +86,7 @@ def test_build_adapter_selects_class_by_behaviour() -> None:
 
 def test_mazak_factory_defaults_adapter_behaviour_to_mazak() -> None:
     from machinist.core.events import EventBus
-    from machinist.devices.machines.mazak_smoothx import _factory
+    from machinist.devices.machines.mazak_smooth import _factory
     from machinist.core.types import Endpoint
 
     endpoint = Endpoint(host="127.0.0.1", port=44818)

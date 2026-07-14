@@ -84,7 +84,7 @@ def test_snapshot_device_includes_machine_state() -> None:
 def test_snapshot_device_includes_ethernetip_breakdown() -> None:
     device = SimpleNamespace(
         name="smooth",
-        kind="mazak_smoothx",
+        kind="mazak_smooth",
         endpoint="127.0.0.1:44818",
         lifecycle="running",
         build_detail=lambda: {
@@ -108,7 +108,7 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
 def test_snapshot_device_omits_ethernetip_when_snapshot_is_disabled() -> None:
     device = SimpleNamespace(
         name="smooth",
-        kind="mazak_smoothx",
+        kind="mazak_smooth",
         endpoint="127.0.0.1:44818",
         lifecycle="running",
         build_detail=lambda: None,

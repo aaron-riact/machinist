@@ -1,10 +1,10 @@
 
 devices:
-  - name: gripper
-    kind: onrobot_3fg25
+  #- name: gripper
+  #  kind: onrobot_3fg25
 
   - name: mazak
-    kind: mazak_smoothx
+    kind: mazak_smooth
     options:
       interfaces: [ethernetip]
       ethernetip:

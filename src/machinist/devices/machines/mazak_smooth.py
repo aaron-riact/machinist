@@ -1,4 +1,4 @@
-"""Mazak SmoothX robot-interface emulator with IO and EtherNet/IP support."""
+"""Mazak Smooth robot-interface emulator with IO and EtherNet/IP support."""
 
 from __future__ import annotations
 
@@ -149,7 +149,7 @@ class MTConnectOptions:
 
 
 @dataclass(frozen=True, slots=True)
-class MazakSmoothXOptions:
+class MazakSmoothOptions:
     scan_interval_seconds: float = 0.02
     door_move_seconds: float = 2.0
     cycle_duration_seconds: float = 1.0
@@ -167,8 +167,8 @@ class MazakSmoothXOptions:
     _eeip_client_factory: Any = None
 
 
-class MazakSmoothXEmulator(Device):
-    kind = "mazak_smoothx"
+class MazakSmoothEmulator(Device):
+    kind = "mazak_smooth"
 
     input_signal_points = INPUT_SIGNAL_POINTS
     output_signal_points = OUTPUT_SIGNAL_POINTS
@@ -176,7 +176,7 @@ class MazakSmoothXEmulator(Device):
     output_text_fields = OUTPUT_TEXT_FIELDS
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSmoothXOptions,
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: MazakSmoothOptions,
         *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
@@ -256,7 +256,7 @@ class MazakSmoothXEmulator(Device):
             return dict(self._state_snapshot)
 
     def build_detail(self) -> DeviceDetail:
-        """Assemble the normalized detail dict for this SmoothX device."""
+        """Assemble the normalized detail dict for this Smooth device."""
         if "ethernetip" not in self._interfaces:
             return DeviceDetail(
                 mode="io",
@@ -410,7 +410,7 @@ class MazakSmoothXEmulator(Device):
             self.io.declare(point.signal, Direction.OUTPUT)
 
     def _build_mtconnect(
-        self, host: str, options: MazakSmoothXOptions
+        self, host: str, options: MazakSmoothOptions
     ) -> MTConnectAgent | None:
         if options.mtconnect is None:
             return None
@@ -841,7 +841,7 @@ def _read_text_from_bytes(block: bytes, field: TextField) -> str:
     return raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
 
 
-def _enabled_interfaces(options: MazakSmoothXOptions) -> set[str]:
+def _enabled_interfaces(options: MazakSmoothOptions) -> set[str]:
     enabled = {"io"}
     raw = options.interfaces
     if isinstance(raw, str):
@@ -861,7 +861,7 @@ def _enabled_interfaces(options: MazakSmoothXOptions) -> set[str]:
 
 
 def _build_ethernetip_transport(
-    endpoint: Endpoint, options: MazakSmoothXOptions
+    endpoint: Endpoint, options: MazakSmoothOptions
 ) -> EtherNetIPAdapter | EtherNetIPScanner:
     mode = options.ethernetip_mode
     if mode == "scanner":
@@ -883,13 +883,13 @@ def _build_adapter(config: EtherNetIPAdapterConfig) -> EtherNetIPAdapter:
 
 def _build_scanner(
     config: EtherNetIPScannerConfig,
-    options: MazakSmoothXOptions,
+    options: MazakSmoothOptions,
 ) -> EtherNetIPScanner:
     host = config.host
     if host in {"", "0.0.0.0", "::"}:
         raise ValueError(
             "ethernetip.host must be the remote robot adapter address; "
-            "mazak_smoothx acts as an outbound scanner and does not listen for inbound "
+            "mazak_smooth acts as an outbound scanner and does not listen for inbound "
             "EtherNet/IP connections"
         )
     transport_factory = options._transport_factory or EtherNetIPScanner
@@ -900,10 +900,10 @@ def _build_scanner(
 
 
 def make_device(
-    name: str, endpoint: Endpoint, bus: EventBus, options_obj: MazakSmoothXOptions,
-) -> MazakSmoothXEmulator:
-    """Build a :class:`MazakSmoothXEmulator` with full service wiring. Does NOT start services."""
-    device = MazakSmoothXEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
+    name: str, endpoint: Endpoint, bus: EventBus, options_obj: MazakSmoothOptions,
+) -> MazakSmoothEmulator:
+    """Build a :class:`MazakSmoothEmulator` with full service wiring. Does NOT start services."""
+    device = MazakSmoothEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
     if options_obj.mtconnect is not None:
         device._mtconnect = MTConnectAgent(
             endpoint.host,
@@ -915,7 +915,7 @@ def make_device(
     return device
 
 
-@register("mazak_smoothx", default_port=44818)
+@register("mazak_smooth", default_port=44818)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = dict(options)
     raw_mtconnect_port = opts.pop("mtconnect_port", None)
@@ -958,5 +958,5 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
                 o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )
-    options_obj = MazakSmoothXOptions(**opts)
+    options_obj = MazakSmoothOptions(**opts)
     return make_device(name, endpoint, bus, options_obj)

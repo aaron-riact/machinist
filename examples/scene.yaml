@@ -35,7 +35,7 @@ devices:
       mtconnect_port: 5052     # GET /probe and /current (cycle/spindle/tool/xyz)
       opcua: {port: 4841}      # cycle/spindle/tool/parts/xyz over OPC-UA
   - name: smooth
-    kind: mazak_smoothx
+    kind: mazak_smooth
     options:
       interfaces: [io]           # keeps the example self-contained
       mtconnect_port: 5053

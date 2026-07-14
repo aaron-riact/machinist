@@ -165,16 +165,17 @@ When two devices want the same `host:port`, Machinist:
 | `robot`             | SRCI / TCP·UDP   | 15001        | Generic arm; URDF/DH + OPC-UA      |
 | `haas_ngc`          | MDC+DPRINT+MTC+SMB | 5051       | Multi-service CNC; program library    |
 | `mazak_840d`        | S7 (stub/snap7)  | 102          | Pluggable back-end, DB/byte/bit maps  |
-| `mazak_smoothx`     | IO + EIP + MTC   | 44818        | Mazak SmoothX with adapter+scanner EIP |
+| `mazak_smooth`      | IO + EIP + MTC   | 44818        | Mazak SmoothX / SmoothAI               |
 | `pneumatic_gripper` | IO only          | n/a          | open/close + limit switches        |
 | `onrobot_3fg25`     | Modbus/TCP       | 502          | Diameter, force, grip command      |
 | `zimmer_ged6000il`  | IO-Link HTTP     | 80           | Emulates IFM AL1350 master         |
 | `weidmuller_ur20`   | Modbus/TCP       | 502          | Configurable I/O width             |
 
-## Mazak SmoothX config notes
+## Mazak Smooth config notes
 
-`mazak_smoothx` models the Mazak robot interface as the **machine** side of
-the cell. The emulator supports both EtherNet/IP roles:
+`mazak_smooth` models the Mazak robot interface as the **machine** side of
+the cell (both SmoothX and SmoothAI variants). The emulator supports both
+EtherNet/IP roles:
 
 * **adapter** (default): listens on the device endpoint, typically TCP/44818
   plus UDP/2222, so an external scanner/client can connect inbound,
@@ -188,7 +189,7 @@ the cell. The emulator supports both EtherNet/IP roles:
 ```yaml
 devices:
   - name: smooth
-    kind: mazak_smoothx
+    kind: mazak_smooth
     options:
       interfaces: [io, ethernetip]
       # Default adapter mode: accept inbound EtherNet/IP sessions.
@@ -203,7 +204,7 @@ Use scanner mode when you want Machinist to initiate the connection instead:
 ```yaml
 devices:
   - name: smooth
-    kind: mazak_smoothx
+    kind: mazak_smooth
     options:
       interfaces: [ethernetip]
       ethernetip:

@@ -11,15 +11,15 @@ from machinist.core.events import EventBus
 from machinist.core.io import SignalBank
 from machinist.core.types import Endpoint
 from machinist.core.world import WorldBuilder
-from machinist.devices.machines.mazak_smoothx import (
+from machinist.devices.machines.mazak_smooth import (
     BLOCK_SIZE,
     HEARTBEAT_ALARM,
     INPUT_SIGNAL_POINTS,
     INPUT_TEXT_FIELDS,
     MTConnectOptions,
     OUTPUT_SIGNAL_POINTS,
-    MazakSmoothXEmulator,
-    MazakSmoothXOptions,
+    MazakSmoothEmulator,
+    MazakSmoothOptions,
     _build_ethernetip_transport,
     make_device,
 )
@@ -31,7 +31,7 @@ from machinist.transport.ethernetip import (
 from ..conftest import free_port, wait_running
 
 
-def _make(**kw: object) -> MazakSmoothXEmulator:
+def _make(**kw: object) -> MazakSmoothEmulator:
     raw_mtconnect_port = kw.pop("mtconnect_port", None)
     mtconnect_opts = MTConnectOptions(port=int(raw_mtconnect_port)) if raw_mtconnect_port is not None else None
     raw_ethernetip = kw.get("ethernetip")
@@ -67,7 +67,7 @@ def _make(**kw: object) -> MazakSmoothXEmulator:
                 o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
                 t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
             )
-    opts = MazakSmoothXOptions(
+    opts = MazakSmoothOptions(
         interfaces=kw.pop("interfaces", ["io"]),
         heartbeat_timeout_seconds=kw.pop("heartbeat_timeout_seconds", 10.0),
         heartbeat_interval_seconds=kw.pop("heartbeat_interval_seconds", 0.05),
@@ -117,11 +117,11 @@ def test_write_input_block_emits_snapshot_event_once_per_change() -> None:
     bus = EventBus()
     events: list[tuple[str, dict[str, object]]] = []
     bus.subscribe(lambda event: events.append((event.kind, event.payload)))
-    device = MazakSmoothXEmulator(
+    device = MazakSmoothEmulator(
         "mazak1",
         Endpoint("127.0.0.1", 0),
         bus,
-        MazakSmoothXOptions(interfaces=["io"]),
+        MazakSmoothOptions(interfaces=["io"]),
         io=SignalBank(owner="mazak1"),
     )
     events.clear()
@@ -137,11 +137,11 @@ def test_internal_output_bit_changes_emit_snapshot_event() -> None:
     bus = EventBus()
     events: list[tuple[str, dict[str, object]]] = []
     bus.subscribe(lambda event: events.append((event.kind, event.payload)))
-    device = MazakSmoothXEmulator(
+    device = MazakSmoothEmulator(
         "mazak1",
         Endpoint("127.0.0.1", 0),
         bus,
-        MazakSmoothXOptions(interfaces=["io"]),
+        MazakSmoothOptions(interfaces=["io"]),
         io=SignalBank(owner="mazak1"),
     )
     events.clear()
@@ -243,18 +243,18 @@ def test_io_only_device_returns_bare_detail() -> None:
     assert detail["input_fields"] == []
 
 
-def test_world_builds_mazak_smoothx_device() -> None:
+def test_world_builds_mazak_smooth_device() -> None:
     world = WorldBuilder().build(
-        SystemConfig(devices=(DeviceConfig(name="m1", kind="mazak_smoothx"),))
+        SystemConfig(devices=(DeviceConfig(name="m1", kind="mazak_smooth"),))
     )
     assert len(world.devices) == 1
-    assert isinstance(world.devices[0], MazakSmoothXEmulator)
+    assert isinstance(world.devices[0], MazakSmoothEmulator)
 
 
 def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
     tcp_port = free_port()
     udp_port = free_port()
-    opts = MazakSmoothXOptions(
+    opts = MazakSmoothOptions(
         ethernetip={"udp_port": udp_port},
         ethernetip_adapter_config=EtherNetIPAdapterConfig(
             host="127.0.0.1", port=tcp_port, udp_port=udp_port,
@@ -263,7 +263,7 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
         heartbeat_timeout_seconds=1.0,
         heartbeat_interval_seconds=0.05,
     )
-    device = MazakSmoothXEmulator(
+    device = MazakSmoothEmulator(
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),
@@ -305,7 +305,7 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
 def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
     tcp_port = free_port()
     udp_port = free_port()
-    opts = MazakSmoothXOptions(
+    opts = MazakSmoothOptions(
         interfaces=["ethernetip"],
         ethernetip={"udp_port": udp_port},
         ethernetip_adapter_config=EtherNetIPAdapterConfig(
@@ -315,7 +315,7 @@ def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
         heartbeat_timeout_seconds=0.15,
         heartbeat_interval_seconds=0.05,
     )
-    device = MazakSmoothXEmulator(
+    device = MazakSmoothEmulator(
         "mazak1",
         Endpoint("127.0.0.1", tcp_port),
         EventBus(),

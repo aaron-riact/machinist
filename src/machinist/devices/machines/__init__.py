@@ -1,1 +1,1 @@
-from . import haas_ngc, mazak_840d, mazak_smoothx  # noqa: F401
+from . import haas_ngc, mazak_840d, mazak_smooth  # noqa: F401
