@@ -366,3 +366,41 @@ def test_mtconnect_reports_live_machine_state() -> None:
     assert "<Program dataItemId=\"program\">O1000</Program>" in current
     assert "<DoorState dataItemId=\"door_main\">OPEN</DoorState>" in current
     assert "<PartCount dataItemId=\"parts\">3</PartCount>" in current
+
+
+def test_smoothai_variant_side_door_uses_same_di_and_extra_front_door() -> None:
+    device = _make(variant="smoothai")
+    device.set_input_bit(107, True)
+    device._scan_cycle(now=0.0)
+    device._scan_cycle(now=2.01)
+
+    assert device.state.door("side").open is True
+    assert device.io["do107"].value is True
+
+    device.set_input_bit(107, False)
+    device.set_input_bit(108, False)
+    device.set_input_bit(109, True)
+    device._scan_cycle(now=2.02)
+    device.set_input_bit(108, True)
+    device._scan_cycle(now=2.03)
+    device._scan_cycle(now=4.04)
+
+    assert device.state.door("side").open is False
+    assert device.io["do108"].value is True
+
+    device.set_input_bit(110, True)
+    device._scan_cycle(now=4.04)
+    device._scan_cycle(now=6.05)
+
+    assert device.state.door("front").open is True
+    assert device.io["do110"].value is True
+    assert device.io["do111"].value is False
+
+    device.set_input_bit(110, False)
+    device.set_input_bit(111, True)
+    device._scan_cycle(now=6.06)
+    device._scan_cycle(now=8.07)
+
+    assert device.state.door("front").open is False
+    assert device.io["do110"].value is False
+    assert device.io["do111"].value is True

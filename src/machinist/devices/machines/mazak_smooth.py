@@ -142,6 +142,20 @@ OUTPUT_BIT_FIELDS = {
     105: BitField(105, "do105", CONTROL_OFFSET, 4, 4, "Robot service code")
 }
 
+SMOOTH_AI_INPUT_OVERRIDES: dict[int, BitPoint] = {
+    107: _control_point(107, "di107", 6, "Side door open command"),
+    108: _control_point(108, "di108", 7, "Side door close command"),
+    110: _control_point(110, "di110", 9, "Front door open command"),
+    111: _control_point(111, "di111", 10, "Front door close command"),
+}
+
+SMOOTH_AI_OUTPUT_OVERRIDES: dict[int, BitPoint] = {
+    107: _control_point(107, "do107", 9, "Side door open finished"),
+    108: _control_point(108, "do108", 10, "Side door close finished"),
+    110: _control_point(110, "do110", 12, "Front door open finished"),
+    111: _control_point(111, "do111", 13, "Front door close finished"),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class MTConnectOptions:
@@ -150,6 +164,7 @@ class MTConnectOptions:
 
 @dataclass(frozen=True, slots=True)
 class MazakSmoothOptions:
+    variant: str = "smoothx"
     scan_interval_seconds: float = 0.02
     door_move_seconds: float = 2.0
     cycle_duration_seconds: float = 1.0
@@ -183,6 +198,10 @@ class MazakSmoothEmulator(Device):
         self.state = MachineState()
         self.state.door("main").set(open=False)
 
+        self._input_signal_points = _build_input_points(options.variant)
+        self._output_signal_points = _build_output_points(options.variant)
+        self._variant = options.variant
+
         self._lock = threading.RLock()
         self._input_block = bytearray(BLOCK_SIZE)
         self._output_block = bytearray(BLOCK_SIZE)
@@ -201,6 +220,10 @@ class MazakSmoothEmulator(Device):
         self._connection_up = False
         self._door_motion_deadline: float | None = None
         self._door_target_open: bool | None = None
+        self._front_door_motion_deadline: float | None = None
+        self._front_door_target_open: bool | None = None
+        self._prev_di110 = False
+        self._prev_di111 = False
         self._cycle_complete_deadline: float | None = None
         self._work_search_deadline: float | None = None
         self._pending_program = ""
@@ -296,14 +319,14 @@ class MazakSmoothEmulator(Device):
         input_fields = _field_rows(
             prefix="DI",
             block=input_block,
-            bit_points=INPUT_SIGNAL_POINTS,
+            bit_points=self._input_signal_points,
             text_fields=INPUT_TEXT_FIELDS,
             bit_fields={},
         )
         output_fields = _field_rows(
             prefix="DO",
             block=output_block,
-            bit_points=OUTPUT_SIGNAL_POINTS,
+            bit_points=self._output_signal_points,
             text_fields=OUTPUT_TEXT_FIELDS,
             bit_fields=OUTPUT_BIT_FIELDS,
         )
@@ -398,7 +421,7 @@ class MazakSmoothEmulator(Device):
             self.emit("alarm", code=0, message="cleared")
 
     def _declare_signals(self) -> None:
-        for point in INPUT_SIGNAL_POINTS.values():
+        for point in self._input_signal_points.values():
             signal = self.io.declare(point.signal, Direction.INPUT)
             if self._io_writable:
                 signal.subscribe(
@@ -406,7 +429,7 @@ class MazakSmoothEmulator(Device):
                         number, value, sync_signal=False
                     )
                 )
-        for point in OUTPUT_SIGNAL_POINTS.values():
+        for point in self._output_signal_points.values():
             self.io.declare(point.signal, Direction.OUTPUT)
 
     def _build_mtconnect(
@@ -427,6 +450,8 @@ class MazakSmoothEmulator(Device):
         self._write_output_bit(2, True)
         self._write_output_bit(3, True)
         self._write_output_bit(108, True)
+        if self._variant == "smoothai":
+            self._write_output_bit(111, True)
         self._refresh_outputs()
 
     def _run(self, stop: threading.Event) -> None:
@@ -544,6 +569,8 @@ class MazakSmoothEmulator(Device):
         di108 = self._read_input_bit(108)
         di109 = self._read_input_bit(109)
 
+        _door_name = "side" if self._variant == "smoothai" else "main"
+
         if di107 and not self._prev_di107 and self._door_motion_deadline is None:
             self._door_target_open = True
             self._door_motion_deadline = now + self._door_seconds
@@ -568,15 +595,53 @@ class MazakSmoothEmulator(Device):
 
         if self._door_motion_deadline is not None and now >= self._door_motion_deadline:
             target_open = bool(self._door_target_open)
-            self.state.door("main").set(open=target_open)
+            self.state.door(_door_name).set(open=target_open)
             self._write_output_bit(107, target_open)
             self._write_output_bit(108, not target_open)
             self._door_motion_deadline = None
             self._door_target_open = None
-            self.emit("door", open=target_open)
+            self.emit("door", name=_door_name, open=target_open)
 
         self._prev_di107 = di107
         self._prev_di108 = di108
+
+        if self._variant == "smoothai":
+            self._handle_front_door_motion(now)
+
+    def _handle_front_door_motion(self, now: float) -> None:
+        di110 = self._read_input_bit(110)
+        di111 = self._read_input_bit(111)
+
+        if di110 and not self._prev_di110 and self._front_door_motion_deadline is None:
+            self._front_door_target_open = True
+            self._front_door_motion_deadline = now + self._door_seconds
+            self._write_output_bit(110, False)
+            self._write_output_bit(111, False)
+
+        if di111 and not self._prev_di111 and self._front_door_motion_deadline is None:
+            self._front_door_target_open = False
+            self._front_door_motion_deadline = now + self._door_seconds
+            self._write_output_bit(110, False)
+            self._write_output_bit(111, False)
+
+        if self._front_door_motion_deadline is not None:
+            if (self._front_door_target_open and not di110) or (
+                self._front_door_target_open is False and not di111
+            ):
+                self._front_door_motion_deadline = None
+                self._front_door_target_open = None
+
+        if self._front_door_motion_deadline is not None and now >= self._front_door_motion_deadline:
+            target_open = bool(self._front_door_target_open)
+            self.state.door("front").set(open=target_open)
+            self._write_output_bit(110, target_open)
+            self._write_output_bit(111, not target_open)
+            self._front_door_motion_deadline = None
+            self._front_door_target_open = None
+            self.emit("door", name="front", open=target_open)
+
+        self._prev_di110 = di110
+        self._prev_di111 = di111
 
     def _handle_cycle(self, now: float) -> None:
         robot_ready = self._read_input_bit(1)
@@ -602,11 +667,12 @@ class MazakSmoothEmulator(Device):
             self._write_output_bit(103, False)
             self._write_output_bit(104, False)
 
+        _door_name = "side" if self._variant == "smoothai" else "main"
         can_cycle = (
             robot_ready
             and stop_request
             and self._alarm_code is None
-            and not self.state.door("main").open
+            and not self.state.door(_door_name).open
             and self.state.cycle is not CycleState.RUNNING
         )
         self._write_output_bit(102, can_cycle)
@@ -657,6 +723,7 @@ class MazakSmoothEmulator(Device):
             109,
             robot_ready and not has_alarm and self.state.cycle is not CycleState.RUNNING,
         )
+        _door_name = "side" if self._variant == "smoothai" else "main"
         with self._lock:
             self.state.variables["alarm_code"] = self._alarm_code or 0
             self.state.variables["alarm_message"] = self._alarm_message
@@ -669,7 +736,7 @@ class MazakSmoothEmulator(Device):
                 "connection_up": self._connection_up,
                 "active_program": self.state.program,
                 "cycle": self.state.cycle.value,
-                "door_open": self.state.door("main").open,
+                "door_open": self.state.door(_door_name).open,
                 "feed_hold": self._feed_hold,
             }
 
@@ -686,14 +753,14 @@ class MazakSmoothEmulator(Device):
 
     def _read_input_bit(self, number: int) -> bool:
         with self._lock:
-            return _get_bit(self._input_block, INPUT_SIGNAL_POINTS[number])
+            return _get_bit(self._input_block, self._input_signal_points[number])
 
     def _read_output_bit(self, number: int) -> bool:
         with self._lock:
-            return _get_bit(self._output_block, OUTPUT_SIGNAL_POINTS[number])
+            return _get_bit(self._output_block, self._output_signal_points[number])
 
     def _write_input_bit(self, number: int, value: bool, *, sync_signal: bool) -> None:
-        point = INPUT_SIGNAL_POINTS[number]
+        point = self._input_signal_points[number]
         with self._lock:
             changed = _set_bit(self._input_block, point, value)
         if not changed:
@@ -703,7 +770,7 @@ class MazakSmoothEmulator(Device):
         self._emit_snapshot_change("input")
 
     def _write_output_bit(self, number: int, value: bool) -> None:
-        point = OUTPUT_SIGNAL_POINTS[number]
+        point = self._output_signal_points[number]
         with self._lock:
             changed = _set_bit(self._output_block, point, value)
         if not changed:
@@ -719,11 +786,11 @@ class MazakSmoothEmulator(Device):
             self._emit_snapshot_change("output")
 
     def _sync_input_signals(self, snapshot: bytes) -> None:
-        for point in INPUT_SIGNAL_POINTS.values():
+        for point in self._input_signal_points.values():
             self.io[point.signal].set(_bit_value(snapshot, point.byte, point.bit))
 
     def _sync_output_signals(self, snapshot: bytes) -> None:
-        for point in OUTPUT_SIGNAL_POINTS.values():
+        for point in self._output_signal_points.values():
             self.io[point.signal].set(_bit_value(snapshot, point.byte, point.bit))
 
     def _set_output_text(self, number: int, value: str) -> None:
@@ -839,6 +906,20 @@ def _get_field(block: bytes | bytearray, field: BitField) -> int:
 def _read_text_from_bytes(block: bytes, field: TextField) -> str:
     raw = block[field.offset : field.offset + field.length]
     return raw.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+
+
+def _build_input_points(variant: str) -> dict[int, BitPoint]:
+    points = dict(INPUT_SIGNAL_POINTS)
+    if variant == "smoothai":
+        points.update(SMOOTH_AI_INPUT_OVERRIDES)
+    return points
+
+
+def _build_output_points(variant: str) -> dict[int, BitPoint]:
+    points = dict(OUTPUT_SIGNAL_POINTS)
+    if variant == "smoothai":
+        points.update(SMOOTH_AI_OUTPUT_OVERRIDES)
+    return points
 
 
 def _enabled_interfaces(options: MazakSmoothOptions) -> set[str]:
