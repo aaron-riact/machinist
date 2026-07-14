@@ -6,6 +6,7 @@ devices:
   - name: mazak
     kind: mazak_smooth
     options:
+      variant: smoothai
       interfaces: [ethernetip]
       ethernetip:
         mode: adapter
