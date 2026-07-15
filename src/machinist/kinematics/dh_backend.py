@@ -75,23 +75,46 @@ class DHKinematics(Kinematics):
     def inverse(
         self, pose: Pose, *, seed: Joints,
         max_iter: int = 200, tolerance: float = 1e-4, damping: float = 0.05,
+        max_step: float = 0.4,
     ) -> Joints:
         target = pose_to_mat(pose)
         q = np.array(seed, dtype=float)
         if q.size != self.joint_count:
             raise ValueError(f"seed length {q.size} != joint_count {self.joint_count}")
 
+        # Keep the closest iterate seen, not merely the last one: near a
+        # singular / unreachable target the damped-least-squares step can wander
+        # *away* after getting close, and returning the final (worse) iterate is
+        # what produced multi-turn "solutions" in the emulator.
+        best_q = q.copy()
+        best_norm = math.inf
         for _ in range(max_iter):
             current = self._fk_matrix(tuple(q.tolist()))
             err = _se3_error(target, current)
-            if np.linalg.norm(err) < tolerance:
+            norm = float(np.linalg.norm(err))
+            if norm < best_norm:
+                best_norm = norm
+                best_q = q.copy()
+            if norm < tolerance:
                 break
             J = self._numerical_jacobian(q, current)
             # Damped least squares
             JJt = J @ J.T + (damping ** 2) * np.eye(6)
             dq = J.T @ np.linalg.solve(JJt, err)
+            # Cap the step so a near-singular Jacobian can't fling the joints
+            # through several revolutions in a single iteration.
+            step = float(np.linalg.norm(dq))
+            if step > max_step:
+                dq *= max_step / step
             q = q + dq
-        return tuple(Radians(v) for v in q.tolist())
+
+        # Express the solution as the joint angles nearest the seed (each is
+        # equivalent modulo 2π, so the pose is identical) so a result never
+        # winds up multiple turns from the current pose — which would make
+        # joint-space interpolation sweep wildly across the workspace.
+        seed_arr = np.array(seed, dtype=float)
+        result = seed_arr + _wrap_to_pi(best_q - seed_arr)
+        return tuple(Radians(v) for v in result.tolist())
 
     def velocity_step(
         self, joints: Joints, twist: NDArray[np.float64],
@@ -135,6 +158,11 @@ class DHKinematics(Kinematics):
 
 
 # --- math helpers -----------------------------------------------------
+
+
+def _wrap_to_pi(x: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Wrap each angle (radians) to the equivalent value in ``(-π, π]``."""
+    return (x + np.pi) % (2.0 * np.pi) - np.pi
 
 
 def _dh_matrix(a: float, d: float, alpha: float, theta: float) -> NDArray[np.float64]:

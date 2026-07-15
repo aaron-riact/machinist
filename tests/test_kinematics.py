@@ -50,6 +50,37 @@ def test_dh_backend_ik_round_trip() -> None:
     assert np.allclose(np.array(pose[:3]), np.array(recovered_pose[:3]), atol=1e-3)
 
 
+def test_dh_backend_ik_never_winds_up_multiple_turns() -> None:
+    """Regression: IK must return joints near the seed, never wound up.
+
+    An unreachable/near-singular target used to make the damped-least-squares
+    loop spiral, returning a "solution" thousands of degrees from the current
+    pose (e.g. joint 3 at -3608°). Joint-space interpolation to such a target
+    swept the TCP wildly across the workspace. The solver now returns the
+    equivalent angles nearest the seed, so every joint stays within ±180°.
+    """
+    kin = build_kinematics(KinematicsOptions(backend="dh", dh=_ur5_dh(), joint_count=6))
+    seed = (0.0,) * 6
+    # A pose well beyond the UR5's ~0.85 m reach — deliberately unreachable.
+    unreachable = (2.0, 2.0, 2.0, 0.0, 0.0, 0.0)
+    sol = kin.inverse(unreachable, seed=seed)
+    assert all(abs(j - s) <= math.pi + 1e-9 for j, s in zip(sol, seed)), sol
+
+
+def test_dh_backend_ik_returns_shortest_equivalent_from_seed() -> None:
+    """A reachable target seeded from a wound-up pose comes back near the seed."""
+    kin = build_kinematics(KinematicsOptions(backend="dh", dh=_ur5_dh(), joint_count=6))
+    target_joints = (0.2, -0.4, 0.6, -0.3, 0.5, -0.2)
+    pose = kin.forward(target_joints)
+    # Seed one joint offset by a full turn: the solver must not return a
+    # multi-turn answer, and FK must still match the target pose.
+    seed = (0.2 + 2 * math.pi, -0.4, 0.6, -0.3, 0.5, -0.2)
+    recovered = kin.inverse(pose, seed=seed)
+    assert all(abs(j - s) <= math.pi + 1e-9 for j, s in zip(recovered, seed)), recovered
+    recovered_pose = kin.forward(recovered)
+    assert np.allclose(np.array(pose[:3]), np.array(recovered_pose[:3]), atol=1e-3)
+
+
 def test_unknown_backend_raises() -> None:
     with pytest.raises(KeyError):
         get_backend("nonsense", RobotModel(joint_count=6))
