@@ -714,6 +714,7 @@ NOISE
 FILTERS
   --dir TO|OT        one direction only
   --bytes 0,12,13    only these byte offsets
+  --signal DO101,DI101  signal names to watch (maps to --bytes automatically)
   --machine-ip IP    force which host is the machine (overrides detection)
 
 DIFF (--diff FILE)
@@ -732,6 +733,22 @@ def _parse_bytes_arg(raw: str | None) -> set[int] | None:
     return {int(x) for x in raw.split(",")}
 
 
+def _parse_signal_arg(raw: str | None) -> set[int] | None:
+    if raw is None:
+        return None
+    to_rev = {name: bit for bit, (name, _) in TO_SIGNALS.items()}
+    ot_rev = {name: bit for bit, (name, _) in OT_SIGNALS.items()}
+    bytes_needed: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip().upper()
+        bit = to_rev.get(token) or ot_rev.get(token)
+        if bit is None:
+            print(f"warning: unknown signal {token!r}, ignoring", file=sys.stderr)
+            continue
+        bytes_needed.add(bit // 8)
+    return bytes_needed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -748,6 +765,9 @@ def main() -> None:
                     help="only show one direction")
     ap.add_argument("--bytes", default=None,
                     help="comma-separated list of byte offsets to show")
+    ap.add_argument("--signal", default=None,
+                    help="comma-separated signal names (e.g. DO101,DI101,DO102); "
+                    "maps to --bytes automatically")
     ap.add_argument("--machine-ip", default=None,
                     help="force which host is the machine")
     ap.add_argument("--no-heartbeat", action="store_true",
@@ -766,6 +786,9 @@ def main() -> None:
         )
 
     only_bytes = _parse_bytes_arg(args.bytes)
+    signal_bytes = _parse_signal_arg(args.signal)
+    if signal_bytes is not None:
+        only_bytes = (only_bytes or set()) | signal_bytes
 
     if args.diff:
         diff(args.file, args.diff, machine_ip=args.machine_ip)
