@@ -226,6 +226,7 @@ class MazakSmoothEmulator(Device):
         self._prev_di111 = False
         self._cycle_complete_deadline: float | None = None
         self._work_search_deadline: float | None = None
+        self._cycle_start_blocked_until: float | None = None
         self._pending_program = ""
         self._prev_di101 = False
         self._prev_di102 = False
@@ -449,6 +450,7 @@ class MazakSmoothEmulator(Device):
         self._write_input_bit(2, True, sync_signal=True)
         self._write_output_bit(2, True)
         self._write_output_bit(3, True)
+        self._write_output_bit(101, True)
         self._write_output_bit(108, True)
         if self._variant == "smoothai":
             self._write_output_bit(111, True)
@@ -559,8 +561,15 @@ class MazakSmoothEmulator(Device):
             self._write_output_bit(101, True)
             self.emit("program", program=self._pending_program)
             self._work_search_deadline = None
-        if not di101 and self._read_output_bit(101):
-            self._write_output_bit(101, False)
+            self._cycle_start_blocked_until = float("inf")
+        if not di101 and self._cycle_start_blocked_until == float("inf"):
+            self._cycle_start_blocked_until = now + 1.0
+        if (
+            self._cycle_start_blocked_until is not None
+            and self._cycle_start_blocked_until != float("inf")
+            and now >= self._cycle_start_blocked_until
+        ):
+            self._cycle_start_blocked_until = None
         self._prev_di101 = di101
 
     def _handle_door_motion(self, now: float) -> None:
@@ -668,12 +677,17 @@ class MazakSmoothEmulator(Device):
             self._write_output_bit(104, False)
 
         _door_name = "side" if self._variant == "smoothai" else "main"
+        _cycle_blocked = (
+            self._cycle_start_blocked_until is not None
+            and (self._cycle_start_blocked_until == float("inf") or now < self._cycle_start_blocked_until)
+        )
         can_cycle = (
             robot_ready
             and stop_request
             and self._alarm_code is None
             and not self.state.door(_door_name).open
             and self.state.cycle is not CycleState.RUNNING
+            and not _cycle_blocked
         )
         self._write_output_bit(102, can_cycle)
 

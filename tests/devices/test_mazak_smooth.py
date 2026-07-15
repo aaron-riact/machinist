@@ -97,20 +97,28 @@ def test_manual_bit_mapping_matches_manual_offsets() -> None:
 
 def test_work_number_search_updates_active_program_and_output_field() -> None:
     device = _make()
+    device.set_input_bit(1, True)
     device.set_target_work_number("ABC123")
     device.set_input_bit(101, True)
 
     device._scan_cycle(now=0.0)
+
+    assert device.io["do101"].value is False
+    assert device.io["do102"].value is True
+
     device._scan_cycle(now=0.02)
 
     assert device.active_program == "ABC123"
     assert device.io["do101"].value is True
+    assert device.io["do102"].value is False
     assert device.output_block[44:50] == b"ABC123"
 
     device.set_input_bit(101, False)
     device._scan_cycle(now=0.03)
+    device._scan_cycle(now=1.04)
 
-    assert device.io["do101"].value is False
+    assert device.io["do101"].value is True
+    assert device.io["do102"].value is True
 
 
 def test_write_input_block_emits_snapshot_event_once_per_change() -> None:
