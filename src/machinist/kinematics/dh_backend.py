@@ -75,17 +75,56 @@ class DHKinematics(Kinematics):
     def inverse(
         self, pose: Pose, *, seed: Joints,
         max_iter: int = 200, tolerance: float = 1e-4, damping: float = 0.05,
-        max_step: float = 0.4,
+        max_step: float = 0.4, restarts: int = 24,
     ) -> Joints:
         target = pose_to_mat(pose)
-        q = np.array(seed, dtype=float)
-        if q.size != self.joint_count:
-            raise ValueError(f"seed length {q.size} != joint_count {self.joint_count}")
+        seed_arr = np.array(seed, dtype=float)
+        if seed_arr.size != self.joint_count:
+            raise ValueError(f"seed length {seed_arr.size} != joint_count {self.joint_count}")
 
-        # Keep the closest iterate seen, not merely the last one: near a
-        # singular / unreachable target the damped-least-squares step can wander
-        # *away* after getting close, and returning the final (worse) iterate is
-        # what produced multi-turn "solutions" in the emulator.
+        # First solve from the caller's seed — for a reachable target this keeps
+        # the arm's configuration continuous (minimal joint motion).
+        q, norm = self._dls_solve(target, seed_arr, max_iter, tolerance, damping, max_step)
+
+        converged = [q] if norm < tolerance else []
+        fallback_q, fallback_norm = q, norm
+        if not converged:
+            # The seed landed in a local minimum. Damped least-squares only finds
+            # the basin it starts in, so retry from spread-out seeds to escape it.
+            # A single robot pose has up to 8 IK branches (shoulder/elbow/wrist
+            # flips); gather a few reachable ones, then choose among them below.
+            rng = np.random.default_rng(0)  # fixed seed → reproducible solves
+            for _ in range(restarts):
+                s = rng.uniform(-math.pi, math.pi, self.joint_count)
+                qi, ni = self._dls_solve(target, s, max_iter, tolerance, damping, max_step)
+                if ni < tolerance:
+                    converged.append(qi)
+                    if len(converged) >= 4:
+                        break
+                elif ni < fallback_norm:
+                    fallback_norm, fallback_q = ni, qi
+
+        # Express each candidate as the joint angles nearest the seed (equivalent
+        # modulo 2π, so the pose is identical) — this keeps a solution from
+        # winding up multiple turns, which would make joint-space interpolation
+        # sweep wildly. Among converged branches, prefer the one closest to the
+        # current joints so the arm reconfigures as little as possible.
+        candidates = converged or [fallback_q]
+        wrapped = [seed_arr + _wrap_to_pi(c - seed_arr) for c in candidates]
+        result = min(wrapped, key=lambda c: float(np.linalg.norm(c - seed_arr)))
+        return tuple(Radians(v) for v in result.tolist())
+
+    def _dls_solve(
+        self, target: NDArray[np.float64], seed: NDArray[np.float64],
+        max_iter: int, tolerance: float, damping: float, max_step: float,
+    ) -> tuple[NDArray[np.float64], float]:
+        """One damped-least-squares descent from *seed*; returns (best_q, best_err_norm).
+
+        Keeps the closest iterate seen, not merely the last one: near a singular
+        target the step can wander *away* after getting close, and returning the
+        final (worse) iterate is what produced multi-turn "solutions".
+        """
+        q = seed.copy()
         best_q = q.copy()
         best_norm = math.inf
         for _ in range(max_iter):
@@ -98,7 +137,6 @@ class DHKinematics(Kinematics):
             if norm < tolerance:
                 break
             J = self._numerical_jacobian(q, current)
-            # Damped least squares
             JJt = J @ J.T + (damping ** 2) * np.eye(6)
             dq = J.T @ np.linalg.solve(JJt, err)
             # Cap the step so a near-singular Jacobian can't fling the joints
@@ -107,14 +145,7 @@ class DHKinematics(Kinematics):
             if step > max_step:
                 dq *= max_step / step
             q = q + dq
-
-        # Express the solution as the joint angles nearest the seed (each is
-        # equivalent modulo 2π, so the pose is identical) so a result never
-        # winds up multiple turns from the current pose — which would make
-        # joint-space interpolation sweep wildly across the workspace.
-        seed_arr = np.array(seed, dtype=float)
-        result = seed_arr + _wrap_to_pi(best_q - seed_arr)
-        return tuple(Radians(v) for v in result.tolist())
+        return best_q, best_norm
 
     def velocity_step(
         self, joints: Joints, twist: NDArray[np.float64],

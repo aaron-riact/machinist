@@ -81,6 +81,35 @@ def test_dh_backend_ik_returns_shortest_equivalent_from_seed() -> None:
     assert np.allclose(np.array(pose[:3]), np.array(recovered_pose[:3]), atol=1e-3)
 
 
+def _cr20a_dh() -> DHParams:
+    return DHParams(
+        a=(0.0, 0.0, -0.8252, -0.746, 0.0, 0.0),
+        d=(0.23, 0.0, 0.0468, 0.1288, 0.1288, 0.1365),
+        alpha=(0.0, math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2),
+        theta_offset=(0.0, -math.pi / 2, 0.0, -math.pi / 2, 0.0, 0.0),
+    )
+
+
+def test_dh_backend_ik_escapes_local_minimum() -> None:
+    """A reachable target that single-seed DLS gets stuck on is still solved.
+
+    From the home seed the damped-least-squares descent lands in a local
+    minimum ~60 mm short of this (reachable) CR20A pose. inverse() must retry
+    from alternate seeds and converge. Taken from a real MovL that failed.
+    """
+    kin = build_kinematics(KinematicsOptions(backend="dh", dh=_cr20a_dh(), joint_count=6))
+    target = (
+        -1.1308256, 1.0210019, 0.3669737,
+        math.radians(159.0254), math.radians(-0.3968), math.radians(-89.3969),
+    )
+    sol = kin.inverse(target, seed=(0.0,) * 6)
+    fk = kin.forward(sol)
+    pos_err = float(np.linalg.norm(np.array(fk[:3]) - np.array(target[:3])))
+    assert pos_err < 1e-3, f"IK left {pos_err * 1000:.1f} mm of position error"
+    # Deterministic despite the random restarts (fixed RNG seed).
+    assert kin.inverse(target, seed=(0.0,) * 6) == sol
+
+
 def test_unknown_backend_raises() -> None:
     with pytest.raises(KeyError):
         get_backend("nonsense", RobotModel(joint_count=6))
