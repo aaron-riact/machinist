@@ -10,7 +10,10 @@ parsing/formatting their wire protocol.
 
 from __future__ import annotations
 
+import json
 import math
+import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -69,6 +72,8 @@ class _Move:
     started_at: float
     started_joints: Joints
     kind: str  # "movej" or "movel"
+    seq: int = 0
+    requested_pose: Pose | None = None  # cartesian goal for movel (before IK)
 
 
 @dataclass(slots=True)
@@ -122,6 +127,161 @@ class ArmStateView:
         return self.mode is ArmMode.FAULTED
 
 
+def _joints_deg(joints: Joints) -> list[float]:
+    return [round(math.degrees(j), 4) for j in joints]
+
+
+def _pose_mm_deg(pose: Pose) -> list[float]:
+    """Pose in emulator SI units → mm + degrees (the Dobot/teach-pendant convention)."""
+    return [
+        round(pose[0] * 1e3, 4), round(pose[1] * 1e3, 4), round(pose[2] * 1e3, 4),
+        round(math.degrees(pose[3]), 4), round(math.degrees(pose[4]), 4), round(math.degrees(pose[5]), 4),
+    ]
+
+
+class MoveLogger:
+    """Records movement commands and their per-tick effects as JSONL for later analysis.
+
+    Every record is one JSON object per line with a monotonic clock (``mono``),
+    wall clock (``wall``), the arm ``name``, an ``event`` tag, and a per-move
+    ``seq`` id so ticks can be grouped back to the command that issued them.
+    Joints are logged in **degrees** and poses in **mm + degrees** so the data
+    lines up with what a teach pendant / the Dobot wire protocol reports.
+
+    Events:
+
+    - ``move_start`` — a ``movej``/``movel`` began: the requested target, the
+      joint solution chosen (for ``movel`` this is the IK result — the place
+      where "questionable kinematic choices" get made), and the forward-kinematics
+      pose of that solution so IK error is visible.
+    - ``progress`` — one per physics tick (~50 Hz): interpolation fraction ``t``,
+      elapsed seconds, and the live joints/pose.
+    - ``move_end`` — the move reached ``t=1``.
+    - ``jog`` — an instantaneous cartesian jog (``relmovltool``): the twist applied
+      and the before/after state.
+    """
+
+    def __init__(self, path: str | Path, *, name: str = "arm", to_stderr: bool = True) -> None:
+        self.name = name
+        self._to_stderr = to_stderr
+        self._lock = threading.Lock()
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._f = self._path.open("a", buffering=1)
+
+    def _base(self, event: str, seq: int, kind: str) -> dict[str, object]:
+        return {
+            "mono": round(time.monotonic(), 6),
+            "wall": round(time.time(), 6),
+            "arm": self.name,
+            "event": event,
+            "seq": seq,
+            "kind": kind,
+        }
+
+    def _write(self, rec: dict[str, object]) -> None:
+        line = json.dumps(rec)
+        with self._lock:
+            self._f.write(line + "\n")
+
+    def move_start(
+        self,
+        *,
+        seq: int,
+        kind: str,
+        duration: float,
+        start_joints: Joints,
+        start_pose: Pose,
+        target_joints: Joints,
+        target_fk_pose: Pose,
+        requested_pose: Pose | None,
+    ) -> None:
+        rec = self._base("move_start", seq, kind)
+        rec["duration"] = round(duration, 6)
+        rec["start_joints"] = _joints_deg(start_joints)
+        rec["start_pose"] = _pose_mm_deg(start_pose)
+        rec["target_joints"] = _joints_deg(target_joints)
+        rec["target_fk_pose"] = _pose_mm_deg(target_fk_pose)
+        if requested_pose is not None:
+            req = _pose_mm_deg(requested_pose)
+            fk = rec["target_fk_pose"]
+            rec["requested_pose"] = req
+            rec["ik_pos_err_mm"] = round(math.dist(req[:3], fk[:3]), 4)
+        self._write(rec)
+        if self._to_stderr:
+            extra = f" req_pose={rec['requested_pose']} ik_err={rec['ik_pos_err_mm']}mm" if requested_pose is not None else ""
+            print(
+                f"[move/{self.name}] start #{seq} {kind} dur={duration:.3f}s "
+                f"target_j={rec['target_joints']}{extra}",
+                file=sys.stderr, flush=True,
+            )
+
+    def progress(self, *, seq: int, kind: str, t: float, elapsed: float, joints: Joints, pose: Pose) -> None:
+        rec = self._base("progress", seq, kind)
+        rec["t"] = round(t, 6)
+        rec["elapsed"] = round(elapsed, 6)
+        rec["joints"] = _joints_deg(joints)
+        rec["pose"] = _pose_mm_deg(pose)
+        self._write(rec)
+
+    def move_end(self, *, seq: int, kind: str, joints: Joints, pose: Pose) -> None:
+        rec = self._base("move_end", seq, kind)
+        rec["joints"] = _joints_deg(joints)
+        rec["pose"] = _pose_mm_deg(pose)
+        self._write(rec)
+        if self._to_stderr:
+            print(
+                f"[move/{self.name}] end   #{seq} {kind} joints={rec['joints']} pose={rec['pose']}",
+                file=sys.stderr, flush=True,
+            )
+
+    def jog(
+        self,
+        *,
+        seq: int,
+        start_joints: Joints,
+        start_pose: Pose,
+        joints: Joints,
+        pose: Pose,
+        twist: NDArray[np.float64],
+    ) -> None:
+        rec = self._base("jog", seq, "jog")
+        rec["start_joints"] = _joints_deg(start_joints)
+        rec["start_pose"] = _pose_mm_deg(start_pose)
+        rec["joints"] = _joints_deg(joints)
+        rec["pose"] = _pose_mm_deg(pose)
+        rec["twist"] = [round(float(x), 6) for x in twist]
+        self._write(rec)
+        if self._to_stderr:
+            print(
+                f"[move/{self.name}] jog   #{seq} twist={rec['twist']} -> joints={rec['joints']}",
+                file=sys.stderr, flush=True,
+            )
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._f.closed:
+                self._f.close()
+
+
+def move_logger_from_env(name: str) -> MoveLogger | None:
+    """Build a :class:`MoveLogger` if ``MACHINIST_MOVE_LOG`` is set, else ``None``.
+
+    The env var is a path. If it points at (or is) a directory, the log is
+    written to ``<dir>/<name>.moves.jsonl``; otherwise it is used verbatim as
+    the file path. Set ``MACHINIST_MOVE_LOG_QUIET=1`` to suppress the concise
+    per-move stderr summaries (the JSONL file is still written).
+    """
+    raw = os.environ.get("MACHINIST_MOVE_LOG")
+    if not raw:
+        return None
+    path = Path(raw)
+    if path.is_dir() or raw.endswith(os.sep):
+        path = path / f"{name}.moves.jsonl"
+    to_stderr = not os.environ.get("MACHINIST_MOVE_LOG_QUIET")
+    return MoveLogger(path, name=name, to_stderr=to_stderr)
+
+
 class RobotArm:
     """Common robot-arm physics. Wire protocols compose this."""
 
@@ -141,6 +301,8 @@ class RobotArm:
         )
         self._tick_thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self.move_logger: MoveLogger | None = None
+        self._move_seq = 0
 
     # ----- commands ---------------------------------------------------
 
@@ -172,7 +334,7 @@ class RobotArm:
 
     def movel(self, target_pose: Pose, *, duration: float = 1.0) -> None:
         target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
-        self._begin_move(target_joints, duration=duration, kind="movel")
+        self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose)
 
     def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
         """Single-step velocity-based cartesian jog via SVD Jacobian pseudoinverse.
@@ -180,12 +342,21 @@ class RobotArm:
         Updates arm state in-place — no interpolation delay.
         The *twist* is a 6-vector (m/s + rad/s) in the **flange** world frame.
         """
+        entry: tuple[int, Joints, Pose, Joints, Pose] | None = None
         with self.state._lock:
+            start_joints = self.state.joints
+            start_pose = self.state.pose
             new_joints = self._kinematics.velocity_step(self.state.joints, twist * dt, damping=damping)
             self.state.joints = new_joints
             self.state.pose = self._kinematics.forward(new_joints)
             self.state._move = None
             self.state.mode = ArmMode.IDLE
+            if self.move_logger is not None:
+                self._move_seq += 1
+                entry = (self._move_seq, start_joints, start_pose, new_joints, self.state.pose)
+        if entry is not None and self.move_logger is not None:
+            seq, sj, sp, nj, np_ = entry
+            self.move_logger.jog(seq=seq, start_joints=sj, start_pose=sp, joints=nj, pose=np_, twist=twist * dt)
 
     # ----- background tick -------------------------------------------
 
@@ -197,21 +368,38 @@ class RobotArm:
         self._stop.set()
         if self._tick_thread is not None:
             self._tick_thread.join(timeout=1.0)
+        if self.move_logger is not None:
+            self.move_logger.close()
 
     # -----------------------------------------------------------------
 
-    def _begin_move(self, target: Joints, *, duration: float, kind: str) -> None:
+    def _begin_move(self, target: Joints, *, duration: float, kind: str, requested_pose: Pose | None = None) -> None:
+        start: tuple[int, float, Joints, Pose] | None = None
         with self.state._lock:
             if self.state.mode is ArmMode.ESTOPPED or not self.state.servo_on:
                 raise RuntimeError(f"cannot move: mode={self.state.mode} servo={self.state.servo_on}")
+            self._move_seq += 1
+            scaled = max(duration, 1e-3) / max(self.state.speed_fraction, 1e-3)
             self.state._move = _Move(
                 target=target,
-                duration=max(duration, 1e-3) / max(self.state.speed_fraction, 1e-3),
+                duration=scaled,
                 started_at=time.monotonic(),
                 started_joints=self.state.joints,
                 kind=kind,
+                seq=self._move_seq,
+                requested_pose=requested_pose,
             )
             self.state.mode = ArmMode.MOVING
+            if self.move_logger is not None:
+                start = (self._move_seq, scaled, self.state.joints, self.state.pose)
+        if start is not None and self.move_logger is not None:
+            seq, scaled, start_joints, start_pose = start
+            self.move_logger.move_start(
+                seq=seq, kind=kind, duration=scaled,
+                start_joints=start_joints, start_pose=start_pose,
+                target_joints=target, target_fk_pose=self._kinematics.forward(target),
+                requested_pose=requested_pose,
+            )
 
     def _tick_loop(self) -> None:
         while not self._stop.wait(0.02):
@@ -219,6 +407,7 @@ class RobotArm:
 
     def _tick(self) -> None:
         s = self.state
+        entry: tuple[int, str, float, float, Joints, Pose, bool] | None = None
         with s._lock:
             move = s._move
             if move is None:
@@ -229,9 +418,17 @@ class RobotArm:
                 Radians(_lerp(a, b, t)) for a, b in zip(move.started_joints, move.target, strict=False)
             )
             s.pose = self._kinematics.forward(s.joints)
-            if t >= 1.0:
+            done = t >= 1.0
+            if self.move_logger is not None:
+                entry = (move.seq, move.kind, t, elapsed, s.joints, s.pose, done)
+            if done:
                 s._move = None
                 s.mode = ArmMode.IDLE
+        if entry is not None and self.move_logger is not None:
+            seq, kind, t, elapsed, joints, pose, done = entry
+            self.move_logger.progress(seq=seq, kind=kind, t=t, elapsed=elapsed, joints=joints, pose=pose)
+            if done:
+                self.move_logger.move_end(seq=seq, kind=kind, joints=joints, pose=pose)
 
 
 def _lerp(a: float, b: float, t: float) -> float:
@@ -242,12 +439,19 @@ def joints_almost_equal(a: Joints, b: Joints, *, tol: float = 1e-6) -> bool:
     return len(a) == len(b) and all(math.isclose(x, y, abs_tol=tol) for x, y in zip(a, b, strict=True))
 
 
-def arm_from_options(options: ArmOptions) -> RobotArm:
-    """Build a :class:`RobotArm` from typed arm options."""
+def arm_from_options(options: ArmOptions, *, name: str = "arm") -> RobotArm:
+    """Build a :class:`RobotArm` from typed arm options.
+
+    If ``MACHINIST_MOVE_LOG`` is set in the environment, the arm is attached to
+    a :class:`MoveLogger` (see :func:`move_logger_from_env`) that records every
+    movement command and its per-tick effects for later analysis.
+    """
     from ...kinematics.api import build_kinematics
 
     kin_opts = _kinematics_options(options)
-    return RobotArm(joint_count=kin_opts.joint_count, kinematics=build_kinematics(kin_opts))
+    arm = RobotArm(joint_count=kin_opts.joint_count, kinematics=build_kinematics(kin_opts))
+    arm.move_logger = move_logger_from_env(name)
+    return arm
 
 
 def _kinematics_options(options: ArmOptions) -> KinematicsOptions:

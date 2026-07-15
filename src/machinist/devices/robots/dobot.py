@@ -348,7 +348,7 @@ class DobotDashboard(LineServerDevice):
         model_info: _RobotModelInfo | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = arm_from_options(options)
+        self.arm = arm_from_options(options, name=name)
         self.arm.start_ticker()
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code

@@ -55,7 +55,7 @@ class URDashboardServer(LineServerDevice):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = arm_from_options(options)
+        self.arm = arm_from_options(options, name=name)
         self.arm.start_ticker()
         self._loaded = _LoadedProgram()
 
