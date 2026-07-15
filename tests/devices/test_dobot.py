@@ -12,11 +12,14 @@ from machinist.devices.robots.arm import ArmOptions
 from machinist.devices.robots.arm import ArmMode, ArmStateView
 from machinist.devices.robots.dobot import (
     DOBOT_FEEDBACK_FAST_PORT,
+    DOBOT_ROBOT_MODELS,
     DobotDashboard,
     DobotFeedbackPacket,
     _ARM_MODE_TO_ROBOT_MODE,
+    _CR20A_DH,
     _update_feedback_packet,
 )
+from machinist.kinematics.api import KinematicsOptions
 
 from ..conftest import free_port, wait_running
 
@@ -26,6 +29,23 @@ def dobot() -> DobotDashboard:
     bus = EventBus()
     d = DobotDashboard("dobot1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
                        feedback_enabled=False)
+    d.start()
+    try:
+        wait_running(d)
+        yield d
+    finally:
+        d.stop()
+
+
+@pytest.fixture
+def dobot_cr20a() -> DobotDashboard:
+    """A CR20a with real DH kinematics so ``MovJ`` pose targets exercise IK."""
+    bus = EventBus()
+    opts = ArmOptions(kinematics=KinematicsOptions(backend="dh", dh=_CR20A_DH))
+    d = DobotDashboard(
+        "cr20a", Endpoint("127.0.0.1", free_port()), bus, opts,
+        feedback_enabled=False, model_info=DOBOT_ROBOT_MODELS["cr20a"],
+    )
     d.start()
     try:
         wait_running(d)
@@ -628,6 +648,44 @@ def test_dobot_movl_bare_floats_with_kwargs(dobot: DobotDashboard) -> None:
 def test_dobot_movl_pose_braces_rejects_wrong_count(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "MovL(pose={1,2,3,4,5})")
     assert reply.startswith("-30001,")
+
+
+def _joint_angles(dobot: DobotDashboard) -> list[float]:
+    """Read the current joint angles (degrees) via ``GetAngle()``."""
+    reply = _send(dobot, "GetAngle()")
+    inner = reply[reply.index("{") + 1:reply.index("}")]
+    return [float(x) for x in inner.split(",")]
+
+
+def test_movj_bare_floats_is_cartesian_not_joint_degrees(dobot_cr20a: DobotDashboard) -> None:
+    """Regression: ``MovJ(x,y,z,rx,ry,rz)`` is a Cartesian target, not joint angles.
+
+    The target is a *point*; per the interface guide MovJ moves there via joint
+    motion. Feeding workspace coordinates (hundreds/thousands of mm) straight in
+    as joint degrees produced impossible joint values (>2000°). The command must
+    solve IK, so every joint stays within a sane range.
+    """
+    _send(dobot_cr20a, "EnableRobot()MovJ(-1300,-500,-100,85,-44,12)", expect=2)
+    time.sleep(1.3)
+    angles = _joint_angles(dobot_cr20a)
+    assert all(abs(a) < 360.0 for a in angles), angles
+
+
+def test_movj_pose_form_is_cartesian(dobot_cr20a: DobotDashboard) -> None:
+    """``MovJ(pose={…})`` solves IK for the pose rather than using it as joints."""
+    _send(dobot_cr20a, "EnableRobot()MovJ(pose={-1300,-500,-100,85,-44,12})", expect=2)
+    time.sleep(1.3)
+    angles = _joint_angles(dobot_cr20a)
+    assert all(abs(a) < 360.0 for a in angles), angles
+
+
+def test_movj_joint_form_sets_joint_angles(dobot_cr20a: DobotDashboard) -> None:
+    """``MovJ(joint={…})`` still commands joint coordinates directly (degrees)."""
+    _send(dobot_cr20a, "EnableRobot()MovJ(joint={10,20,30,40,50,60})", expect=2)
+    time.sleep(1.3)
+    angles = _joint_angles(dobot_cr20a)
+    expected = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    assert all(abs(a - e) < 0.5 for a, e in zip(expected, angles)), angles
 
 
 def test_dobot_movl_rejects_bad_args(dobot: DobotDashboard) -> None:

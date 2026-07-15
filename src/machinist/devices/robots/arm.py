@@ -336,6 +336,16 @@ class RobotArm:
         target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
         self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose)
 
+    def movej_pose(self, target_pose: Pose, *, duration: float = 1.0) -> None:
+        """Joint-interpolated move to a Cartesian *target_pose* (``MovJ`` with a pose target).
+
+        Same joint-space interpolation as :meth:`movej`, but the endpoint is
+        found by inverse kinematics from the Cartesian goal rather than given
+        directly as joint angles.
+        """
+        target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
+        self._begin_move(target_joints, duration=duration, kind="movej", requested_pose=target_pose)
+
     def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
         """Single-step velocity-based cartesian jog via SVD Jacobian pseudoinverse.
 

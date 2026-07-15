@@ -596,15 +596,25 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movj":
                 try:
-                    joints = _parse_motion_args(args, count=len(s.joints))
+                    vals, form = _parse_motion_args(args, count=len(s.joints))
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
-                self.arm.movej(tuple(Radians(math.radians(j)) for j in joints))
+                if form == "joint":
+                    # MovJ(joint={j1..j6}): target is joint coordinates (degrees).
+                    self.arm.movej(tuple(Radians(math.radians(j)) for j in vals))
+                else:
+                    # MovJ(pose={…}) or bare floats: target is a Cartesian pose
+                    # (mm + deg); joint-interpolated motion to it via IK. This is
+                    # the default point type per the TCP/IP interface guide.
+                    self.arm.movej_pose((
+                        Meters(vals[0] * 1e-3), Meters(vals[1] * 1e-3), Meters(vals[2] * 1e-3),
+                        Radians(math.radians(vals[3])), Radians(math.radians(vals[4])), Radians(math.radians(vals[5])),
+                    ))
                 self._current_command_id[0] += 1
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case "movl":
                 try:
-                    pose_mm = _parse_motion_args(args, count=6)
+                    pose_mm, _form = _parse_motion_args(args, count=6)
                 except ValueError:
                     return f"-30001,{{}},{verb}({args})"
                 self.arm.movel((
@@ -697,15 +707,22 @@ def _parse_required_floats(text: str, *, count: int) -> list[float]:
     return floats
 
 
-def _parse_motion_args(text: str, *, count: int) -> list[float]:
-    """Parse MovL/J motion arguments.
+def _parse_motion_args(text: str, *, count: int) -> tuple[list[float], str]:
+    """Parse MovL/J motion arguments into ``(values, form)``.
 
     Supports ``pose={x,y,z,rx,ry,rz}`` / ``joint={j1..j6}`` keyword format
     and bare positional floats.  Trailing ``keyword=value`` tokens are
     silently ignored in the bare-float form.
+
+    ``form`` is ``"joint"`` for ``joint={…}``, ``"pose"`` for ``pose={…}``,
+    otherwise ``"bare"``.  Callers need this because ``MovJ`` accepts *either*
+    a Cartesian pose (``pose={…}`` / bare floats — the default point type in
+    the interface guide) or joint coordinates (``joint={…}``); the two must be
+    interpreted differently (IK vs. direct joint targets).
     """
     stripped = text.strip()
     if stripped.startswith("pose=") or stripped.startswith("joint="):
+        form = "joint" if stripped.startswith("joint=") else "pose"
         eq = stripped.index("=")
         rest = stripped[eq + 1:].lstrip()
         if not rest.startswith("{") or "}" not in rest:
@@ -715,8 +732,8 @@ def _parse_motion_args(text: str, *, count: int) -> list[float]:
         vals = result[0]
         if len(vals) != count:
             raise ValueError(f"expected {count} values, got {len(vals)} from {text!r}")
-        return [float(v) for v in vals]
-    return _parse_required_floats(text, count=count)
+        return [float(v) for v in vals], form
+    return _parse_required_floats(text, count=count), "bare"
 
 
 def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:
