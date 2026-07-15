@@ -168,7 +168,7 @@ class MazakSmoothOptions:
     scan_interval_seconds: float = 0.02
     door_move_seconds: float = 2.0
     cycle_duration_seconds: float = 1.0
-    work_search_seconds: float = 0.1
+    work_search_seconds: float = 0.5
     heartbeat_interval_seconds: float = 2.0
     heartbeat_timeout_seconds: float = 6.0 # real mazak is ~10, but we are impatient
     interfaces: Any = None
@@ -563,7 +563,7 @@ class MazakSmoothEmulator(Device):
             self._work_search_deadline = None
             self._cycle_start_blocked_until = float("inf")
         if not di101 and self._cycle_start_blocked_until == float("inf"):
-            self._cycle_start_blocked_until = now + 1.0
+            self._cycle_start_blocked_until = now + 0.9
         if (
             self._cycle_start_blocked_until is not None
             and self._cycle_start_blocked_until != float("inf")
