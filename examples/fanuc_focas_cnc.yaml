@@ -1,0 +1,16 @@
+# FANUC CNC emulator serving FOCAS1/2 on TCP port 8193.
+#
+# Compatible with pyfanuc, FanucPy, and any FOCAS library.
+# Run with:
+#   uv run machinist run examples/fanuc_focas_cnc.yaml
+
+devices:
+  - name: cnc_0i_tf
+    kind: fanuc_focas_cnc
+    options:
+      model: "0i-TF"
+      series: "3000"
+      version: "1.00"
+      max_axes: 8
+      axis_names: [X, Y, Z, A, B, C, U, V]
+      door_count: 1

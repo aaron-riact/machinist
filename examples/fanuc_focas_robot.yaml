@@ -1,0 +1,18 @@
+# FANUC R-30iB robot emulator with dual-protocol support.
+#
+# Serves FOCAS1/2 data reads on TCP 8193 (joint positions, DO/DI, alarms)
+# and the Karel text motion protocol on TCP 18735 (movej/movel via fanucpy).
+#
+# Run with:
+#   uv run machinist run examples/fanuc_focas_robot.yaml
+
+devices:
+  - name: robot
+    kind: fanuc_focas_robot
+    options:
+      model: "R-30iB"
+      joint_count: 6
+      digital_outputs: 16
+      digital_inputs: 16
+      focas_port: 8193
+      karel_port: 18735
