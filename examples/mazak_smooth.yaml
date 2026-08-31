@@ -3,7 +3,7 @@
 # Run with:
 #   uv run machinist run examples/mazak_smoothx.yaml --no-tui
 #
-# `mazak_smoothx` supports both EtherNet/IP roles.
+# `mazak_smooth` supports both EtherNet/IP roles.
 # The default is adapter mode, which listens for inbound TCP/44818 + UDP/2222
 # traffic from a scanner/client. Scanner mode stays available when you want the
 # emulator to initiate the Class 1 connection itself.
@@ -38,6 +38,22 @@ devices:
         input_assembly_instance_id: 101
         requested_packet_rate_ms: 20
       mtconnect_port: 5055
+
+  # SmoothAi tuned to the mazak6.pcap capture: asymmetric door travel, no front
+  # door, and the side-door DI/DO bit positions of the SmoothAi control word.
+  - name: smooth_ai_real_timings
+    kind: mazak_smooth
+    options:
+      variant: smoothai
+      interfaces: [ethernetip]
+      door_open_seconds: 5.4     # DI107 -> DO107, measured over 10 door cycles
+      door_close_seconds: 4.3    # DI108 -> DO108
+      front_door: false          # real machine never asserts DO110/DO111
+      cycle_duration_seconds: 1500
+      ethernetip:
+        mode: adapter
+        udp_port: 2222
+      mtconnect_port: 5057
 
   - name: smooth_hybrid
     kind: mazak_smoothx
