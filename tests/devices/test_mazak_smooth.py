@@ -412,3 +412,30 @@ def test_smoothai_variant_side_door_uses_same_di_and_extra_front_door() -> None:
     assert device.state.door("front").open is False
     assert device.io["do110"].value is False
     assert device.io["do111"].value is True
+
+
+def _settle(device: MazakSmoothEmulator, start: float, duration: float) -> float:
+    """Run scan cycles over `duration`, mirroring the heartbeat like a real robot."""
+    now, last_hb = start, start
+    while now < start + duration:
+        if now - last_hb >= 0.5:
+            last_hb = now
+            device.set_input_bit(0, device._read_output_bit(0))
+        device._scan_cycle(now=now)
+        now += 0.02
+    return now
+
+
+def test_do104_idles_high_and_clears_on_cycle_start_rising_edge() -> None:
+    """mazak6.pcap opens with byte12=0x0B, and DO104 drops 70-163ms after DI102^."""
+    device = _make()
+    device.set_input_bit(1, True)
+    now = _settle(device, 0.0, 0.2)
+
+    assert device.io["do104"].value is True
+
+    device.set_input_bit(102, True)
+    device._scan_cycle(now=now)
+
+    assert device.io["do104"].value is False
+    assert device.io["do103"].value is False  # cycle still starts on the fall

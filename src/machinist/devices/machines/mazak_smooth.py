@@ -452,6 +452,10 @@ class MazakSmoothEmulator(Device):
         self._write_output_bit(3, True)
         self._write_output_bit(101, True)
         self._write_output_bit(108, True)
+        # DO104 idles ON on a real machine: mazak6.pcap opens with control word
+        # byte12=0x0B (DO101 + DO102 + DO104) and the bit only drops once a cycle
+        # start is accepted. The bit is driven from the latch in _refresh_outputs.
+        self._machining_complete_latched = True
         if self._variant == "smoothai":
             self._write_output_bit(111, True)
         self._refresh_outputs()
@@ -674,7 +678,6 @@ class MazakSmoothEmulator(Device):
             self._cycle_start_armed = False
             self._machining_complete_latched = False
             self._write_output_bit(103, False)
-            self._write_output_bit(104, False)
 
         _door_name = "side" if self._variant == "smoothai" else "main"
         _cycle_blocked = (
@@ -693,6 +696,10 @@ class MazakSmoothEmulator(Device):
 
         if cycle_start and not self._prev_di102 and can_cycle:
             self._cycle_start_armed = True
+            # The real machine clears DO104 on DI102's *rising* edge -- 70-163ms
+            # after it, over 9 cycles in mazak6.pcap -- well before the cycle
+            # itself starts on the falling edge below.
+            self._machining_complete_latched = False
         elif cycle_start and not can_cycle:
             self._cycle_start_armed = False
 
@@ -700,9 +707,7 @@ class MazakSmoothEmulator(Device):
             self.state.cycle = CycleState.RUNNING
             self._cycle_complete_deadline = now + self._cycle_seconds
             self._cycle_start_armed = False
-            self._machining_complete_latched = False
             self._write_output_bit(103, True)
-            self._write_output_bit(104, False)
             self.emit("cycle.start", program=self.state.program or self._pending_program)
         elif not cycle_start and self._prev_di102:
             self._cycle_start_armed = False
@@ -723,7 +728,6 @@ class MazakSmoothEmulator(Device):
         self._cycle_complete_deadline = None
         self._machining_complete_latched = True
         self._write_output_bit(103, False)
-        self._write_output_bit(104, True)
         self.emit("cycle.end", parts=self.state.parts)
 
     def _refresh_outputs(self) -> None:
@@ -733,6 +737,7 @@ class MazakSmoothEmulator(Device):
         self._write_output_bit(1, robot_ready and not has_alarm)
         self._write_output_bit(2, stop_request and not has_alarm)
         self._write_output_bit(4, has_alarm)
+        self._write_output_bit(104, self._machining_complete_latched)
         self._write_output_bit(
             109,
             robot_ready and not has_alarm and self.state.cycle is not CycleState.RUNNING,
