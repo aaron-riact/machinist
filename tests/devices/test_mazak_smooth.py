@@ -229,6 +229,7 @@ def test_machine_stop_request_stops_door_motion() -> None:
 
 def test_heartbeat_timeout_raises_alarm_when_echo_does_not_follow() -> None:
     device = _make(heartbeat_timeout_seconds=0.15, heartbeat_interval_seconds=0.05)
+    device.set_input_bit(1, True)  # DO004 is only presented while DI001 is on
 
     device._scan_cycle(now=0.0)
     assert device.io["do000"].value is True
@@ -439,3 +440,50 @@ def test_do104_idles_high_and_clears_on_cycle_start_rising_edge() -> None:
 
     assert device.io["do104"].value is False
     assert device.io["do103"].value is False  # cycle still starts on the fall
+
+
+def test_robot_interface_outputs_are_gated_by_robot_ready() -> None:
+    """A DI001 blip drops DO003/DO102/DO104 and they come straight back."""
+    device = _make()
+    device.set_input_bit(1, True)
+    now = _settle(device, 0.0, 0.2)
+
+    assert device.io["do003"].value is True
+    assert device.io["do102"].value is True
+    assert device.io["do104"].value is True
+
+    device.set_input_bit(1, False)
+    device._scan_cycle(now=now)
+
+    assert device.io["do003"].value is False
+    assert device.io["do102"].value is False
+    assert device.io["do104"].value is False
+
+    device.set_input_bit(1, True)
+    device._scan_cycle(now=now + 0.02)
+
+    assert device.io["do003"].value is True
+    assert device.io["do102"].value is True
+    assert device.io["do104"].value is True
+
+
+def test_machine_alarm_output_is_gated_by_robot_ready() -> None:
+    """mazak3.pcap t=1842-1863s: DO004 drops with DO003 on every DI001 retry."""
+    device = _make()
+    device.set_input_bit(1, True)
+    now = _settle(device, 0.0, 0.2)
+    device.inject_alarm(1234, "test")
+    device._scan_cycle(now=now)
+
+    assert device.io["do004"].value is True
+
+    device.set_input_bit(1, False)
+    device._scan_cycle(now=now + 0.02)
+
+    assert device.io["do004"].value is False
+    assert device.alarm_code == 1234  # still alarmed, just not presented
+
+    device.set_input_bit(1, True)
+    device._scan_cycle(now=now + 0.04)
+
+    assert device.io["do004"].value is True

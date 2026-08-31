@@ -449,7 +449,6 @@ class MazakSmoothEmulator(Device):
         self._write_output_field(105, 0)
         self._write_input_bit(2, True, sync_signal=True)
         self._write_output_bit(2, True)
-        self._write_output_bit(3, True)
         self._write_output_bit(101, True)
         self._write_output_bit(108, True)
         # DO104 idles ON on a real machine: mazak6.pcap opens with control word
@@ -736,8 +735,15 @@ class MazakSmoothEmulator(Device):
         has_alarm = self._alarm_code is not None
         self._write_output_bit(1, robot_ready and not has_alarm)
         self._write_output_bit(2, stop_request and not has_alarm)
-        self._write_output_bit(4, has_alarm)
-        self._write_output_bit(104, self._machining_complete_latched)
+        # DO003, DO004, DO102 and DO104 are only presented while the robot
+        # interface is enabled by DI001. Every DI001 blip in mazak6.pcap drops
+        # DO003/DO102/DO104 for the same ~100ms window (5 of them), and the five
+        # DI001 retries during the mazak3.pcap alarm at t=1842-1863s drop DO004
+        # with them. DO003 is not gated by the alarm: it stayed ON right through
+        # the mazak6.pcap machine alarm at t=5853s.
+        self._write_output_bit(3, robot_ready)
+        self._write_output_bit(4, has_alarm and robot_ready)
+        self._write_output_bit(104, self._machining_complete_latched and robot_ready)
         self._write_output_bit(
             109,
             robot_ready and not has_alarm and self.state.cycle is not CycleState.RUNNING,
