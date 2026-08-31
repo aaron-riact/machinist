@@ -27,6 +27,10 @@ PROGRAM_OFFSET = 44
 PROGRAM_LENGTH = 32
 CONTROL_OFFSET = 12
 HEARTBEAT_ALARM = 1362
+# Raised when a work-number search cannot be satisfied. The assembly carries only
+# DO004, never the alarm number, so this code is a placeholder sitting next to
+# HEARTBEAT_ALARM rather than an observed value.
+WORK_SEARCH_ALARM = 1363
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +184,9 @@ class MazakSmoothOptions:
     front_door: bool = False
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.5
+    # Work numbers the NC holds. None (the default) accepts any search; give a
+    # list and a search for anything outside it fails the way mazak3.pcap does.
+    programs: Any = None
     # How long DO102 (cycle-start permission) stays OFF after a work-number
     # search *loads a different program*. The machine withholds permission while
     # the NC actually swaps programs; a search that resolves to the already-
@@ -249,6 +256,12 @@ class MazakSmoothEmulator(Device):
         self._cycle_seconds = options.cycle_duration_seconds
         self._work_search_seconds = options.work_search_seconds
         self._search_settle_seconds = options.work_search_settle_seconds
+        self._programs: frozenset[str] | None = (
+            None
+            if options.programs is None
+            else frozenset(str(item) for item in options.programs)
+        )
+        self._work_search_failed = False
         self._heartbeat_interval = options.heartbeat_interval_seconds
         self._heartbeat_timeout = options.heartbeat_timeout_seconds
         self._front_door = bool(options.front_door) and options.variant == "smoothai"
@@ -594,17 +607,39 @@ class MazakSmoothEmulator(Device):
 
     def _handle_program_search(self, now: float) -> None:
         di101 = self._read_input_bit(101)
-        if di101 and not self._prev_di101:
+        if self._work_search_failed and self._alarm_code is None:
+            # Alarm cleared: DO101 returns to its idle high state, as it does at
+            # mazak3.pcap t=3445 when DO004 drops in the same frame.
+            self._work_search_failed = False
+            self._write_output_bit(101, True)
+        # A machine sitting in alarm does not accept a new search: the robot's two
+        # further DI101 pulses at mazak3.pcap t=1826.6 and t=1832.7 get no
+        # response at all.
+        if di101 and not self._prev_di101 and self._alarm_code is None:
             self._pending_program = self._read_text(self._input_block, INPUT_TEXT_FIELDS[100])
             self._write_output_bit(101, False)
             self._work_search_deadline = now + self._work_search_seconds
         if self._work_search_deadline is not None and now >= self._work_search_deadline:
+            self._work_search_deadline = None
+            if not self._program_available(self._pending_program):
+                # A search the NC cannot satisfy never finishes. mazak3.pcap
+                # f31402-f31411: DO101 drops, DO004 comes up 0.500s later --
+                # exactly the normal search duration -- and DO101 never returns.
+                # The program is not loaded and DO100 keeps its old value.
+                self._work_search_failed = True
+                self._set_alarm(
+                    WORK_SEARCH_ALARM,
+                    f"Work Number Search Error ({self._pending_program or '(blank)'})",
+                    abort_cycle=False,
+                )
+                self.emit("program.search_failed", program=self._pending_program)
+                self._prev_di101 = di101
+                return
             program_changed = self._pending_program != self.state.program
             self.state.program = self._pending_program
             self._set_output_text(100, self._pending_program)
             self._write_output_bit(101, True)
             self.emit("program", program=self._pending_program)
-            self._work_search_deadline = None
             # Only an actual program swap withholds cycle-start permission --
             # see `work_search_settle_seconds`. A freshly started emulator has no
             # program loaded, so its first search is a real load and does dip.
@@ -616,6 +651,12 @@ class MazakSmoothEmulator(Device):
         ):
             self._cycle_start_blocked_until = None
         self._prev_di101 = di101
+
+    def _program_available(self, program: str) -> bool:
+        """Whether the NC holds *program*; always true when no library is set."""
+        if self._programs is None:
+            return True
+        return program in self._programs
 
     def _handle_door_motion(self, now: float) -> None:
         stop_request = self._read_input_bit(2)
@@ -811,14 +852,18 @@ class MazakSmoothEmulator(Device):
                 "feed_hold": self._feed_hold,
             }
 
-    def _set_alarm(self, code: int, message: str) -> None:
+    def _set_alarm(self, code: int, message: str, *, abort_cycle: bool = True) -> None:
         with self._lock:
             if self._alarm_code == code and self._alarm_message == message:
                 return
             self._alarm_code = code
             self._alarm_message = message
-        self.state.cycle = CycleState.ABORTED
-        self._write_output_bit(103, False)
+        if abort_cycle:
+            # A failed work search is the exception: it does not stop the running
+            # program. DO103 stayed set for 38s after the alarm in mazak3.pcap
+            # (t=1821.074 to t=1859.220).
+            self.state.cycle = CycleState.ABORTED
+            self._write_output_bit(103, False)
         self._write_output_bit(4, True)
         self.emit("alarm", code=code, message=message)
 

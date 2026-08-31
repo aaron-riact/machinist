@@ -18,11 +18,13 @@ from machinist.devices.machines.mazak_smooth import (
     INPUT_TEXT_FIELDS,
     MTConnectOptions,
     OUTPUT_SIGNAL_POINTS,
+    WORK_SEARCH_ALARM,
     MazakSmoothEmulator,
     MazakSmoothOptions,
     _build_ethernetip_transport,
     make_device,
 )
+from machinist.devices.machines.state import CycleState
 from machinist.transport.ethernetip import (
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
@@ -660,3 +662,110 @@ def test_work_search_settle_seconds_can_disable_the_dip() -> None:
 
     assert device.io["do101"].value is True
     assert device.io["do102"].value is True
+
+
+def test_unavailable_work_number_search_never_finishes() -> None:
+    """mazak3.pcap f31399-f31411: DO101 drops, DO004 comes up, DO101 never returns."""
+    device = _make(programs=["202"], work_search_seconds=0.5)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+
+    device.set_target_work_number("999")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.io["do101"].value is False
+    assert device.io["do004"].value is True
+    assert device.alarm_code == WORK_SEARCH_ALARM
+    assert device.active_program == ""
+    assert device.output_block[44:76].rstrip(b"\x00") == b""
+
+
+def test_di101_is_ignored_while_a_work_search_alarm_is_active() -> None:
+    """The robot's two retries at mazak3.pcap t=1826.6/1832.7 get no response."""
+    device = _make(programs=["202"], work_search_seconds=0.5)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+    device.set_target_work_number("999")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+    assert device.io["do101"].value is False
+
+    for _ in range(2):
+        device.set_input_bit(101, False)
+        now = _settle(device, now, 0.2)
+        device.set_input_bit(101, True)
+        now = _settle(device, now, 0.6)
+        assert device.io["do101"].value is False
+        assert device.active_program == ""
+
+
+def test_clearing_the_alarm_returns_do101_high() -> None:
+    """mazak3.pcap t=3445: DO101 goes high in the same frame DO004 drops."""
+    device = _make(programs=["202"], work_search_seconds=0.5)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+    device.set_target_work_number("999")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+    assert device.io["do101"].value is False
+
+    device.set_input_bit(101, False)
+    device.clear_alarm()
+    now = _settle(device, now, 0.1)
+
+    assert device.io["do101"].value is True
+    assert device.io["do004"].value is False
+
+    # ...and a valid search works again afterwards
+    device.set_target_work_number("202")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.io["do101"].value is True
+    assert device.active_program == "202"
+
+
+def test_failed_work_search_does_not_stop_the_running_program() -> None:
+    """DO103 stayed set for 38s after the mazak3.pcap alarm (t=1821 to t=1859)."""
+    device = _make(programs=["202"], work_search_seconds=0.5,
+                   cycle_duration_seconds=1500.0)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+    device.set_target_work_number("202")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+    device.set_input_bit(101, False)
+    now = _settle(device, now, 1.2)
+    device.set_input_bit(102, True)
+    now = _settle(device, now, 0.2)
+    device.set_input_bit(102, False)
+    now = _settle(device, now, 0.2)
+    assert device.io["do103"].value is True
+
+    device.set_target_work_number("999")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.alarm_code == WORK_SEARCH_ALARM
+    assert device.io["do103"].value is True
+    assert device.state.cycle is CycleState.RUNNING
+
+
+def test_any_work_number_is_accepted_when_no_library_is_configured() -> None:
+    device = _make(work_search_seconds=0.5)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+
+    device.set_target_work_number("999")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.io["do101"].value is True
+    assert device.alarm_code is None
+    assert device.active_program == "999"
