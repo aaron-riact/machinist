@@ -378,7 +378,7 @@ def test_mtconnect_reports_live_machine_state() -> None:
 
 
 def test_smoothai_variant_side_door_uses_same_di_and_extra_front_door() -> None:
-    device = _make(variant="smoothai")
+    device = _make(variant="smoothai", front_door=True)
     device.set_input_bit(107, True)
     device._scan_cycle(now=0.0)
     device._scan_cycle(now=2.01)
@@ -487,3 +487,32 @@ def test_machine_alarm_output_is_gated_by_robot_ready() -> None:
     device._scan_cycle(now=now + 0.04)
 
     assert device.io["do004"].value is True
+
+
+def test_idle_control_word_matches_real_smoothai() -> None:
+    """Idle T->O assembly must match mazak6.pcap byte-for-byte.
+
+    The real machine idles at byte0=0x0e, byte12=0x0b (DO101 + DO102 + DO104)
+    and byte13=0x04 (DO108 only); it never asserts DO106/DO109/DO110/DO111.
+    """
+    device = _make(variant="smoothai")
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    _settle(device, 0.0, 1.0)
+
+    block = device.output_block
+    assert block[0] == 0x0E
+    assert block[12] == 0x0B
+    assert block[13] == 0x04
+    assert device.io["do109"].value is False
+    assert device.io["do111"].value is False
+
+
+def test_front_door_bits_stay_clear_unless_configured() -> None:
+    device = _make(variant="smoothai")
+    device.set_input_bit(110, True)
+    _settle(device, 0.0, 0.2)
+
+    assert device.io["do110"].value is False
+    assert device.io["do111"].value is False
+    assert device.state.door("front").open is False

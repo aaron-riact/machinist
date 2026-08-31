@@ -167,6 +167,11 @@ class MazakSmoothOptions:
     variant: str = "smoothx"
     scan_interval_seconds: float = 0.02
     door_move_seconds: float = 2.0
+    # Front door (SmoothAi only). Off by default: the SmoothAi in mazak6.pcap
+    # never asserts DO110/DO111 -- T->O byte13 only ever holds 0x00/0x02/0x04
+    # across the whole 4.6h capture -- so the front-door bits are only driven
+    # when a machine actually has one.
+    front_door: bool = False
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.5
     heartbeat_interval_seconds: float = 2.0
@@ -212,6 +217,7 @@ class MazakSmoothEmulator(Device):
         self._work_search_seconds = options.work_search_seconds
         self._heartbeat_interval = options.heartbeat_interval_seconds
         self._heartbeat_timeout = options.heartbeat_timeout_seconds
+        self._front_door = bool(options.front_door) and options.variant == "smoothai"
         self._interfaces = _enabled_interfaces(options)
         self._ethernetip_mode = options.ethernetip_mode
         self._io_writable = "io" in self._interfaces
@@ -455,7 +461,7 @@ class MazakSmoothEmulator(Device):
         # byte12=0x0B (DO101 + DO102 + DO104) and the bit only drops once a cycle
         # start is accepted. The bit is driven from the latch in _refresh_outputs.
         self._machining_complete_latched = True
-        if self._variant == "smoothai":
+        if self._front_door:
             self._write_output_bit(111, True)
         self._refresh_outputs()
 
@@ -617,7 +623,7 @@ class MazakSmoothEmulator(Device):
         self._prev_di107 = di107
         self._prev_di108 = di108
 
-        if self._variant == "smoothai":
+        if self._front_door:
             self._handle_front_door_motion(now)
 
     def _handle_front_door_motion(self, now: float) -> None:
@@ -743,11 +749,10 @@ class MazakSmoothEmulator(Device):
         # the mazak6.pcap machine alarm at t=5853s.
         self._write_output_bit(3, robot_ready)
         self._write_output_bit(4, has_alarm and robot_ready)
+        # DO109 (robot access permitted) is deliberately never driven: across the
+        # 4.6h mazak6.pcap capture T->O byte13 only ever holds 0x00/0x02/0x04, so
+        # a real SmoothAi leaves DO106/DO109/DO110/DO111 clear.
         self._write_output_bit(104, self._machining_complete_latched and robot_ready)
-        self._write_output_bit(
-            109,
-            robot_ready and not has_alarm and self.state.cycle is not CycleState.RUNNING,
-        )
         _door_name = "side" if self._variant == "smoothai" else "main"
         with self._lock:
             self.state.variables["alarm_code"] = self._alarm_code or 0
