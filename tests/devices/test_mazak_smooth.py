@@ -516,3 +516,25 @@ def test_front_door_bits_stay_clear_unless_configured() -> None:
     assert device.io["do110"].value is False
     assert device.io["do111"].value is False
     assert device.state.door("front").open is False
+
+
+def test_door_open_and_close_durations_are_configurable() -> None:
+    """A real SmoothAi is asymmetric: 5.44s to open, 4.30s to close."""
+    device = _make(door_open_seconds=0.30, door_close_seconds=0.10)
+    device.set_input_bit(109, True)
+    device.set_input_bit(107, True)
+    device._scan_cycle(now=0.0)
+    device._scan_cycle(now=0.20)
+
+    assert device.state.door("main").open is False  # still travelling at 0.20s
+
+    device._scan_cycle(now=0.31)
+    assert device.state.door("main").open is True
+
+    device.set_input_bit(107, False)
+    device._scan_cycle(now=0.32)
+    device.set_input_bit(108, True)
+    device._scan_cycle(now=0.33)
+    device._scan_cycle(now=0.44)
+
+    assert device.state.door("main").open is False

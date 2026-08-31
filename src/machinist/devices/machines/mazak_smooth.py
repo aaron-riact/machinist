@@ -166,7 +166,13 @@ class MTConnectOptions:
 class MazakSmoothOptions:
     variant: str = "smoothx"
     scan_interval_seconds: float = 0.02
+    # Door travel. `door_move_seconds` is the symmetric default; the per-direction
+    # options override it. A real SmoothAi is slower and asymmetric -- mazak6.pcap
+    # (10 door cycles) measures 5.44s from DI107 to DO107 opening and 4.30s from
+    # DI108 to DO108 closing -- so set 5.4/4.3 to mimic that machine.
     door_move_seconds: float = 2.0
+    door_open_seconds: float | None = None
+    door_close_seconds: float | None = None
     # Front door (SmoothAi only). Off by default: the SmoothAi in mazak6.pcap
     # never asserts DO110/DO111 -- T->O byte13 only ever holds 0x00/0x02/0x04
     # across the whole 4.6h capture -- so the front-door bits are only driven
@@ -212,7 +218,16 @@ class MazakSmoothEmulator(Device):
         self._output_block = bytearray(BLOCK_SIZE)
         self._state_snapshot: dict[str, object] = {}
         self._scan_interval = options.scan_interval_seconds
-        self._door_seconds = options.door_move_seconds
+        self._door_open_seconds = (
+            options.door_move_seconds
+            if options.door_open_seconds is None
+            else options.door_open_seconds
+        )
+        self._door_close_seconds = (
+            options.door_move_seconds
+            if options.door_close_seconds is None
+            else options.door_close_seconds
+        )
         self._cycle_seconds = options.cycle_duration_seconds
         self._work_search_seconds = options.work_search_seconds
         self._heartbeat_interval = options.heartbeat_interval_seconds
@@ -591,13 +606,13 @@ class MazakSmoothEmulator(Device):
 
         if di107 and not self._prev_di107 and self._door_motion_deadline is None:
             self._door_target_open = True
-            self._door_motion_deadline = now + self._door_seconds
+            self._door_motion_deadline = now + self._door_open_seconds
             self._write_output_bit(107, False)
             self._write_output_bit(108, False)
 
         if di108 and not self._prev_di108 and di109 and self._door_motion_deadline is None:
             self._door_target_open = False
-            self._door_motion_deadline = now + self._door_seconds
+            self._door_motion_deadline = now + self._door_close_seconds
             self._write_output_bit(107, False)
             self._write_output_bit(108, False)
 
@@ -632,13 +647,13 @@ class MazakSmoothEmulator(Device):
 
         if di110 and not self._prev_di110 and self._front_door_motion_deadline is None:
             self._front_door_target_open = True
-            self._front_door_motion_deadline = now + self._door_seconds
+            self._front_door_motion_deadline = now + self._door_open_seconds
             self._write_output_bit(110, False)
             self._write_output_bit(111, False)
 
         if di111 and not self._prev_di111 and self._front_door_motion_deadline is None:
             self._front_door_target_open = False
-            self._front_door_motion_deadline = now + self._door_seconds
+            self._front_door_motion_deadline = now + self._door_close_seconds
             self._write_output_bit(110, False)
             self._write_output_bit(111, False)
 
