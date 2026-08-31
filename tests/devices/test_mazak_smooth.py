@@ -538,3 +538,125 @@ def test_door_open_and_close_durations_are_configurable() -> None:
     device._scan_cycle(now=0.44)
 
     assert device.state.door("main").open is False
+
+
+def test_cycle_starts_on_the_real_robot_handshake() -> None:
+    """Replays the mazak6.pcap cycle-start handshake (f120282-f120334).
+
+    The program is already loaded, so DO102 must stay ON through the search, and
+    DI102 rising in the same frame DI101 falls must still start the cycle.
+    """
+    device = _make(work_search_seconds=0.5, cycle_duration_seconds=1500.0)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+
+    # Load '202' first -- a freshly started emulator has no program, so this
+    # first search is a genuine load and does dip DO102.
+    device.set_target_work_number("202")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+    assert device.io["do102"].value is False
+    device.set_input_bit(101, False)
+    now = _settle(device, now, 1.2)
+    assert device.io["do102"].value is True
+
+    # Now the mazak6 case: search the program that is already loaded.
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.io["do101"].value is True
+    assert device.io["do102"].value is True
+    assert device.output_block[12] == 0x0B
+
+    device.set_input_bit(101, False)
+    device.set_input_bit(102, True)
+    now = _settle(device, now, 1.94)
+
+    assert device.io["do104"].value is False  # cleared on DI102's rising edge
+    assert device.io["do103"].value is False  # but the cycle has not started
+
+    device.set_input_bit(102, False)
+    now = _settle(device, now, 0.2)
+
+    assert device.io["do103"].value is True
+    assert device.io["do102"].value is False
+    assert device.output_block[12] == 0x05
+
+
+def test_program_changing_search_dips_do102_but_still_honours_the_start() -> None:
+    """cyclestart.pcap: a search that swaps programs holds DO102 off for 1.0s.
+
+    A DI102 pulse arriving inside that window must be held, not dropped -- the
+    settle window may delay a cycle start but must never lose one.
+    """
+    device = _make(work_search_seconds=0.5, cycle_duration_seconds=1500.0)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+
+    device.set_target_work_number("9")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+    device.set_input_bit(101, False)
+    now = _settle(device, now, 1.2)
+
+    # '6' is a different program: DO102 drops when the search completes.
+    device.set_target_work_number("6")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.io["do101"].value is True
+    assert device.io["do102"].value is False
+    assert device.active_program == "6"
+
+    device.set_input_bit(101, False)
+    device.set_input_bit(102, True)
+    now = _settle(device, now, 0.3)
+
+    assert device.io["do102"].value is False
+    assert device.io["do103"].value is False
+
+    now = _settle(device, now, 1.0)
+    assert device.io["do102"].value is True
+
+    device.set_input_bit(102, False)
+    now = _settle(device, now, 0.2)
+
+    assert device.io["do103"].value is True
+
+
+def test_repeat_search_of_the_loaded_program_does_not_dip_do102() -> None:
+    """13 no-op searches across mazak6/mazak3/mazak4 never drop DO102."""
+    device = _make(work_search_seconds=0.5)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+
+    device.set_target_work_number("202")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+    device.set_input_bit(101, False)
+    now = _settle(device, now, 1.2)
+
+    for _ in range(3):
+        device.set_input_bit(101, True)
+        now = _settle(device, now, 0.6)
+        assert device.io["do101"].value is True
+        assert device.io["do102"].value is True
+        device.set_input_bit(101, False)
+        now = _settle(device, now, 0.1)
+
+
+def test_work_search_settle_seconds_can_disable_the_dip() -> None:
+    device = _make(work_search_seconds=0.5, work_search_settle_seconds=0.0)
+    for number in (1, 2, 109):
+        device.set_input_bit(number, True)
+    now = _settle(device, 0.0, 0.2)
+
+    device.set_target_work_number("202")
+    device.set_input_bit(101, True)
+    now = _settle(device, now, 0.6)
+
+    assert device.io["do101"].value is True
+    assert device.io["do102"].value is True

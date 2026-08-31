@@ -180,6 +180,19 @@ class MazakSmoothOptions:
     front_door: bool = False
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.5
+    # How long DO102 (cycle-start permission) stays OFF after a work-number
+    # search *loads a different program*. The machine withholds permission while
+    # the NC actually swaps programs; a search that resolves to the already-
+    # loaded program is a no-op and permission never drops. Both captures come
+    # from the same machine at 192.168.10.1:
+    #   cyclestart.pcap  '9'->'6' at t=3.700 and '6'->'9' at t=7.000, each
+    #                    dipping DO102 for exactly 1.0s (t=4.700 / t=8.000).
+    #   mazak6.pcap      11 searches, all for the already-loaded '202', T->O
+    #                    work# never changes and DO102 never dips -- byte12 runs
+    #                    0x0B -> 0x0A -> 0x0B -> 0x03 -> 0x05 with bit1 set the
+    #                    whole way. mazak3/mazak4 add 2 more no-op searches.
+    # Set to 0.0 to disable the dip entirely.
+    work_search_settle_seconds: float = 1.0
     heartbeat_interval_seconds: float = 2.0
     # Real mazak is ~10s and mazak6.pcap proves it tolerates more: the robot left
     # 5 gaps over 6s between DI000 toggles (13.35s, 11.67s, 9.32s, 9.08s, 8.68s)
@@ -235,6 +248,7 @@ class MazakSmoothEmulator(Device):
         )
         self._cycle_seconds = options.cycle_duration_seconds
         self._work_search_seconds = options.work_search_seconds
+        self._search_settle_seconds = options.work_search_settle_seconds
         self._heartbeat_interval = options.heartbeat_interval_seconds
         self._heartbeat_timeout = options.heartbeat_timeout_seconds
         self._front_door = bool(options.front_door) and options.variant == "smoothai"
@@ -585,17 +599,19 @@ class MazakSmoothEmulator(Device):
             self._write_output_bit(101, False)
             self._work_search_deadline = now + self._work_search_seconds
         if self._work_search_deadline is not None and now >= self._work_search_deadline:
+            program_changed = self._pending_program != self.state.program
             self.state.program = self._pending_program
             self._set_output_text(100, self._pending_program)
             self._write_output_bit(101, True)
             self.emit("program", program=self._pending_program)
             self._work_search_deadline = None
-            self._cycle_start_blocked_until = float("inf")
-        if not di101 and self._cycle_start_blocked_until == float("inf"):
-            self._cycle_start_blocked_until = now + 0.9
+            # Only an actual program swap withholds cycle-start permission --
+            # see `work_search_settle_seconds`. A freshly started emulator has no
+            # program loaded, so its first search is a real load and does dip.
+            if program_changed and self._search_settle_seconds > 0.0:
+                self._cycle_start_blocked_until = now + self._search_settle_seconds
         if (
             self._cycle_start_blocked_until is not None
-            and self._cycle_start_blocked_until != float("inf")
             and now >= self._cycle_start_blocked_until
         ):
             self._cycle_start_blocked_until = None
@@ -707,7 +723,7 @@ class MazakSmoothEmulator(Device):
         _door_name = "side" if self._variant == "smoothai" else "main"
         _cycle_blocked = (
             self._cycle_start_blocked_until is not None
-            and (self._cycle_start_blocked_until == float("inf") or now < self._cycle_start_blocked_until)
+            and now < self._cycle_start_blocked_until
         )
         can_cycle = (
             robot_ready
@@ -719,22 +735,27 @@ class MazakSmoothEmulator(Device):
         )
         self._write_output_bit(102, can_cycle)
 
-        if cycle_start and not self._prev_di102 and can_cycle:
+        # Arm on DI102's *level*, not its rising edge: this robot raises DI102 in
+        # the same frame it drops DI101 (mazak6.pcap f5362, and 0.108s later at
+        # f277914), so an edge-triggered arm inside a settle window is lost
+        # forever and the cycle never starts. Levels let the command wait out the
+        # window instead -- a settle window may delay a start, never lose one.
+        if cycle_start and can_cycle:
+            if not self._cycle_start_armed:
+                # The real machine clears DO104 as soon as it accepts the command
+                # -- 70-163ms after DI102 rises, over 9 cycles in mazak6.pcap --
+                # well before the cycle itself starts on the falling edge below.
+                self._machining_complete_latched = False
             self._cycle_start_armed = True
-            # The real machine clears DO104 on DI102's *rising* edge -- 70-163ms
-            # after it, over 9 cycles in mazak6.pcap -- well before the cycle
-            # itself starts on the falling edge below.
-            self._machining_complete_latched = False
         elif cycle_start and not can_cycle:
             self._cycle_start_armed = False
 
-        if not cycle_start and self._prev_di102 and self._cycle_start_armed and can_cycle:
-            self.state.cycle = CycleState.RUNNING
-            self._cycle_complete_deadline = now + self._cycle_seconds
-            self._cycle_start_armed = False
-            self._write_output_bit(103, True)
-            self.emit("cycle.start", program=self.state.program or self._pending_program)
-        elif not cycle_start and self._prev_di102:
+        if not cycle_start and self._prev_di102:
+            if self._cycle_start_armed and can_cycle:
+                self.state.cycle = CycleState.RUNNING
+                self._cycle_complete_deadline = now + self._cycle_seconds
+                self._write_output_bit(103, True)
+                self.emit("cycle.start", program=self.state.program or self._pending_program)
             self._cycle_start_armed = False
 
         if self._cycle_complete_deadline is not None and now >= self._cycle_complete_deadline:
