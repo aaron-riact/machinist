@@ -112,3 +112,20 @@ def test_real_scanner_can_exchange_blocks_with_adapter() -> None:
     finally:
         scanner.close()
         adapter.close()
+
+
+def test_forward_open_t_o_api_is_read_from_the_request() -> None:
+    """The adapter paces T->O off the rate the scanner asked for (100ms in mazak6)."""
+    from machinist.transport.ethernetip import _forward_open_t_o_api_us
+
+    packet = bytearray(82)
+    packet[74:78] = (100_000).to_bytes(4, "little")
+    assert _forward_open_t_o_api_us(bytes(packet)) == 100_000
+
+    packet[74:78] = (0).to_bytes(4, "little")
+    assert _forward_open_t_o_api_us(bytes(packet)) is None
+
+    packet[74:78] = (60_000_000).to_bytes(4, "little")
+    assert _forward_open_t_o_api_us(bytes(packet)) is None
+
+    assert _forward_open_t_o_api_us(b"\x00" * 40) is None

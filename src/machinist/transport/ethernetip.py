@@ -197,6 +197,9 @@ class EtherNetIPAdapter:
         self._o_t_connection_point: int = config.o_t_connection_point
         self._t_o_connection_point: int = config.t_o_connection_point
         self._active_connection_id: tuple[int, int, int] | None = None
+        # T->O Actual Packet Interval (microseconds) taken from the scanner's
+        # Forward Open. None until a connection is opened.
+        self._t_o_api_us: int | None = None
 
     # Real-time header sizes: heartbeat = 0, modeless = 2, header32bit = 6
     _HEADER_OFFSETS = {0: "heartbeat", 2: "modeless", 6: "header32bit"}
@@ -388,6 +391,8 @@ class EtherNetIPAdapter:
             t_sz = int.from_bytes(packet[78:78 + cp_len], "little") & mask
             print(f"[EIP]   o_t_conn_size={o_sz} t_o_conn_size={t_sz}", file=sys.stderr)
             self._resolve_realtime_formats(o_sz, t_sz)
+            self._t_o_api_us = _forward_open_t_o_api_us(packet)
+            print(f"[EIP]   T→O API={self._t_o_api_us}us (requested by scanner)", file=sys.stderr)
             print(f"[EIP]   O→T fmt={self._o_t_realtime_format} sz={o_sz} data={self._input_length} header={o_sz - self._input_length}", file=sys.stderr)
             print(f"[EIP]   T→O fmt={self._t_o_realtime_format} sz={t_sz} data={self._output_length} header={t_sz - self._output_length}", file=sys.stderr)
         payload = self._forward_open_reply_payload(packet)
@@ -479,6 +484,7 @@ class EtherNetIPAdapter:
             self._peer_udp = None
             self._connection_id_o_t = 0
             self._connection_id_t_o = 0
+            self._t_o_api_us = None
         client.sendall(
             _send_rrdata_reply(
                 packet,
@@ -527,9 +533,15 @@ class EtherNetIPAdapter:
                 self._peer_connected = True
 
     def _udp_send_loop(self) -> None:
-        interval = self._config.requested_packet_rate_ms / 1000.0
+        # A real Mazak produces T->O at the packet rate the scanner asked for in
+        # the Forward Open -- 100ms in mazak6.pcap -- not at its own configured
+        # rate, and the Forward Open reply already echoes that rate back as the
+        # API. Honour it, falling back to the configured rate until a connection
+        # is open. Re-read every pass: the Forward Open lands after open().
+        fallback = self._config.requested_packet_rate_ms / 1000.0
         while not self._stop.is_set():
             with self._lock:
+                api_us = self._t_o_api_us
                 udp_socket = self._udp_socket
                 peer_udp = self._peer_udp
                 peer_port = self._peer_udp_port or (peer_udp[1] if peer_udp else 0)
@@ -549,7 +561,7 @@ class EtherNetIPAdapter:
                 )
                 with suppress(OSError):
                     udp_socket.sendto(message, target)
-            self._stop.wait(interval)
+            self._stop.wait(api_us / 1_000_000.0 if api_us else fallback)
 
 
 def _enum_value(mapping: dict[str, _EnumValue], raw: str, field: str) -> _EnumValue:
@@ -627,6 +639,25 @@ def _register_session_reply(request: bytes, session_handle: int) -> bytes:
 # offsets the existing size parser already uses (connection params at 72/78).
 _FORWARD_OPEN_CONN_PATH_SIZE_OFF = 81
 _FORWARD_OPEN_CONN_PATH_START = 82
+
+
+# T->O Requested Packet Rate (microseconds) inside the Forward Open request.
+# `_forward_open_reply_payload` echoes these same bytes back as the T->O API.
+_FORWARD_OPEN_T_O_RPI = slice(74, 78)
+
+# Sanity bounds for an accepted API: 1ms .. 10s.
+_MIN_API_US = 1_000
+_MAX_API_US = 10_000_000
+
+
+def _forward_open_t_o_api_us(packet: bytes) -> int | None:
+    """Return the scanner's requested T->O packet rate in us, or None if absurd."""
+    if len(packet) < _FORWARD_OPEN_T_O_RPI.stop:
+        return None
+    api_us = int.from_bytes(packet[_FORWARD_OPEN_T_O_RPI], "little")
+    if _MIN_API_US <= api_us <= _MAX_API_US:
+        return api_us
+    return None
 
 
 def _forward_open_connection_path(packet: bytes) -> bytes:
