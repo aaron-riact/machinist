@@ -181,7 +181,12 @@ class MazakSmoothOptions:
     cycle_duration_seconds: float = 1.0
     work_search_seconds: float = 0.5
     heartbeat_interval_seconds: float = 2.0
-    heartbeat_timeout_seconds: float = 6.0 # real mazak is ~10, but we are impatient
+    # Real mazak is ~10s and mazak6.pcap proves it tolerates more: the robot left
+    # 5 gaps over 6s between DI000 toggles (13.35s, 11.67s, 9.32s, 9.08s, 8.68s)
+    # and the machine raised no comms alarm at any of them. 6.0s would have
+    # false-tripped 5 times in that 4.6h session -- kept short on purpose so the
+    # emulator surfaces a stalled scanner quickly.
+    heartbeat_timeout_seconds: float = 6.0
     interfaces: Any = None
     main_interface: Any = None
     ethernetip: dict[str, Any] | None = None
