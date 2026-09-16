@@ -112,6 +112,26 @@ class Projection:
     def close(self) -> None:
         self._unsubscribe()
 
+    def verify(self, world: World) -> list[str]:
+        """Compare the projection with what the devices themselves hold right now.
+
+        Returns one line per difference, empty when the projection is faithful.
+        A difference means some state changed without announcing itself, which
+        the design says must not happen; this is the net under that promise.
+        """
+        truth = seed(world)
+        mine = self._state
+        problems: list[str] = []
+        for name, actual in truth.devices.items():
+            shown = mine.devices.get(name)
+            if shown is None:
+                problems.append(f"{name}: missing from the projection")
+                continue
+            for field_name in ("lifecycle", "signals", "arm", "machine", "programs", "panel"):
+                if getattr(shown, field_name) != getattr(actual, field_name):
+                    problems.append(f"{name}.{field_name}: projection differs from the device")
+        return problems
+
     def _apply(self, event: Event) -> None:
         with self._lock:
             before = self._state

@@ -78,3 +78,22 @@ def test_projection_equals_the_devices_truth_after_each_command() -> None:
         assert view.machine == device.state.view
         assert {n: s.value for n, s in view.signals.items()} == {s.name: s.value for s in device.io}
         device.io[command].set(False)
+
+
+def test_verify_reports_state_that_changed_without_an_event() -> None:
+    bus = EventBus()
+    store = S7Store()
+    device = MazakSinumerik840D(
+        "m1", Endpoint("127.0.0.1", 0), bus, MazakSinumerik840DOptions(),
+        io=SignalBank(owner="m1", publish=bus.publish), store=store,
+        server=S7Server(host="127.0.0.1", port=0, store=store, backend="stub"),
+    )
+    world = World(devices=(device,), bus=bus, io_map=WorldBuilder().build(SystemConfig()).io_map)
+    projection = Projection(world)
+    assert projection.verify(world) == []
+
+    # Simulate the bug the design forbids: a change the bus never heard about.
+    device.state = type(device.state)(owner="m1", doors=("main",))  # a silent holder
+    device.state.set_door("main", open=True)
+
+    assert projection.verify(world) == ["m1.machine: projection differs from the device"]
