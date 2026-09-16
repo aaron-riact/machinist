@@ -31,6 +31,11 @@ class BroadcastServer(Service):
 
     # ----- lifecycle -------------------------------------------------
 
+    @property
+    def client_count(self) -> int:
+        with self._clients_lock:
+            return len(self._clients)
+
     def serve_forever(self, ready: threading.Event | None = None) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

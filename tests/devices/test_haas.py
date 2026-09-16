@@ -75,11 +75,10 @@ def test_dprint_broadcast_to_connected_clients(tmp_path) -> None:
         with socket.create_connection(("127.0.0.1", dprint_port), timeout=2) as s:
             s.settimeout(2.0)
             # Wait for the server's accept loop to register us.
-            assert d._dprint is not None
+            dprint = next(s for s in d.services if isinstance(s, BroadcastServer))
             for _ in range(20):
-                with d._dprint._clients_lock:
-                    if d._dprint._clients:
-                        break
+                if dprint.client_count:
+                    break
                 time.sleep(0.05)
             d.state.dprint("PART COMPLETE")
             line = _readline(s, terminator=b"\n")

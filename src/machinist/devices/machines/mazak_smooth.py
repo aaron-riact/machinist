@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from ...core.capabilities import HasIO
@@ -297,7 +297,6 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self.io = io
         self._declare_signals()
 
-        self._mtconnect: MTConnectAgent | None = None
         self._ethernetip: EtherNetIPTransport | None = None
         self._next_connect_attempt = 0.0
 
@@ -483,17 +482,6 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         for point in self._output_signal_points.values():
             self.io.declare(point.signal, Direction.OUTPUT)
 
-    def _build_mtconnect(
-        self, host: str, options: MazakSmoothOptions
-    ) -> MTConnectAgent | None:
-        if options.mtconnect is None:
-            return None
-        return MTConnectAgent(
-            host,
-            options.mtconnect.port,
-            render=lambda render_endpoint: render_mtconnect(self.state, render_endpoint),
-        )
-
     def _initialize_defaults(self) -> None:
         self._set_output_text(100, "")
         self._write_output_field(105, 0)
@@ -509,31 +497,27 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             self._write_output_bit(111, True)
         self._refresh_outputs()
 
-    def _run(self, stop: threading.Event) -> None:
-        mtconnect_thread: threading.Thread | None = None
-        if self._mtconnect is not None:
-            ready = threading.Event()
-            mtconnect_thread = threading.Thread(
-                target=self._mtconnect.serve_forever, args=(ready,), daemon=True
-            )
-            mtconnect_thread.start()
-            ready.wait(timeout=2.0)
+    def attach_ethernetip(self, transport: EtherNetIPTransport) -> None:
+        """Give the machine its EtherNet/IP link. Call before :meth:`start`.
 
-        if isinstance(self._ethernetip, EtherNetIPAdapter):
-            self._ethernetip.open()
-        self._mark_running()
-        while not stop.is_set():
-            now = time.monotonic()
-            self._poll_ethernetip(now)
-            self._scan_cycle(now=now)
-            stop.wait(self._scan_interval)
+        An adapter listens, so it runs as one of the device's services and
+        is bound before the device reports running. A scanner dials out and
+        is opened lazily by the scan loop, with retries.
+        """
+        self._ethernetip = transport
+        if isinstance(transport, EtherNetIPAdapter):
+            self.add_service(transport)
 
-        if self._ethernetip is not None:
-            self._ethernetip.close()
-        if self._mtconnect is not None:
-            self._mtconnect.shutdown()
-        if mtconnect_thread is not None:
-            mtconnect_thread.join(timeout=2.0)
+    def _serve(self, stop: threading.Event) -> None:
+        try:
+            while not stop.is_set():
+                now = time.monotonic()
+                self._poll_ethernetip(now)
+                self._scan_cycle(now=now)
+                stop.wait(self._scan_interval)
+        finally:
+            if self._ethernetip is not None:
+                self._ethernetip.close()
 
     def _poll_ethernetip(self, now: float) -> None:
         transport = self._ethernetip
@@ -1099,13 +1083,15 @@ def make_device(
     """Build a :class:`MazakSmoothEmulator` with full service wiring. Does NOT start services."""
     device = MazakSmoothEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
     if options_obj.mtconnect is not None:
-        device._mtconnect = MTConnectAgent(
-            endpoint.host,
-            options_obj.mtconnect.port,
-            render=lambda render_endpoint: render_mtconnect(device.state, render_endpoint),
+        device.add_service(
+            MTConnectAgent(
+                endpoint.host,
+                options_obj.mtconnect.port,
+                render=lambda render_endpoint: render_mtconnect(device.state, render_endpoint),
+            )
         )
     if "ethernetip" in device._interfaces:
-        device._ethernetip = _build_ethernetip_transport(endpoint, options_obj)
+        device.attach_ethernetip(_build_ethernetip_transport(endpoint, options_obj))
     return device
 
 

@@ -63,7 +63,6 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: HaasNGCOptions,
-        *, dprint: BroadcastServer | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.state = MachineState()
@@ -76,12 +75,6 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
         )
         self.programs = ProgramLibrary(root=root)
         self.interpreter = Interpreter(state=self.state)
-
-        self._mdc: LineServer | None = None
-        self._dprint: BroadcastServer | None = dprint
-        self._mtc: MTConnectAgent | None = None
-        self._smb = None
-        self._opcua = None
 
         self._runner: threading.Thread | None = None
         self._run_lock = threading.Lock()
@@ -133,29 +126,6 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
             self.emit("program.step", line=line)
         self.emit("program.end", program=name, cycle=self.state.cycle.value)
 
-    # ----- lifecycle --------------------------------------------------
-
-    def _run(self, stop: threading.Event) -> None:
-        threads = [_spawn(self._mdc.serve_forever)]
-        for sub in (self._dprint, self._mtc, self._smb, self._opcua):
-            if sub is not None:
-                threads.append(_spawn(sub.serve_forever))
-        self._mark_running()
-        stop.wait()
-        for sub in (self._mdc, self._dprint, self._mtc, self._smb, self._opcua):
-            if sub is not None:
-                sub.shutdown()
-        for t in threads:
-            t.join(timeout=2.0)
-
-
-def _spawn(target) -> threading.Thread:
-    ready = threading.Event()
-    t = threading.Thread(target=target, args=(ready,), daemon=True)
-    t.start()
-    ready.wait(timeout=2.0)
-    return t
-
 
 def make_device(
     name: str,
@@ -166,18 +136,23 @@ def make_device(
     dprint: BroadcastServer | None = None,
 ) -> HaasNGC:
     """Build a :class:`HaasNGC` with full service wiring. Does NOT start services."""
-    device = HaasNGC(name, endpoint, bus, options, dprint=dprint)
+    device = HaasNGC(name, endpoint, bus, options)
+    device.add_service(
+        LineServer(
+            endpoint.host, endpoint.port,
+            session_factory=stateless(device._handle_mdc),
+            framer=CRLF,
+        )
+    )
     if dprint is not None:
         device.state.dprint_subscribers.append(dprint.broadcast)
-    device._mdc = LineServer(
-        endpoint.host, endpoint.port,
-        session_factory=stateless(device._handle_mdc),
-        framer=CRLF,
-    )
+        device.add_service(dprint)
     if options.mtconnect_port is not None:
-        device._mtc = MTConnectAgent(
-            endpoint.host, options.mtconnect_port,
-            render=lambda ep: render_mtconnect(device.state, ep),
+        device.add_service(
+            MTConnectAgent(
+                endpoint.host, options.mtconnect_port,
+                render=lambda ep: render_mtconnect(device.state, ep),
+            )
         )
     if options.smb is not None:
         smb_opts = options.smb
@@ -188,14 +163,16 @@ def make_device(
             root=device.programs.root,
             smb1=smb_opts.smb1,
         )
-        device._smb = build_share(smb_opts.backend, cfg)
+        device.add_service(build_share(smb_opts.backend, cfg))
     if options.opcua is not None:
         from ...transport.opcua_server import OpcUaServer
 
-        device._opcua = OpcUaServer(
-            endpoint.host, options.opcua.port,
-            device_name=name,
-            readers=machine_readers(device.state),
+        device.add_service(
+            OpcUaServer(
+                endpoint.host, options.opcua.port,
+                device_name=name,
+                readers=machine_readers(device.state),
+            )
         )
     return device
 

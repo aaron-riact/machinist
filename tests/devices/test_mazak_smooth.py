@@ -281,7 +281,7 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
         opts,
         io=SignalBank(owner="mazak1"),
     )
-    device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts)
+    device.attach_ethernetip(_build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts))
     scanner = EtherNetIPScanner(
         EtherNetIPScannerConfig(
             host="127.0.0.1",
@@ -333,7 +333,7 @@ def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
         opts,
         io=SignalBank(owner="mazak1"),
     )
-    device._ethernetip = _build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts)
+    device.attach_ethernetip(_build_ethernetip_transport(Endpoint("127.0.0.1", tcp_port), opts))
     device.start()
     try:
         wait_running(device)

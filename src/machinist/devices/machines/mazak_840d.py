@@ -12,7 +12,6 @@ only what's needed for emulation.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,7 +70,7 @@ class MazakSinumerik840D(Device, HasMachineState, HasIO):
         self.state.door("main")
         self.io = io
         self._store = store
-        self._server = server
+        self.add_service(server)
         self.io.declare("door_open_cmd", Direction.INPUT)
         self.io.declare("door_close_cmd", Direction.INPUT)
         self.io.declare("cycle_start_cmd", Direction.INPUT)
@@ -116,17 +115,6 @@ class MazakSinumerik840D(Device, HasMachineState, HasIO):
         self.io["door_is_open"].set(open)
         self.io["door_is_closed"].set(not open)
         self.emit("door", open=open)
-
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(target=self._server.serve_forever, args=(ready,), daemon=True)
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
 
 
 # -----------------------------------------------------------------------

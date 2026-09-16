@@ -8,7 +8,6 @@ control writes (PMC → door, cycle, tool).
 from __future__ import annotations
 
 import struct
-import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -19,14 +18,9 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.focas import (
     FocasSubpacket,
-    FocasFrame,
-    VAR_REQ,
-    CONNECT_REQ,
-    CLOSE_REQ,
 )
 from ...transport.focas_server import FocasServer
-from .state import MachineState, CycleState
-
+from .state import CycleState, MachineState
 
 _EMPTY_BLOCK = object()
 _WORD_FORMAT = struct.Struct(">H")
@@ -57,12 +51,14 @@ class FanucFocasCnc(Device):
             self._state.doors[str(i)] = self._state.doors.get(str(i), self._state.door(str(i)))
         self._pmc_store: dict[tuple[int, int], int] = {}  # (section, address) -> value
         self._diag_store: dict[int, int] = dict(options.initial_diagnostics)
-        self._server = FocasServer(
-            host=endpoint.host,
-            port=endpoint.port,
-            on_request=self._on_request,
-            on_connect=self._on_connect,
-            on_disconnect=self._on_disconnect,
+        self.add_service(
+            FocasServer(
+                host=endpoint.host,
+                port=endpoint.port,
+                on_request=self._on_request,
+                on_connect=self._on_connect,
+                on_disconnect=self._on_disconnect,
+            )
         )
 
     # ----- FOCAS handlers -------------------------------------------------
@@ -214,24 +210,6 @@ class FanucFocasCnc(Device):
             else:
                 self._state.cycle = CycleState.IDLE
                 self.emit("cycle", state=str(self._state.cycle))
-
-    # ----- lifecycle ------------------------------------------------------
-
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._server.serve_forever, args=(ready,), daemon=True,
-        )
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
-
-    def _shutdown(self) -> None:
-        self._server.shutdown()
 
 
 _REQUEST_HANDLERS: dict[tuple[int, int, int], Any] = {
