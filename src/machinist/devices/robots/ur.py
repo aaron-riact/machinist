@@ -21,13 +21,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
+from ...core.device import Device
 from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, KinematicsOptions
 from ...transport.framing import NEWLINE
 from .arm import ArmMode, ArmOptions, HasArm, arm_from_options
 
@@ -108,9 +107,6 @@ class URDashboardServer(LineServerDevice, HasArm):
         }[mode]
 
 
-@register("ur_dashboard", default_port=UR_DASHBOARD_PORT)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    raw = dict(options)
-    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else None
-    kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
-    return URDashboardServer(name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw))
+@register("ur_dashboard", default_port=UR_DASHBOARD_PORT, options=ArmOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions) -> Device:
+    return URDashboardServer(name, endpoint, bus, options)

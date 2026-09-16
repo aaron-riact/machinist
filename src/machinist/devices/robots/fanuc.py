@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
 from ...core.capabilities import HasIO
@@ -23,7 +22,6 @@ from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, KinematicsOptions
 from ...kinematics.units import Meters, Radians
 from ...transport.focas import FocasSubpacket
 from ...transport.focas_server import FocasServer
@@ -35,13 +33,7 @@ FANUC_PORT = 18735  # fanucpy default Karel port
 FOCAS_PORT = 8193  # standard FOCAS1/2 port
 
 
-@dataclass(frozen=True, slots=True)
-class FanucKarelServerOptions:
-    joint_count: int = 6
-    kinematics: dict[str, Any] | None = None
-    backend: str | None = None
-    dh_params: dict[str, list[float]] | None = None
-    urdf: str | None = None
+class FanucKarelServerOptions(ArmOptions):
     digital_outputs: int = 16
     digital_inputs: int = 16
 
@@ -105,31 +97,16 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
     return [float(p) for p in parts]
 
 
-@register("fanuc_r30ib", default_port=FANUC_PORT)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    opts = FanucKarelServerOptions(**options)
-    dh = DHParams(**opts.dh_params) if opts.dh_params is not None else None
-    kin = KinematicsOptions(**opts.kinematics) if opts.kinematics is not None else None
-    arm = arm_from_options(ArmOptions(
-        joint_count=opts.joint_count,
-        kinematics=kin,
-        backend=opts.backend,
-        dh_params=dh,
-        urdf=opts.urdf,
-    ), name=name, publish=bus.publish)
+@register("fanuc_r30ib", default_port=FANUC_PORT, options=FanucKarelServerOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: FanucKarelServerOptions) -> Device:
+    arm = arm_from_options(opts, name=name, publish=bus.publish)
     return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name, publish=bus.publish))
 
 
 # ----- Dual-protocol robot (FOCAS + Karel) -----------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class FanucFocasRobotOptions:
-    joint_count: int = 6
-    kinematics: dict[str, Any] | None = None
-    backend: str | None = None
-    dh_params: dict[str, list[float]] | None = None
-    urdf: str | None = None
+class FanucFocasRobotOptions(ArmOptions):
     digital_outputs: int = 16
     digital_inputs: int = 16
     model: str = "R-30iB"
@@ -301,17 +278,7 @@ _FOCAS_ROBOT_HANDLERS: dict[tuple[int, int, int], Any] = {
 }
 
 
-@register("fanuc_focas_robot", default_port=FOCAS_PORT)
-def _robot_factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = dict(options)
-    opt = FanucFocasRobotOptions(**opts)
-    dh = DHParams(**opt.dh_params) if opt.dh_params is not None else None
-    kin = KinematicsOptions(**opt.kinematics) if opt.kinematics is not None else None
-    arm = arm_from_options(ArmOptions(
-        joint_count=opt.joint_count,
-        kinematics=kin,
-        backend=opt.backend,
-        dh_params=dh,
-        urdf=opt.urdf,
-    ), name=name, publish=bus.publish)
+@register("fanuc_focas_robot", default_port=FOCAS_PORT, options=FanucFocasRobotOptions)
+def _robot_factory(name: str, endpoint: Endpoint, bus: EventBus, opt: FanucFocasRobotOptions) -> Device:
+    arm = arm_from_options(opt, name=name, publish=bus.publish)
     return FanucFocasRobot(name, endpoint, bus, opt, arm=arm, io=SignalBank(owner=name, publish=bus.publish))

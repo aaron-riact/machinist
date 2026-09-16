@@ -35,6 +35,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...core.capabilities import HasFlange, HasIO
+from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
@@ -42,7 +43,7 @@ from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.state import StateCell
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.api import DHParams, Joints, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
@@ -448,6 +449,14 @@ def _feedback_writer(
         remaining = deadline - time.monotonic()
         if remaining > 0:
             time.sleep(remaining)
+
+
+class DobotOptions(ArmOptions):
+    """The ``dobot_dashboard`` block: an arm, which Dobot model it is, and the feedback ports."""
+
+    robot_type: str = "cr5"
+    #: Serve the 30004/30005/30006 feedback streams. Off for tests that only need the dashboard.
+    feedback_ports: bool = True
 
 
 class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
@@ -1129,17 +1138,14 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
             Radians(rx), Radians(ry), Radians(rz))
 
 
-@register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]):
-    raw = dict(options)
-    robot_type_raw = raw.pop("robot_type", "cr5")
-    model_info = DOBOT_ROBOT_MODELS.get(robot_type_raw, _DEFAULT_MODEL)
-    dh = DHParams(**raw.pop("dh_params")) if "dh_params" in raw else model_info.dh_params
-    kin = KinematicsOptions(**raw.pop("kinematics")) if "kinematics" in raw else None
-    feedback = raw.pop("feedback_ports", None)
-    feedback_enabled = feedback is not False
+@register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT, options=DobotOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions) -> Device:
+    model_info = DOBOT_ROBOT_MODELS.get(options.robot_type, _DEFAULT_MODEL)
+    if options.dh_params is None:
+        # the model's own geometry, unless the scene gives explicit DH parameters
+        options = options.model_copy(update={"dh_params": model_info.dh_params})
     return DobotDashboard(
-        name, endpoint, bus, ArmOptions(kinematics=kin, dh_params=dh, **raw),
-        feedback_enabled=feedback_enabled,
+        name, endpoint, bus, options,
+        feedback_enabled=options.feedback_ports,
         model_info=model_info,
     )

@@ -27,6 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...core.events import Event
+from ...core.options import Options
 from ...kinematics.api import (
     DHParams,
     Joints,
@@ -45,9 +46,11 @@ Publish = Callable[[Event], None]
 JOINT_COUNT_DEFAULT = 6
 
 
-@dataclass(frozen=True, slots=True)
-class ArmOptions:
+class ArmOptions(Options):
     """Typed schema for robot-arm YAML ``options`` section.
+
+    Vendor robots extend it with their own keys; the registry parses the
+    whole block at once.
 
     Supports both forms::
 

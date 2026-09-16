@@ -14,14 +14,13 @@ without touching this device.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, KinematicsOptions
 from ...srci import SrciServer
 from ...transport.message import FrameHandler, open_server
 from .arm import ArmOptions, HasArm, RobotArm, arm_from_options, arm_readers
@@ -42,18 +41,11 @@ def protocols() -> tuple[str, ...]:
     return tuple(_PROTOCOLS)
 
 
-@dataclass(frozen=True, slots=True)
-class OpcUaClientOptions:
+class OpcUaClientOptions(Options):
     port: int = 4840
 
 
-@dataclass(frozen=True, slots=True)
-class RobotDeviceOptions:
-    joint_count: int = 6
-    kinematics: dict[str, Any] | None = None
-    backend: str | None = None
-    dh_params: dict[str, list[float]] | None = None
-    urdf: str | None = None
+class RobotDeviceOptions(ArmOptions):
     protocol: str = "srci"
     transport: str = "tcp"
     opcua: OpcUaClientOptions | None = None
@@ -109,21 +101,9 @@ def _maybe_opcua(
     )
 
 
-@register("robot", default_port=15001)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = dict(options)
-    raw_opcua = opts.pop("opcua", None)
-    opcua_opts = OpcUaClientOptions(**raw_opcua) if raw_opcua else None
-    opt = RobotDeviceOptions(opcua=opcua_opts, **opts)
-    dh = DHParams(**opt.dh_params) if opt.dh_params is not None else None
-    kin = KinematicsOptions(**opt.kinematics) if opt.kinematics is not None else None
-    arm = arm_from_options(ArmOptions(
-        joint_count=opt.joint_count,
-        kinematics=kin,
-        backend=opt.backend,
-        dh_params=dh,
-        urdf=opt.urdf,
-    ), name=name, publish=bus.publish)
+@register("robot", default_port=15001, options=RobotDeviceOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opt: RobotDeviceOptions) -> Device:
+    arm = arm_from_options(opt, name=name, publish=bus.publish)
     device = RobotDevice(name, endpoint, bus, opt, arm=arm)
     device.add_service(open_server(opt.transport, endpoint.host, endpoint.port, device.dispatch))
     opcua = _maybe_opcua(name, endpoint.host, opt.opcua, arm)
