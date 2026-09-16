@@ -46,14 +46,15 @@ from __future__ import annotations
 
 import math
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ...core.capabilities import HasRegisters
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.panel import Field, Panel
+from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
+from ...core.state import StateCell
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
 from ...transport.registers import RegisterPort
@@ -156,8 +157,10 @@ class OnRobot3FG25Options:
     finger_position: int = FINGER_POSITION_25
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _State:
+    """The gripper as its registers see it. Written only through the device's StateCell."""
+
     actual_angle_tenths: int = 0
     target_angle_tenths: int = 0
     force: int = 40
@@ -174,7 +177,6 @@ class _State:
     fw_minor: int = 0
     fw_build: int = 0
     serial: str = ""
-    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class OnRobot3FG25(Device, HasRegisters):
@@ -187,12 +189,16 @@ class OnRobot3FG25(Device, HasRegisters):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._settings = options
-        self._state = state
+        self._state = StateCell(state, on_change=lambda _view: self.announce_panel())
         self._server: HoldingRegisterServer | None = None
         self._mover: threading.Thread | None = None
 
+    def announce_panel(self) -> None:
+        """Publish the detail panel; called on every state change and client change."""
+        self.publish(PanelChanged(device=self.name, panel=self.build_detail()))
+
     def _width(self) -> int:
-        s = self._state
+        s = self._state.view
         pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
         return _angle_to_width(
             s.actual_angle_tenths,
@@ -202,7 +208,7 @@ class OnRobot3FG25(Device, HasRegisters):
         )
 
     def _target_width(self) -> int:
-        s = self._state
+        s = self._state.view
         pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
         return _angle_to_width(
             s.target_angle_tenths,
@@ -212,35 +218,34 @@ class OnRobot3FG25(Device, HasRegisters):
         )
 
     def _on_read(self, address: int) -> int:
-        s = self._state
-        with s.lock:
-            if REG_SERIAL_BASE <= address <= REG_SERIAL_END:
-                return self._serial_register(address, s.serial)
-            return {
-                REG_TARGET_FORCE: s.force,
-                REG_TARGET_DIAMETER: self._target_width(),
-                REG_GRIP_TYPE: s.grip_type,
-                REG_CONTROL: s.control,
-                REG_STATUS: (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0),
-                REG_RAW_DIAMETER: self._width(),
-                REG_DIAMETER_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
-                REG_FORCE_APPLIED: s.force,
-                REG_FINGER_LENGTH: s.finger_length_tenths,
-                REG_FINGER_POSITION: s.finger_position,
-                REG_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
-                REG_MIN_DIAMETER: 0,
-                REG_MAX_DIAMETER: 1000,
-                REG_SET_FINGER_LENGTH: s.finger_length_tenths,
-                REG_SET_FINGER_POSITION: s.finger_position,
-                REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
-                REG_PRODUCT_CODE: s.product_code,
-                REG_FW_MAJOR_MINOR: (s.fw_major << 8) | s.fw_minor,
-                REG_FW_BUILD: s.fw_build,
-            }.get(address, 0)
+        s = self._state.view
+        if REG_SERIAL_BASE <= address <= REG_SERIAL_END:
+            return self._serial_register(address, s.serial)
+        return {
+            REG_TARGET_FORCE: s.force,
+            REG_TARGET_DIAMETER: self._target_width(),
+            REG_GRIP_TYPE: s.grip_type,
+            REG_CONTROL: s.control,
+            REG_STATUS: (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0),
+            REG_RAW_DIAMETER: self._width(),
+            REG_DIAMETER_WITH_OFFSET: self._width() - s.fingertip_offset_hundredths // 10 * 2,
+            REG_FORCE_APPLIED: s.force,
+            REG_FINGER_LENGTH: s.finger_length_tenths,
+            REG_FINGER_POSITION: s.finger_position,
+            REG_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
+            REG_MIN_DIAMETER: 0,
+            REG_MAX_DIAMETER: 1000,
+            REG_SET_FINGER_LENGTH: s.finger_length_tenths,
+            REG_SET_FINGER_POSITION: s.finger_position,
+            REG_SET_FINGERTIP_OFFSET: s.fingertip_offset_hundredths,
+            REG_PRODUCT_CODE: s.product_code,
+            REG_FW_MAJOR_MINOR: (s.fw_major << 8) | s.fw_minor,
+            REG_FW_BUILD: s.fw_build,
+        }.get(address, 0)
 
     def build_detail(self) -> Panel:
-        """Assemble the normalized detail dict for this 3FG25 gripper."""
-        s = self._state
+        """Assemble the detail panel for this 3FG25 gripper."""
+        s = self._state.view
         status = (STATUS_BUSY if s.busy else 0) | (STATUS_GRIPPED if s.gripped else 0)
         pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
         actual_tenths = _angle_to_width(
@@ -307,25 +312,7 @@ class OnRobot3FG25(Device, HasRegisters):
         return RegisterPort(on_read=self._on_read, on_write=self._on_write)
 
     def _on_write(self, address: int, value: int) -> None:
-        s = self._state
-        with s.lock:
-            if address == REG_TARGET_FORCE:
-                s.force = value
-            elif address == REG_TARGET_DIAMETER:
-                pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
-                s.target_angle_tenths = _width_to_angle(
-                    value, s.finger_length_tenths, pos_offset, s.fingertip_offset_hundredths//10,
-                )
-            elif address == REG_GRIP_TYPE:
-                s.grip_type = value
-            elif address == REG_CONTROL:
-                s.grip = bool(value & 0x01)
-            elif address == REG_SET_FINGER_LENGTH:
-                s.finger_length_tenths = value
-            elif address == REG_SET_FINGER_POSITION:
-                s.finger_position = value
-            elif address == REG_SET_FINGERTIP_OFFSET:
-                s.fingertip_offset_hundredths = value
+        self._state.swap(lambda s: _written(s, address, value))
         if address in (REG_TARGET_DIAMETER, REG_CONTROL):
             self._kick()
 
@@ -335,22 +322,45 @@ class OnRobot3FG25(Device, HasRegisters):
             self._mover.start()
 
     def _move_loop(self) -> None:
-        s = self._state
         while not self._stop_event.is_set():
-            with s.lock:
-                if s.actual_angle_tenths == s.target_angle_tenths:
-                    s.busy = False
-                    s.gripped = bool(s.grip)
-                    width = self._width()
-                    self.emit("settled", diameter_mm=width / 10)
-                    return
-                s.busy = True
-                delta = s.target_angle_tenths - s.actual_angle_tenths
-                step = min(abs(delta), ANGLE_STEP_TENTHS)
-                s.actual_angle_tenths += step if delta > 0 else -step
-            width = self._width()
-            self.emit("moving", diameter_mm=width / 10)
+            s = self._state.swap(_advanced)
+            if not s.busy:
+                self.emit("settled", diameter_mm=self._width() / 10)
+                return
+            self.emit("moving", diameter_mm=self._width() / 10)
             self._stop_event.wait(0.02)
+
+
+def _written(s: _State, address: int, value: int) -> _State:
+    """The state after a Modbus write of *value* to *address*."""
+    if address == REG_TARGET_FORCE:
+        return replace(s, force=value)
+    if address == REG_TARGET_DIAMETER:
+        pos_offset = _POSITION_OFFSETS.get(s.finger_position, 0)
+        angle = _width_to_angle(
+            value, s.finger_length_tenths, pos_offset, s.fingertip_offset_hundredths // 10
+        )
+        return replace(s, target_angle_tenths=angle)
+    if address == REG_GRIP_TYPE:
+        return replace(s, grip_type=value)
+    if address == REG_CONTROL:
+        return replace(s, grip=bool(value & 0x01))
+    if address == REG_SET_FINGER_LENGTH:
+        return replace(s, finger_length_tenths=value)
+    if address == REG_SET_FINGER_POSITION:
+        return replace(s, finger_position=value)
+    if address == REG_SET_FINGERTIP_OFFSET:
+        return replace(s, fingertip_offset_hundredths=value)
+    return s
+
+
+def _advanced(s: _State) -> _State:
+    """One mover tick: a step of finger angle towards the target, or settled when there."""
+    if s.actual_angle_tenths == s.target_angle_tenths:
+        return replace(s, busy=False, gripped=bool(s.grip))
+    delta = s.target_angle_tenths - s.actual_angle_tenths
+    step = min(abs(delta), ANGLE_STEP_TENTHS)
+    return replace(s, busy=True, actual_angle_tenths=s.actual_angle_tenths + (step if delta > 0 else -step))
 
 
 @register("onrobot_3fg25", default_port=502)
@@ -365,17 +375,17 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     )
     state = _State(
         actual_angle_tenths=initial_angle,
+        target_angle_tenths=initial_angle,
         finger_length_tenths=opts.finger_length_tenths,
         finger_position=opts.finger_position,
         fingertip_offset_hundredths=opts.fingertip_offset_hundredths,
     )
-    state.target_angle_tenths = state.actual_angle_tenths
     device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
     server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,
         registers=device.register_port,
-        on_connect_change=lambda count: device.emit("snapshot", clients=count),
+        on_connect_change=lambda count: device.announce_panel(),
     )
     device._server = server  # the detail panel reports its listener and clients
     device.add_service(server)
