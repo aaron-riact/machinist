@@ -9,6 +9,15 @@ from machinist.core.events import Event
 from machinist.core.types import DeviceState
 from machinist.devices.machines.state import MachineState, Toggle
 from machinist.devices.robots.arm import RobotArm
+from .fakes import (
+    FakeArmDevice,
+    FakeDevice,
+    FakeIODevice,
+    FakeLibrary,
+    FakeMachineDevice,
+    FakeProgramDevice,
+    RecordingDobot,
+)
 from machinist.tui.app import (
     MachinistApp,
     _arm_summary,
@@ -38,13 +47,13 @@ def test_paint_lifecycle_uses_expected_colours() -> None:
 
 
 def test_arm_summary_is_empty_for_non_robot() -> None:
-    assert _arm_summary(SimpleNamespace(arm=None)) == ""
+    assert _arm_summary(FakeDevice("io1")) == ""
 
 
 def test_arm_summary_reports_estop_and_pose() -> None:
     arm = RobotArm(joint_count=6)
     arm.estop()
-    out = _arm_summary(SimpleNamespace(arm=arm))
+    out = _arm_summary(FakeArmDevice("arm1", arm=arm))
     assert "estopped" in out
     assert "ENGAGED" in out
     assert "joints" in out
@@ -52,8 +61,7 @@ def test_arm_summary_reports_estop_and_pose() -> None:
 
 
 def test_machine_summary_is_empty_for_non_machine() -> None:
-    assert _machine_summary(SimpleNamespace(state=None)) == ""
-    assert _machine_summary(SimpleNamespace()) == ""
+    assert _machine_summary(FakeDevice("io1")) == ""
 
 
 def test_machine_summary_reports_cycle_and_tooling() -> None:
@@ -66,7 +74,7 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
     state.spindle_rpm = 1500.0
     state.tool = 3
     state.parts = 7
-    out = _machine_summary(SimpleNamespace(state=state))
+    out = _machine_summary(FakeMachineDevice("mill", state=state))
     assert "O0001" in out
     assert "+12.000" in out
     assert "1500" in out
@@ -78,14 +86,7 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
 def test_detail_header_combines_static_and_dynamic_sections() -> None:
     state = MachineState()
     state.program = "O0001"
-    device = SimpleNamespace(
-        name="mill",
-        kind="haas_ngc",
-        endpoint="127.0.0.1:5051",
-        lifecycle=DeviceState.RUNNING,
-        state=state,
-        build_detail=lambda: None,
-    )
+    device = FakeMachineDevice("mill", state=state)
     out = _detail_header(device)
     assert "mill" in out
     assert "haas_ngc" in out
@@ -93,12 +94,9 @@ def test_detail_header_combines_static_and_dynamic_sections() -> None:
 
 
 def test_snapshot_summary_reports_mode_and_link_state() -> None:
-    device = SimpleNamespace(
-        build_detail=lambda: {
-            "mode": "adapter",
-            "transport_ready": True,
-            "peer_connected": False,
-        }
+    device = FakeDevice(
+        "smooth",
+        detail={"mode": "adapter", "transport_ready": True, "peer_connected": False},
     )
     out = _snapshot_summary(device)
     assert "adapter" in out
@@ -168,38 +166,30 @@ class _FakeApp:
         return self._device if (name in (None, self._device.name)) else None
 
 
-def _fake_device(*, programs=None, run=None):
-    return SimpleNamespace(name="haas1", programs=programs, run_program=run)
-
-
 def test_cmd_ls_lists_programs() -> None:
-    programs = SimpleNamespace(list=lambda: ["O0001.nc", "O0002.nc"])
-    app = _FakeApp(_fake_device(programs=programs))
+    device = FakeProgramDevice("haas1", programs=FakeLibrary(["O0001.nc", "O0002.nc"]))
+    app = _FakeApp(device)
     _cmd_ls(app, "")
     assert any("O0001.nc" in w for w in app.writes)
 
 
 def test_cmd_ls_complains_when_no_library() -> None:
-    app = _FakeApp(_fake_device(programs=None))
+    app = _FakeApp(FakeDevice("haas1"))
     _cmd_ls(app, "")
     assert any("no program library" in w for w in app.writes)
 
 
 def test_cmd_run_dispatches_program_name() -> None:
-    called: list[str] = []
-    device = _fake_device(
-        programs=SimpleNamespace(list=lambda: []),
-        run=called.append,
-    )
+    device = FakeProgramDevice("haas1", programs=FakeLibrary())
     app = _FakeApp(device)
     _cmd_run(app, "haas1 O0001.nc")
-    assert called == ["O0001.nc"]
+    assert device.ran == ["O0001.nc"]
 
 
 def test_cmd_run_reports_errors() -> None:
     def boom(_name: str) -> None:
         raise RuntimeError("already running")
-    app = _FakeApp(_fake_device(programs=None, run=boom))
+    app = _FakeApp(FakeProgramDevice("haas1", programs=FakeLibrary(), run=boom))
     _cmd_run(app, "haas1 X.nc")
     assert any("already running" in w for w in app.writes)
 
@@ -254,16 +244,8 @@ def test_refresh_detail_populates_then_increments_then_rebuilds_on_switch() -> N
         "derived_fields": [],
         "signals": [],
     }
-    device1 = SimpleNamespace(
-        name="dev1", kind="test", endpoint="ep1",
-        lifecycle=DeviceState.RUNNING, io=sigs,
-        build_detail=lambda: _detail,
-    )
-    device2 = SimpleNamespace(
-        name="dev2", kind="test", endpoint="ep2",
-        lifecycle=DeviceState.RUNNING, io=sigs,
-        build_detail=lambda: _detail,
-    )
+    device1 = FakeIODevice("dev1", io=sigs, detail=_detail)  # type: ignore[arg-type]
+    device2 = FakeIODevice("dev2", io=sigs, detail=_detail)  # type: ignore[arg-type]
 
     in_label = ColumnKey("input")
     in_value = ColumnKey("value")
@@ -362,28 +344,8 @@ class _FakeFaultApp:
         self._log = SimpleNamespace(write=self.writes.append)
 
 
-class _FakeDobot:
-    name = "dobot1"
-
-    def __init__(self) -> None:
-        self.stops: list[dict] = []
-        self.cleared = 0
-        self.enable_failures: list[object] = []
-
-    def inject_protective_stop(self, *, robot_mode, controller_ids, sticky) -> None:
-        self.stops.append(
-            {"robot_mode": robot_mode, "controller_ids": tuple(controller_ids), "sticky": sticky}
-        )
-
-    def clear_protective_stop(self) -> None:
-        self.cleared += 1
-
-    def set_enable_failure(self, failure) -> None:
-        self.enable_failures.append(failure)
-
-
 def test_cmd_fault_injects_a_protective_stop() -> None:
-    dobot = _FakeDobot()
+    dobot = RecordingDobot()
     app = _FakeFaultApp(dobot)
 
     _cmd_fault(app, "pstop", "dobot1 error ids=17,116 sticky")
@@ -392,7 +354,7 @@ def test_cmd_fault_injects_a_protective_stop() -> None:
 
 
 def test_cmd_fault_falls_back_to_the_selected_device() -> None:
-    dobot = _FakeDobot()
+    dobot = RecordingDobot()
     app = _FakeFaultApp(dobot)
 
     _cmd_fault(app, "pstop", "")
@@ -403,7 +365,7 @@ def test_cmd_fault_falls_back_to_the_selected_device() -> None:
 def test_cmd_fault_sets_an_enable_failure() -> None:
     from machinist.devices.robots.dobot import EnableFailure
 
-    dobot = _FakeDobot()
+    dobot = RecordingDobot()
     app = _FakeFaultApp(dobot)
 
     _cmd_fault(app, "failenable", "dobot1 stuck")
@@ -412,7 +374,7 @@ def test_cmd_fault_sets_an_enable_failure() -> None:
 
 
 def test_cmd_fault_logs_the_error_instead_of_raising() -> None:
-    app = _FakeFaultApp(_FakeDobot())
+    app = _FakeFaultApp(RecordingDobot())
 
     _cmd_fault(app, "pstop", "dobot1 sideways")
 
@@ -439,7 +401,7 @@ class _FakeFilesApp:
 
 
 def _programs(names):
-    return SimpleNamespace(name="haas1", programs=SimpleNamespace(list=lambda: list(names)))
+    return FakeProgramDevice("haas1", programs=FakeLibrary(list(names)))
 
 
 def test_refresh_files_lists_the_programs() -> None:
@@ -463,7 +425,7 @@ def test_refresh_files_skips_the_rebuild_when_nothing_changed() -> None:
 def test_refresh_files_rebuilds_when_a_program_appears() -> None:
     app = _FakeFilesApp()
     names = ["O0001.nc"]
-    device = SimpleNamespace(name="haas1", programs=SimpleNamespace(list=lambda: list(names)))
+    device = FakeProgramDevice("haas1", programs=FakeLibrary(names))
 
     MachinistApp._refresh_files(app, device)
     names.append("O0002.nc")
@@ -476,7 +438,7 @@ def test_refresh_files_rebuilds_when_the_device_changes() -> None:
     app = _FakeFilesApp()
 
     MachinistApp._refresh_files(app, _programs([]))
-    other = SimpleNamespace(name="haas2", programs=SimpleNamespace(list=lambda: []))
+    other = FakeProgramDevice("haas2", programs=FakeLibrary())
     MachinistApp._refresh_files(app, other)
 
     assert app.cleared == 2
@@ -485,6 +447,6 @@ def test_refresh_files_rebuilds_when_the_device_changes() -> None:
 def test_refresh_files_clears_for_a_device_with_no_library() -> None:
     app = _FakeFilesApp()
 
-    MachinistApp._refresh_files(app, SimpleNamespace(name="io1", programs=None))
+    MachinistApp._refresh_files(app, FakeDevice("io1"))
 
     assert app.rows == []

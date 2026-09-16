@@ -39,11 +39,13 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
+from ..core.capabilities import HasIO, HasPrograms
 from ..core.device import Device, DetailField, DetailSignal
 from ..core.events import Event
-
 from ..core.types import DeviceState
 from ..core.world import World
+from ..devices.machines.state import HasMachineState
+from ..devices.robots.arm import HasArm, RobotArm
 from ..web.api import CommandError, dispatch_command
 
 
@@ -217,10 +219,9 @@ class MachinistApp(App[None]):
         signals: list[DetailSignal] = snapshot.get("signals", [])
 
         # Case-insensitive lookup of raw signal values for the green/red dot.
-        io = getattr(device, "io", None)
         signal_values: dict[str, bool] = {}
-        if io is not None:
-            for sig in io:
+        if isinstance(device, HasIO):
+            for sig in device.io:
                 signal_values[sig.name.lower()] = bool(sig.value)
 
         def _dot(field: DetailField) -> Text:
@@ -291,8 +292,7 @@ class MachinistApp(App[None]):
         ``programs.list()`` scans a directory, so this must stay cheap enough
         to call on every UI tick rather than only on an event.
         """
-        programs = getattr(device, "programs", None)
-        names = list(programs.list()) if programs is not None else []
+        names = device.programs.list() if isinstance(device, HasPrograms) else []
         if (device.name, names) == self._last_files:
             return
         self._last_files = (device.name, names)
@@ -328,13 +328,12 @@ class MachinistApp(App[None]):
         except (KeyError, ValueError) as exc:
             self._log.write(f"[red]error[/]: {exc}")
 
-    def _with_arm(self, name: str, fn: Callable) -> None:  # type: ignore[type-arg]
+    def _with_arm(self, name: str, fn: Callable[[RobotArm], None]) -> None:
         device = self._lookup(name)
-        arm = getattr(device, "arm", None)
-        if arm is None:
+        if not isinstance(device, HasArm):
             self._log.write(f"[red]{name}[/] has no arm")
             return
-        fn(arm)
+        fn(device.arm)
         self._log.write(f"applied to [cyan]{name}[/]")
 
     # ----- keybindings --------------------------------------------------
@@ -392,10 +391,9 @@ def _detail_header(device: Device) -> str:
 
 def _arm_summary(device: Device) -> str:
     """One-line-per-fact robot status, or '' for non-robot devices."""
-    arm = getattr(device, "arm", None)
-    if arm is None:
+    if not isinstance(device, HasArm):
         return ""
-    s = arm.state.snapshot()
+    s = device.arm.state.snapshot()
     mode = s.mode
     mode_colour = "red" if mode in ("estopped", "faulted") else "green"
     joints = "  ".join(f"{j:+.3f}" for j in s.joints)
@@ -412,9 +410,9 @@ def _arm_summary(device: Device) -> str:
 
 def _machine_summary(device: Device) -> str:
     """One-line CNC status (cycle/program/spindle/tool/parts), or '' otherwise."""
-    state = getattr(device, "state", None)
-    if state is None or not hasattr(state, "cycle"):
+    if not isinstance(device, HasMachineState):
         return ""
+    state = device.state
     cycle = str(state.cycle)
     cycle_colour = (
         "green" if cycle == "running" else "yellow" if cycle == "paused" else "grey50"
@@ -480,23 +478,21 @@ def _cmd_set(app: MachinistApp, rest: str) -> None:
 
 def _cmd_ls(app: MachinistApp, rest: str) -> None:
     device = app._lookup(rest.strip() or app._selected)
-    programs = getattr(device, "programs", None)
-    if programs is None:
+    if not isinstance(device, HasPrograms):
         app._log.write(f"[red]{rest or 'selected'}[/] has no program library")
         return
-    names = programs.list() or ["(empty)"]
+    names = device.programs.list() or ["(empty)"]
     app._log.write(f"[cyan]{device.name}[/] programs: {', '.join(names)}")
 
 
 def _cmd_run(app: MachinistApp, rest: str) -> None:
     target, _, program = rest.partition(" ")
     device = app._lookup(target.strip() or app._selected)
-    run_program = getattr(device, "run_program", None)
-    if run_program is None:
+    if not isinstance(device, HasPrograms):
         app._log.write(f"[red]{target or 'selected'}[/] cannot run programs")
         return
     try:
-        run_program(program.strip())
+        device.run_program(program.strip())
         app._log.write(f"started [cyan]{program.strip()}[/] on {device.name}")
     except (FileNotFoundError, RuntimeError) as exc:
         app._log.write(f"[red]error[/]: {exc}")
