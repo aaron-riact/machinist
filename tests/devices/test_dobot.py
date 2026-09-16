@@ -566,7 +566,7 @@ def test_dobot_tool_zero_always_succeeds(dobot: DobotDashboard) -> None:
 
 def test_dobot_tool_with_frame_selects_active(dobot: DobotDashboard) -> None:
     _send(dobot, "SetTool(1,{0,0,0,0,0,0})Tool(1)", expect=2)
-    assert dobot._active_tool[0] == 1
+    assert dobot._active_tool == 1
 
 
 def test_dobot_tool_fails_for_undefined_index(dobot: DobotDashboard) -> None:
@@ -603,7 +603,7 @@ def test_dobot_relmovltool_moves(dobot: DobotDashboard) -> None:
 
 def test_dobot_relmovltool_moves_in_tool_frame(dobot: DobotDashboard) -> None:
     _send(dobot, "SetTool(1,{0,0,0,0.785,0,0})Tool(1)RelMovLTool(10,0,0,0,0,0)", expect=3)
-    assert dobot._current_command_id[0] == 3  # SetTool + Tool + RelMovLTool
+    assert dobot._current_command_id == 3  # SetTool + Tool + RelMovLTool
 
 
 def test_dobot_relmovltool_fails_on_bad_args(dobot: DobotDashboard) -> None:

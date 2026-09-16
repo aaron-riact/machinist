@@ -26,7 +26,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
@@ -47,7 +47,8 @@ from ...kinematics.api import DHParams, Joints, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
-from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, RobotArm, arm_from_options
+from ...transport.service import Service
+from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
 DOBOT_FEEDBACK_FAST_PORT = 30004
@@ -346,7 +347,7 @@ def _update_feedback_packet(
     command_id: int = 0,
     robot_type_code: int = 5,
     tool: int = 0,
-    payload: list[float] | None = None,
+    payload: Sequence[float] | None = None,
     fault: _FaultState | None = None,
 ) -> None:
     pkt.len = 1440
@@ -375,6 +376,71 @@ def _update_feedback_packet(
         pkt.Load, pkt.CenterX, pkt.CenterY, pkt.CenterZ = payload
 
 
+class _FeedbackStream(Service):
+    """The controller's three feedback ports, served as one :class:`Service`.
+
+    A real Dobot streams the same 1440-byte packet on 30004 (every 8 ms),
+    30005 (every 200 ms) and 30006 (every second). The packet is built from
+    whatever the dashboard holds at that instant, so the stream only needs a
+    reference to it.
+    """
+
+    PORTS = (DOBOT_FEEDBACK_FAST_PORT, DOBOT_FEEDBACK_MED_PORT, DOBOT_FEEDBACK_SLOW_PORT)
+    PERIOD = 0.008
+
+    def __init__(self, dashboard: DobotDashboard) -> None:
+        self._dashboard = dashboard
+        self._stop = threading.Event()
+        self._listeners: list[socket.socket] = []
+        self._clients: tuple[list[socket.socket], ...] = ([], [], [])
+
+    def serve_forever(self, ready: threading.Event | None = None) -> None:
+        for port, clients in zip(self.PORTS, self._clients, strict=True):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", port))
+            sock.listen()
+            sock.settimeout(1.0)
+            self._listeners.append(sock)
+            threading.Thread(target=self._accept, args=(sock, clients), daemon=True).start()
+        if ready is not None:
+            ready.set()
+        self._write_loop()
+
+    def shutdown(self) -> None:
+        self._stop.set()
+        for sock in self._listeners:
+            sock.close()
+
+    def _accept(self, sock: socket.socket, clients: list[socket.socket]) -> None:
+        while not self._stop.is_set():
+            try:
+                client, _addr = sock.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            clients.append(client)
+
+    def _write_loop(self) -> None:
+        pkt = DobotFeedbackPacket()
+        fast, med, slow = self._clients
+        tick = 0
+        while not self._stop.is_set():
+            deadline = time.monotonic() + self.PERIOD
+            self._dashboard.fill_feedback(pkt)
+            data = bytes(pkt)
+            _send_to_all(fast, data)
+            if tick % 25 == 0:
+                _send_to_all(med, data)
+                if tick % 125 == 0:
+                    _send_to_all(slow, data)
+            tick += 1
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+
+
 def _send_to_all(clients: list[socket.socket], data: bytes) -> None:
     dead: list[socket.socket] = []
     for c in clients:
@@ -385,70 +451,6 @@ def _send_to_all(clients: list[socket.socket], data: bytes) -> None:
     for c in dead:
         clients.remove(c)
         c.close()
-
-
-def _accept_loop(sock: socket.socket, clients: list[socket.socket], running: threading.Event) -> None:
-    sock.settimeout(1.0)
-    while running.is_set():
-        try:
-            client, _addr = sock.accept()
-        except socket.timeout:
-            continue
-        except OSError:
-            return
-        clients.append(client)
-    sock.close()
-
-
-def _feedback_writer(
-    arm: RobotArm,
-    fast: list[socket.socket],
-    med: list[socket.socket],
-    slow: list[socket.socket],
-    command_id: list[int],
-    io: SignalBank,
-    robot_type_code: int,
-    tool_di_count: int,
-    tool_do_count: int,
-    running: threading.Event,
-    tool_frames: dict[int, Pose] | None = None,
-    active_tool: list[int] | None = None,
-    payload: list[float] | None = None,
-    fault: StateCell[_FaultState] | None = None,
-) -> None:
-    pkt = DobotFeedbackPacket()
-    tick = 0
-    period = 0.008
-    while running.is_set():
-        deadline = time.monotonic() + period
-        s = arm.state.snapshot()
-        active_tool_idx = active_tool[0] if active_tool else 0
-        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, tool=active_tool_idx, payload=payload, fault=fault.view if fault is not None else None)
-        pkt.DigitalInputs = sum(
-            (1 << (i - 1)) for i in range(1, tool_di_count + 1) if io[f"tooldi{i}"].value
-        )
-        pkt.DigitalOutputs = sum(
-            (1 << (i - 1)) for i in range(1, tool_do_count + 1) if io[f"tooldo{i}"].value
-        )
-        if active_tool_idx > 0 and tool_frames and active_tool_idx in tool_frames:
-            t = tool_frames[active_tool_idx]
-            pkt.ToolValue[:] = (
-                t[0] * 1000, t[1] * 1000, t[2] * 1000,
-                math.degrees(t[3]), math.degrees(t[4]), math.degrees(t[5]),
-            )
-        data = bytes(pkt)
-        _send_to_all(fast, data)
-        if tick % 25 == 0:
-            _send_to_all(med, data)
-            if tick % 125 == 0:
-                _send_to_all(slow, data)
-                qa = [f"{pkt.QActual[i]:+.4f}" for i in range(6)]
-                tv = [f"{pkt.ToolVectorActual[i]:+.4f}" for i in range(6)]
-                print(f"[fb] QActual=({','.join(qa)})  ToolVec=({','.join(tv)})", file=sys.stderr, flush=True)
-        tick += 1
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
 
 
 class DobotOptions(ArmOptions):
@@ -468,8 +470,6 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     _quiet_commands = frozenset(
         {"tooldi", "gettooldo", "ai", "getao", "toolai", "geterrorid", "getholdregs"}
     )
-
-    _FEEDBACK_PORTS = (DOBOT_FEEDBACK_FAST_PORT, DOBOT_FEEDBACK_MED_PORT, DOBOT_FEEDBACK_SLOW_PORT)
 
     def __init__(
         self,
@@ -494,9 +494,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._ai_count = self._model_info.ai_count
         self._ao_count = self._model_info.ao_count
 
-        self._current_command_id: list[int] = [0]
-        self._running = threading.Event()
-        self._running.set()
+        self._current_command_id = 0
         self._fault = StateCell(_FaultState(), on_change=lambda _view: self.announce_panel())
         self.flange = FlangeBus()
         self._masters: dict[int, _ModbusMaster] = {}
@@ -505,39 +503,42 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._ao: list[float] = [0.0] * self._ao_count
 
         self._tool_frames: dict[int, Pose] = {}
-        self._active_tool: list[int] = [0]
-        self._payload: list[float] = [0.0, 0.0, 0.0, 0.0]  # load, cx, cy, cz
+        self._active_tool = 0
+        self._payload: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)  # load, cx, cy, cz
 
         self.io = SignalBank(name, publish=self.publish)
         for i in range(1, self._tool_di_count + 1):
             self.io.declare(f"tooldi{i}", direction=Direction.INPUT)
         for i in range(1, self._tool_do_count + 1):
             self.io.declare(f"tooldo{i}", direction=Direction.OUTPUT)
-        self._feedback_socks: list[socket.socket] = []
-        self._writer: threading.Thread | None = None
-
         if feedback_enabled:
-            self._clients_fast: list[socket.socket] = []
-            self._clients_med: list[socket.socket] = []
-            self._clients_slow: list[socket.socket] = []
+            self.add_service(_FeedbackStream(self))
 
-            for port, clients in zip(self._FEEDBACK_PORTS, (self._clients_fast, self._clients_med, self._clients_slow)):
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind(("", port))
-                sock.listen()
-                self._feedback_socks.append(sock)
-                t = threading.Thread(
-                    target=_accept_loop, args=(sock, clients, self._running), daemon=True
-                )
-                t.start()
-
-            self._writer = threading.Thread(
-                target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running, self._tool_frames, self._active_tool, self._payload, self._fault),
-                daemon=True,
+    def fill_feedback(self, pkt: DobotFeedbackPacket) -> None:
+        """Write the controller's current state into one feedback packet."""
+        active_tool = self._active_tool
+        _update_feedback_packet(
+            pkt,
+            self.arm.state.view,
+            now_us=time.monotonic_ns() // 1000,
+            command_id=self._current_command_id,
+            robot_type_code=self._robot_type_code,
+            tool=active_tool,
+            payload=self._payload,
+            fault=self._fault.view,
+        )
+        pkt.DigitalInputs = sum(
+            (1 << (i - 1)) for i in range(1, self._tool_di_count + 1) if self.io[f"tooldi{i}"].value
+        )
+        pkt.DigitalOutputs = sum(
+            (1 << (i - 1)) for i in range(1, self._tool_do_count + 1) if self.io[f"tooldo{i}"].value
+        )
+        if active_tool > 0 and active_tool in self._tool_frames:
+            t = self._tool_frames[active_tool]
+            pkt.ToolValue[:] = (
+                t[0] * 1000, t[1] * 1000, t[2] * 1000,
+                math.degrees(t[3]), math.degrees(t[4]), math.degrees(t[5]),
             )
-            self._writer.start()
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
         verb, args = _parse(line)
@@ -732,7 +733,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 # SetTool silently bumps CurrentCommandId even though the
                 # response carries no value field (it's "immediate" per the
                 # protocol docs, but the real Dobot queues it internally).
-                self._current_command_id[0] += 1
+                self._current_command_id += 1
                 return _ok(verb, args)
             case "setpayload":
                 parts = [p.strip() for p in args.split(",")]
@@ -745,22 +746,22 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                         cx, cy, cz = float(parts[1]), float(parts[2]), float(parts[3])
                     except ValueError:
                         return f"-30001,{{}},{verb}({args})"
-                    self._payload[:] = [load, cx, cy, cz]
+                    self._payload = (load, cx, cy, cz)
                 elif len(parts) == 1:
-                    self._payload[:] = [load, 0.0, 0.0, 0.0]
+                    self._payload = (load, 0.0, 0.0, 0.0)
                 else:
                     return f"-30001,{{}},{verb}({args})"
-                self._current_command_id[0] += 1
-                return _ok(verb, args, value=str(self._current_command_id[0]))
+                self._current_command_id += 1
+                return _ok(verb, args, value=str(self._current_command_id))
             case "tool":
                 idx, err = _int_arg(args, verb, lo=0, hi=50)
                 if err:
                     return err
                 if idx != 0 and idx not in self._tool_frames:
                     return f"-1,{{}},Tool({idx})"
-                self._active_tool[0] = idx
-                self._current_command_id[0] += 1
-                return _ok(verb, args, value=str(self._current_command_id[0]))
+                self._active_tool = idx
+                self._current_command_id += 1
+                return _ok(verb, args, value=str(self._current_command_id))
             case "reljointmovj":
                 try:
                     deltas = _parse_required_floats(args, count=len(s.joints))
@@ -768,8 +769,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                     return f"-30001,{{}},{verb}({args})"
                 target: Joints = tuple(Radians(j + math.radians(d)) for j, d in zip(s.joints, deltas))
                 self.arm.movej(target)
-                self._current_command_id[0] += 1
-                return _ok(verb, args, value=str(self._current_command_id[0]))
+                self._current_command_id += 1
+                return _ok(verb, args, value=str(self._current_command_id))
             case "relmovltool":
                 try:
                     delta = _parse_required_floats(args, count=6)
@@ -779,7 +780,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                                     math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
                 T_cur = _pose_to_mat(s.pose)
                 R = T_cur[:3, :3]
-                tool_pose = self._tool_frames.get(self._active_tool[0], (0.0,) * 6)
+                tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
                 T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
                 R_tool = T_tool[:3, :3]
                 R_tcp = R @ R_tool
@@ -792,12 +793,12 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                                    [-p[1], p[0], 0]], dtype=float)
                 twist[:3] = twist[:3] + skew_p @ twist[3:]
                 print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
-                print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in s.pose)})  tool={self._active_tool[0]}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
+                print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in s.pose)})  tool={self._active_tool}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
                 print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
                 print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
                 self.arm.jog_cartesian(twist, dt=1.0)
-                self._current_command_id[0] += 1
-                return _ok(verb, args, value=str(self._current_command_id[0]))
+                self._current_command_id += 1
+                return _ok(verb, args, value=str(self._current_command_id))
             case "movj":
                 try:
                     vals, form = _parse_motion_args(args, count=len(s.joints))
@@ -814,8 +815,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                         Meters(vals[0] * 1e-3), Meters(vals[1] * 1e-3), Meters(vals[2] * 1e-3),
                         Radians(math.radians(vals[3])), Radians(math.radians(vals[4])), Radians(math.radians(vals[5])),
                     ))
-                self._current_command_id[0] += 1
-                return _ok(verb, args, value=str(self._current_command_id[0]))
+                self._current_command_id += 1
+                return _ok(verb, args, value=str(self._current_command_id))
             case "movl":
                 try:
                     pose_mm, _form = _parse_motion_args(args, count=6)
@@ -825,8 +826,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                     Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
                     Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
                 ))
-                self._current_command_id[0] += 1
-                return _ok(verb, args, value=str(self._current_command_id[0]))
+                self._current_command_id += 1
+                return _ok(verb, args, value=str(self._current_command_id))
             case _:
                 return f"-10000,{{}},{verb}({args})"
 
@@ -958,11 +959,6 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             for i, v in enumerate(self._tool_ai)
         ]
         return replace(super().build_detail(), derived_fields=tuple(derived))
-
-    def _shutdown(self) -> None:
-        self._running.clear()
-        for sock in self._feedback_socks:
-            sock.close()
 
 
 # --- helpers ---------------------------------------------------------
