@@ -12,20 +12,22 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 import threading
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from . import __version__, devices  # noqa: F401  (devices import = registration)
 from .core.config import DEFAULT_HOST, DeviceConfig, SystemConfig, load_config
+from .core.eventlog import EventLog
 from .core.registry import default_registry
 from .core.world import WorldBuilder
+from .projection import Projection
 from .web.server import WebServer
-
-from rich.table import Table
 
 app = typer.Typer(help="Machinist - emulate fleets of industrial machines.")
 console = Console()
@@ -88,12 +90,28 @@ def run(
     log_stderr: Annotated[bool, typer.Option("--log-stderr", help="Print received commands to stderr (use --no-tui to avoid TUI interference).")] = False,
     web_host: Annotated[str, typer.Option(help="Host the web UI binds to.")] = "127.0.0.1",
     web_port: Annotated[int, typer.Option(help="Port the web UI binds to.")] = 8080,
+    event_log: Annotated[
+        Path | None, typer.Option("--event-log", help="Append every event to this JSON Lines file.")
+    ] = None,
+    check_projection: Annotated[
+        bool,
+        typer.Option(
+            "--check-projection",
+            help="Every second, compare the UI projection with the devices and report drift.",
+        ),
+    ] = False,
 ) -> None:
     """Start a fleet of emulated devices from one or more YAML files."""
     if log_stderr:
         os.environ["MACHINIST_LOG_STDERR"] = "1"
     config = _build_config(configs, inline=device or [])
     world = WorldBuilder().build(config)
+    recorder = None
+    if event_log is not None:
+        recorder = EventLog(event_log)
+        recorder.attach(world.bus)
+        console.print(f"[bold green]Event log[/] {event_log}")
+    checker = _ProjectionChecker(world) if check_projection else None
     console.print(f"[bold green]Starting[/] {len(world.devices)} device(s):")
     for d in world.devices:
         console.print(
@@ -110,6 +128,8 @@ def run(
     stop_signal = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop_signal.set())
     signal.signal(signal.SIGTERM, lambda *_: stop_signal.set())
+    if checker is not None:
+        checker.start(stop_signal)
 
     try:
         if tui:
@@ -119,9 +139,35 @@ def run(
             stop_signal.wait()
     finally:
         console.print("[yellow]Shutting down…[/]")
+        stop_signal.set()
         if web_server is not None:
             web_server.stop()
         world.stop()
+        if checker is not None:
+            checker.close()
+        if recorder is not None:
+            recorder.close()
+
+
+class _ProjectionChecker:
+    """Once a second, compare a projection with the devices and print any drift."""
+
+    def __init__(self, world) -> None:  # type: ignore[no-untyped-def]
+        self._world = world
+        self._projection = Projection(world)
+        self._thread: threading.Thread | None = None
+
+    def start(self, stop: threading.Event) -> None:
+        def loop() -> None:
+            while not stop.wait(1.0):
+                for problem in self._projection.verify(self._world):
+                    print(f"[projection drift] {problem}", file=sys.stderr, flush=True)
+
+        self._thread = threading.Thread(target=loop, name="machinist-projection-check", daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._projection.close()
 
 
 # ---------------------------------------------------------------------
