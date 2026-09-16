@@ -100,11 +100,12 @@ class IOMap:
 
     def link(self, source: str, target: str) -> None:
         """Wire ``source`` -> ``target``. Both are ``device.signal`` paths."""
-        src = self._resolve(source)
-        dst = self._resolve(target)
+        src = self.signal(source)
+        dst = self.signal(target)
         src.subscribe(dst.set)
 
-    def _resolve(self, path: str) -> Signal:
+    def signal(self, path: str) -> Signal:
+        """Look up a signal by its ``device.signal`` path."""
         try:
             device, signal = path.split(".", 1)
         except ValueError as exc:

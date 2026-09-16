@@ -323,7 +323,7 @@ class MachinistApp(App[None]):
 
     def _set_signal(self, target: str, value: bool) -> None:
         try:
-            self.world.io_map._resolve(target).set(value)
+            self.world.io_map.signal(target).set(value)
             self._log.write(f"set [cyan]{target}[/] = {value}")
         except (KeyError, ValueError) as exc:
             self._log.write(f"[red]error[/]: {exc}")

@@ -151,7 +151,7 @@ def _cmd_set(world: World, rest: str) -> dict[str, Any]:
     target, _, value = rest.partition(" ")
     on = value.strip() in ("1", "true", "on")
     try:
-        world.io_map._resolve(target).set(on)  # same path the TUI uses
+        world.io_map.signal(target).set(on)
     except (KeyError, ValueError) as exc:
         raise CommandError(str(exc)) from exc
     return _ok(f"set {target} = {on}")

@@ -147,8 +147,8 @@ def test_dispatch_set_drives_a_signal_and_links_propagate() -> None:
     )
     result = dispatch_command(world, "set io1.o5 1")
     assert result["ok"] is True
-    assert world.io_map._resolve("io1.o5").value is True
-    assert world.io_map._resolve("g1.cmd_open").value is True
+    assert world.io_map.signal("io1.o5").value is True
+    assert world.io_map.signal("g1.cmd_open").value is True
 
 
 def test_dispatch_set_unknown_signal_raises() -> None:
