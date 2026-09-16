@@ -1252,3 +1252,39 @@ def test_each_master_reaches_its_own_gripper(dobot: DobotDashboard) -> None:
 
     assert _send(dobot, "GetHoldRegs(0,267,1)") == "0,{400},GetHoldRegs(0,267,1)"
     assert _send(dobot, "GetHoldRegs(1,267,1)") == "0,{900},GetHoldRegs(1,267,1)"
+
+
+# --- the flange is visible in the detail panel ------------------------
+
+
+def test_detail_panel_reads_dash_with_nothing_on_the_flange(dobot: DobotDashboard) -> None:
+    fields = _derived(dobot)
+
+    assert fields["flange"] == "-"
+    assert "master0" not in fields
+
+
+def test_detail_panel_lists_the_attached_slave_ids(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    assert _derived(dobot)["flange"] == "0x41"
+
+
+def test_detail_panel_describes_an_open_master(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    assert _derived(dobot)["master0"] == "slave 0x41 @ 115200 E,1"
+
+
+def test_detail_panel_marks_a_master_nothing_answers(dobot: DobotDashboard) -> None:
+    _send(dobot, "ModbusRTUCreate(65,115200)")
+
+    assert _derived(dobot)["master0"] == "slave 0x41 @ 115200, no answer"
+
+
+def test_detail_panel_drops_a_master_once_closed(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    _send(dobot, "ModbusClose(0)")
+
+    assert "master0" not in _derived(dobot)

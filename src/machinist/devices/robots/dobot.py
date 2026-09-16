@@ -900,6 +900,21 @@ class DobotDashboard(LineServerDevice):
             return "stuck (stays DISABLED)"
         return "error (EnableRobot rejected)"
 
+    def _flange_detail(self) -> str:
+        ids = self.flange.slave_ids
+        return ", ".join(f"0x{slave_id:02X}" for slave_id in ids) if ids else "-"
+
+    def _master_details(self) -> list[tuple[int, str]]:
+        rows = []
+        for index in sorted(self._masters):
+            master = self._masters[index]
+            answers = "" if master.slave_id in self.flange.slave_ids else ", no answer"
+            serial = f" {master.serial}" if master.serial else ""
+            rows.append(
+                (index, f"slave 0x{master.slave_id:02X} @ {master.baud}{serial}{answers}")
+            )
+        return rows
+
     def build_detail(self) -> DeviceDetail:
         detail = super().build_detail()
         s = self.arm.state.snapshot()
@@ -909,6 +924,10 @@ class DobotDashboard(LineServerDevice):
             DetailField(signal="pstop", name="Protective stop", offset="0", type="str", value=self._protective_stop_detail()),
             DetailField(signal="alarmids", name="Alarm IDs", offset="0", type="str", value=self._alarm_ids_detail()),
             DetailField(signal="enablefail", name="Enable failure", offset="0", type="str", value=self._enable_failure_detail()),
+            DetailField(signal="flange", name="Flange slaves", offset="0", type="str", value=self._flange_detail()),
+        ] + [
+            DetailField(signal=f"master{index}", name=f"Modbus master {index}", offset=str(index), type="str", value=value)
+            for index, value in self._master_details()
         ] + [
             DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._ai)
