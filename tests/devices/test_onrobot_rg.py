@@ -214,3 +214,17 @@ def test_the_status_scan_window_reads_as_one_block() -> None:
     rg = _rg(initial_width_mm=75.0)
 
     assert rg.register_port.read(REG_ACTUAL_WIDTH, 2) == [750, 0]
+
+
+def test_rg6_opens_wider_than_an_rg2() -> None:
+    rg = _rg(model="rg6", initial_width_mm=160.0)
+
+    assert rg.register_port.read(REG_ACTUAL_WIDTH, 1) == [1600]
+
+
+def test_an_rg2_clamps_a_target_width_an_rg6_would_allow() -> None:
+    rg = _rg(model="rg2")
+
+    rg.register_port.write(REG_TARGET_WIDTH, [1600])
+
+    assert rg.register_port.read(REG_TARGET_WIDTH, 1) == [1100]

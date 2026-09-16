@@ -1,0 +1,39 @@
+# A Dobot with an OnRobot RG2 wired to its tool flange.
+#
+# The arm owns a Modbus RTU master on the flange's RS485 line and reaches the
+# gripper by slave id, so the gripper is never contacted over TCP. This is what
+# riact's ModbusFlangeRelay capability drives.
+#
+# Run with:
+#   uv run machinist run examples/dobot_flange_rg.yaml
+#
+# On the riact side, the arm driver needs:
+#   modbus_slave_id: 65            # 0x41, OnRobot's default
+#   modbus_baud: 115200
+#   scan_windows: [{addr: 267, count: 2}]   # 0x010B, the RG Status set
+# and the gripper driver needs:
+#   connection_type: arm-flange
+#   address: <the arm's URI>
+
+devices:
+  - name: dobot
+    kind: dobot_dashboard         # dashboard on 29999, feedback on 30004-30006
+    options: {robot_type: cr10a}
+
+  - name: rg1
+    kind: onrobot_rg
+    options:
+      model: rg2                  # rg2 or rg6
+      initial_width_mm: 110.0     # RG2 opens to 110 mm
+      travel_mm_per_sec: 110.0
+      # Uncomment to put a part between the fingers: closing past it stops on
+      # the part and reports a grip, instead of closing on nothing.
+      # held_object_mm: 50.0
+
+# The gripper still serves Modbus/TCP on its own port as well, so the same
+# device can be driven either way. A second entry naming the same master is how
+# an OnRobot Dual Quick Changer's pair of grippers would be expressed.
+flange_links:
+  - master: dobot
+    slave: rg1
+    slave_id: 65                  # 0x41
