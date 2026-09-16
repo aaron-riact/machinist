@@ -233,8 +233,11 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
     tcp_port = free_port()
     udp_port = free_port()
     opts = MazakSmoothOptions(
-        # the test's scanner speaks the plain modeless format, so the adapter must too
-        ethernetip=EtherNetIPOptions(udp_port=udp_port, o_t_realtime_format="modeless"),
+        # the test's scanner is a plain generic one speaking the modeless format,
+        # so the machine's adapter is configured to match it
+        ethernetip=EtherNetIPOptions(
+            udp_port=udp_port, o_t_realtime_format="modeless", behaviour="generic"
+        ),
         heartbeat_timeout_seconds=1.0,
         heartbeat_interval_seconds=0.05,
     )
