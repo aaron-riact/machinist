@@ -16,13 +16,18 @@ Layout::
 
 Design decisions worth knowing:
 
+* **The screen is a projection.** Everything painted comes from the
+  :class:`~machinist.projection.Projection`'s :class:`FleetState`, never
+  from a device. Devices announce every change on the bus; the projection
+  folds them; the UI repaints when the fleet's version moved.
 * **RichLog** (not ``Log``) for the event panel — it renders Rich
   markup faithfully, whereas ``Log`` has highlighting quirks that
   produced wide, ragged columns.
 * **Signals as DataTable** — natively scrollable and navigable; copes
   with hundreds of IOs without blowing past the panel's bounds.
 * **Bounded queue + drain-per-tick** — publisher threads (from device
-  ``EventBus``) never block on the UI.
+  ``EventBus``) never block on the UI. The tick is only the hand-off to
+  the UI thread; it paints nothing unless something changed.
 """
 
 from __future__ import annotations
@@ -39,15 +44,21 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
-from ..core.capabilities import HasIO, HasPrograms
+from ..core.capabilities import HasPrograms
 from ..core.device import Device
-from ..core.events import Event
-from ..core.panel import Field
+from ..core.events import DeviceFaulted, Event, LifecycleChanged, Note
+from ..core.io import Direction, SignalChanged
+from ..core.panel import Field, Panel
 from ..core.types import DeviceState
 from ..core.world import World
-from ..devices.machines.state import HasMachineState
-from ..devices.robots.arm import HasArm, RobotArm
+from ..devices.machines.state import MachineView
+from ..devices.robots.arm import ArmStateView, HasArm, RobotArm
+from ..projection import DeviceView, FleetState, Projection
 from ..web.api import CommandError, dispatch_command
+
+#: Event types worth a line in the log. Continuous state (arm ticks, panel
+#: and machine views) is painted, not logged.
+_LOGGED = (Note, LifecycleChanged, DeviceFaulted, SignalChanged)
 
 
 class MachinistApp(App[None]):
@@ -81,12 +92,13 @@ class MachinistApp(App[None]):
     def __init__(self, world: World) -> None:
         super().__init__()
         self.world = world
+        self.projection = Projection(world)
         self._events: queue.Queue[Event] = queue.Queue(maxsize=4096)
         self._selected: str | None = (
             world.devices[0].name if world.devices else None
         )
-        self._last_selected: Device | None = None
-        self._last_files: tuple[str, list[str]] | None = None
+        self._painted: DeviceView | None = None  # the detail as last drawn
+        self._painted_version = -1
         self._log_size: int = 0  # 0=medium, 1=small, 2=large
 
     # ----- widgets -----------------------------------------------------
@@ -142,40 +154,33 @@ class MachinistApp(App[None]):
         ) = self.outputs.add_columns("output", "offset", "value")
         self.files.add_columns("program")
         self._derived_col_field, self._derived_col_value = self.derived.add_columns("field", "value")
-        self._refresh_devices_table()
         self.world.bus.subscribe(self._enqueue)
-        self.set_interval(0.1, self._drain)
-        self._refresh_detail()
+        self.set_interval(0.05, self._drain)
+        self._paint(self.projection.state)
 
     # ----- bus → UI -----------------------------------------------------
 
     def _enqueue(self, event: Event) -> None:
-        with suppress(queue.Full):  # pragma: no cover
-            self._events.put_nowait(event)
+        if isinstance(event, _LOGGED):
+            with suppress(queue.Full):  # pragma: no cover
+                self._events.put_nowait(event)
 
     def _drain(self) -> None:
-        """Drain the event queue, then repaint the detail panel.
-
-        The repaint is a *poll*, not a reaction to the events just drained.
-        Making it event-driven meant any state a device changed without
-        emitting -- an injected fault, a value written straight to a field --
-        was left on screen stale until something unrelated happened to fire.
-        The browser UI already polls /api/state for the same reason.
-
-        Events still drive the log and the device table, where they carry
-        information a poll cannot reconstruct: that something happened, and
-        when.
-        """
+        """Log what arrived, then repaint if the projection moved on."""
         for _ in range(50):
             try:
                 event = self._events.get_nowait()
             except queue.Empty:
                 break
-            if event.kind != "snapshot":
-                self._log.write(_format_event(event))
-            if event.kind == "state":
-                self._refresh_devices_table()
-        self._refresh_detail()
+            self._log.write(_format_event(event))
+        state = self.projection.state
+        if state.version != self._painted_version:
+            self._paint(state)
+
+    def _paint(self, state: FleetState) -> None:
+        self._painted_version = state.version
+        self._refresh_devices_table(state)
+        self._refresh_detail(state)
 
     # ----- selection / detail -------------------------------------------
 
@@ -183,99 +188,74 @@ class MachinistApp(App[None]):
         if event.control is self.devices_table:
             row = self.devices_table.get_row_at(event.cursor_row)
             self._selected = str(row[0])
-            self._refresh_detail()
+            self._refresh_detail(self.projection.state)
             return
         if event.control is self.files:
             program = str(self.files.get_row_at(event.cursor_row)[0])
             _cmd_run(self, f"{self._selected or ''} {program}")
             return
 
-    def _refresh_devices_table(self) -> None:
+    def _refresh_devices_table(self, state: FleetState) -> None:
         self.devices_table.clear()
-        for d in self.world.devices:
-            self.devices_table.add_row(
-                d.name, d.kind, _paint_lifecycle(d.lifecycle)
-            )
+        for view in state.devices.values():
+            self.devices_table.add_row(view.name, view.kind, _paint_lifecycle(view.lifecycle))
 
-    def _refresh_detail(self) -> None:
-        device = self._lookup(self._selected)
-        if device is None:
+    def _selected_view(self, state: FleetState) -> DeviceView | None:
+        return state.devices.get(self._selected) if self._selected else None
+
+    def _refresh_detail(self, state: FleetState) -> None:
+        view = self._selected_view(state)
+        if view is None:
             self.detail_header.update("[dim]no device selected[/]")
-            self.inputs.clear()
-            self.outputs.clear()
-            self.files.clear()
-            self.derived.clear()
-            self._last_selected = None
-            self._last_files = None
+            for table in (self.inputs, self.outputs, self.files, self.derived):
+                table.clear()
+            self._painted = None
             return
-        self._refresh_detail_header(device)
-        panel = device.build_detail()
-        input_fields = panel.input_fields
-        output_fields = panel.output_fields
-        derived_fields = panel.derived_fields
+        self.detail_header.update(_detail_header(view))
 
-        # Case-insensitive lookup of raw signal values for the green/red dot.
-        signal_values: dict[str, bool] = {}
-        if isinstance(device, HasIO):
-            for sig in device.io:
-                signal_values[sig.name.lower()] = bool(sig.value)
+        inputs, outputs = _io_rows(view)
+        derived = view.panel.derived_fields
+        previous = self._painted
+        same_shape = (
+            previous is not None
+            and previous.name == view.name
+            and len(_io_rows(previous)[0]) == len(inputs)
+            and len(_io_rows(previous)[1]) == len(outputs)
+            and len(previous.panel.derived_fields) == len(derived)
+            and self.inputs.row_count == len(inputs)
+        )
+        dot = _dot_painter(view)
 
-        def _dot(field: Field) -> Text:
-            if field.type in ("bit", "bool"):
-                on = signal_values.get(field.signal.lower())
-                t = Text("●")
-                t.stylize(Style(color="green" if on else "red"))
-                return t
-            return Text(" ")
-
-        if device is not self._last_selected or self.inputs.row_count == 0:
+        if not same_shape:
             self.inputs.clear()
             self.outputs.clear()
             self.derived.clear()
-
-            for field in input_fields:
-                self.inputs.add_row(_dot(field) + " " + field.signal + " " + field.name, field.offset, field.value)
-            for field in output_fields:
-                self.outputs.add_row(_dot(field) + " " + field.signal + " " + field.name, field.offset, field.value)
-            for field in derived_fields:
+            for field in inputs:
+                self.inputs.add_row(dot(field) + " " + field.signal + " " + field.name, field.offset, field.value)
+            for field in outputs:
+                self.outputs.add_row(dot(field) + " " + field.signal + " " + field.name, field.offset, field.value)
+            for field in derived:
                 self.derived.add_row(f"{field.signal} {field.name}", field.value)
-
         else:
             input_keys = list(self.inputs.rows.keys())
             output_keys = list(self.outputs.rows.keys())
             derived_keys = list(self.derived.rows.keys())
-
-            for i, field in enumerate(input_fields):
-                self.inputs.update_cell(input_keys[i], self._inputs_col_label, _dot(field) + " " + field.signal + " " + field.name)
+            for i, field in enumerate(inputs):
+                self.inputs.update_cell(input_keys[i], self._inputs_col_label, dot(field) + " " + field.signal + " " + field.name)
                 self.inputs.update_cell(input_keys[i], self._inputs_col_value, field.value)
-            for i, field in enumerate(output_fields):
-                self.outputs.update_cell(output_keys[i], self._outputs_col_label, _dot(field) + " " + field.signal + " " + field.name)
+            for i, field in enumerate(outputs):
+                self.outputs.update_cell(output_keys[i], self._outputs_col_label, dot(field) + " " + field.signal + " " + field.name)
                 self.outputs.update_cell(output_keys[i], self._outputs_col_value, field.value)
-            for i, field in enumerate(derived_fields):
+            for i, field in enumerate(derived):
                 self.derived.update_cell(derived_keys[i], self._derived_col_value, field.value)
 
-        self._last_selected = device
-        self._refresh_files(device)
+        if previous is None or previous.name != view.name or previous.programs != view.programs:
+            self._refresh_files(view)
+        self._painted = view
 
-    def _refresh_detail_header(self, device: Device | None = None) -> None:
-        current = device or self._lookup(self._selected)
-        if current is None:
-            self.detail_header.update("[dim]no device selected[/]")
-            return
-        self.detail_header.update(_detail_header(current))
-
-    def _refresh_files(self, device: Device) -> None:
-        """Rebuild the program table only when the listing actually changed.
-
-        ``programs.list()`` scans a directory, so this must stay cheap enough
-        to call on every UI tick rather than only on an event.
-        """
-        names = device.programs.list() if isinstance(device, HasPrograms) else []
-        if (device.name, names) == self._last_files:
-            return
-        self._last_files = (device.name, names)
+    def _refresh_files(self, view: DeviceView) -> None:
         self.files.clear()
-        for name in names:
+        for name in view.programs or ():
             self.files.add_row(name)
 
     def _lookup(self, name: str | None) -> Device | None:
@@ -356,22 +336,22 @@ def _paint_lifecycle(state: DeviceState) -> str:
     return f"[{_LIFECYCLE_COLOURS.get(state, 'white')}]{state}[/]"
 
 
-def _detail_header(device: Device) -> str:
+def _detail_header(view: DeviceView) -> str:
+    fault = f"\n[red]fault[/] {view.fault}" if view.fault else ""
     return (
-        f"[bold]{device.name}[/]  [dim]({device.kind})[/]\n"
-        f"endpoint [magenta]{device.endpoint}[/]   "
-        f"lifecycle {_paint_lifecycle(device.lifecycle)}"
-        f"{_arm_summary(device)}"
-        f"{_machine_summary(device)}"
-        f"{_snapshot_summary(device)}"
+        f"[bold]{view.name}[/]  [dim]({view.kind})[/]\n"
+        f"endpoint [magenta]{view.endpoint}[/]   "
+        f"lifecycle {_paint_lifecycle(view.lifecycle)}{fault}"
+        f"{_arm_summary(view.arm)}"
+        f"{_machine_summary(view.machine)}"
+        f"{_panel_summary(view.panel)}"
     )
 
 
-def _arm_summary(device: Device) -> str:
+def _arm_summary(s: ArmStateView | None) -> str:
     """One-line-per-fact robot status, or '' for non-robot devices."""
-    if not isinstance(device, HasArm):
+    if s is None:
         return ""
-    s = device.arm.state.snapshot()
     mode = s.mode
     mode_colour = "red" if mode in ("estopped", "faulted") else "green"
     joints = "  ".join(f"{j:+.3f}" for j in s.joints)
@@ -386,11 +366,10 @@ def _arm_summary(device: Device) -> str:
     )
 
 
-def _machine_summary(device: Device) -> str:
+def _machine_summary(state: MachineView | None) -> str:
     """One-line CNC status (cycle/program/spindle/tool/parts), or '' otherwise."""
-    if not isinstance(device, HasMachineState):
+    if state is None:
         return ""
-    state = device.state.view
     cycle = str(state.cycle)
     cycle_colour = (
         "green" if cycle == "running" else "yellow" if cycle == "paused" else "grey50"
@@ -410,13 +389,43 @@ def _machine_summary(device: Device) -> str:
     )
 
 
-def _snapshot_summary(device: Device) -> str:
-    panel = device.build_detail()
+def _panel_summary(panel: Panel) -> str:
+    if panel.mode == "io":
+        return ""
     if panel.clients is not None:
         return f"\n{panel.mode}   {panel.clients} client(s)"
     peer = "peer up" if panel.peer_connected else "waiting"
     ready = "ready" if panel.transport_ready else "offline"
     return f"\n{panel.mode}   transport {ready}   link {peer}"
+
+
+def _io_rows(view: DeviceView) -> tuple[tuple[Field, ...], tuple[Field, ...]]:
+    """The input and output tables: the panel's own rows, else the device's signals."""
+    if view.panel.input_fields or view.panel.output_fields:
+        return view.panel.input_fields, view.panel.output_fields
+    rows = {Direction.INPUT: [], Direction.OUTPUT: []}
+    for sig in view.signals.values():
+        rows[sig.direction].append(
+            Field(signal=sig.name.upper(), name=sig.name, type="bit", value="ON" if sig.value else "OFF")
+        )
+    return tuple(rows[Direction.INPUT]), tuple(rows[Direction.OUTPUT])
+
+
+def _dot_painter(view: DeviceView) -> Callable[[Field], Text]:
+    """Green/red dot for bit fields, looked up case-insensitively in the device's signals."""
+    values = {name.lower(): sig.value for name, sig in view.signals.items()}
+
+    def dot(field: Field) -> Text:
+        if field.type not in ("bit", "bool"):
+            return Text(" ")
+        on = values.get(field.signal.lower())
+        if on is None:
+            on = field.value.upper() in ("ON", "1", "TRUE")
+        t = Text("●")
+        t.stylize(Style(color="green" if on else "red"))
+        return t
+
+    return dot
 
 
 def _format_event(event: Event) -> str:

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import queue
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 from textual.widgets._data_table import ColumnKey, RowKey
 
 from machinist.core.events import Event, LifecycleChanged, Note
+from machinist.core.io import Direction
 from machinist.core.panel import Field, Panel
 from machinist.core.types import DeviceState
 from machinist.devices.machines.state import MachineState
 from machinist.devices.robots.arm import RobotArm
+from machinist.projection import DeviceView, FleetState, SignalView
 from machinist.tui.app import (
     MachinistApp,
     _arm_summary,
@@ -18,20 +20,29 @@ from machinist.tui.app import (
     _cmd_run,
     _detail_header,
     _format_event,
+    _io_rows,
     _machine_summary,
     _paint_lifecycle,
-    _snapshot_summary,
+    _panel_summary,
 )
 
-from .fakes import (
-    FakeArmDevice,
-    FakeDevice,
-    FakeIODevice,
-    FakeLibrary,
-    FakeMachineDevice,
-    FakeProgramDevice,
-    RecordingDobot,
-)
+from .fakes import FakeDevice, FakeLibrary, FakeProgramDevice, RecordingDobot
+
+
+def _view(name: str = "dev1", kind: str = "fake", **fields: object) -> DeviceView:
+    return DeviceView(name=name, kind=kind, endpoint="127.0.0.1:1", **fields)  # type: ignore[arg-type]
+
+
+def _signals(**values: bool) -> MappingProxyType:
+    return MappingProxyType(
+        {
+            name: SignalView(name=name, direction=Direction.INPUT if name.startswith("i") else Direction.OUTPUT, value=v)
+            for name, v in values.items()
+        }
+    )
+
+
+# --- pure renderers -------------------------------------------------------
 
 
 def test_format_event_is_compact_and_deterministic() -> None:
@@ -48,22 +59,22 @@ def test_paint_lifecycle_uses_expected_colours() -> None:
     assert _paint_lifecycle(DeviceState.FAULTED).startswith("[red]")
 
 
-def test_arm_summary_is_empty_for_non_robot() -> None:
-    assert _arm_summary(FakeDevice("io1")) == ""
+def test_arm_summary_is_empty_without_an_arm() -> None:
+    assert _arm_summary(None) == ""
 
 
 def test_arm_summary_reports_estop_and_pose() -> None:
     arm = RobotArm(joint_count=6)
     arm.estop()
-    out = _arm_summary(FakeArmDevice("arm1", arm=arm))
+    out = _arm_summary(arm.state.view)
     assert "estopped" in out
     assert "ENGAGED" in out
     assert "joints" in out
     assert "pose" in out
 
 
-def test_machine_summary_is_empty_for_non_machine() -> None:
-    assert _machine_summary(FakeDevice("io1")) == ""
+def test_machine_summary_is_empty_without_a_machine() -> None:
+    assert _machine_summary(None) == ""
 
 
 def test_machine_summary_reports_cycle_and_tooling() -> None:
@@ -71,7 +82,7 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
     state.set_door("main", open=True)
     state.update(program="O0001\nG0 X0", spindle_rpm=1500.0, tool=3, parts=7)
     state.move_to(x=12.0, y=-3.5, z=8.25)
-    out = _machine_summary(FakeMachineDevice("mill", state=state))
+    out = _machine_summary(state.view)
     assert "O0001" in out
     assert "+12.000" in out
     assert "1500" in out
@@ -83,72 +94,161 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
 def test_detail_header_combines_static_and_dynamic_sections() -> None:
     state = MachineState()
     state.update(program="O0001")
-    device = FakeMachineDevice("mill", state=state)
-    out = _detail_header(device)
+    view = _view("mill", kind="haas_ngc", machine=state.view, fault="boom")
+    out = _detail_header(view)
     assert "mill" in out
     assert "haas_ngc" in out
     assert "program" in out
+    assert "boom" in out
 
 
-def test_snapshot_summary_reports_mode_and_link_state() -> None:
-    device = FakeDevice(
-        "smooth", detail=Panel(mode="adapter", transport_ready=True, peer_connected=False)
-    )
-    out = _snapshot_summary(device)
+def test_panel_summary_reports_mode_and_link_state() -> None:
+    out = _panel_summary(Panel(mode="adapter", transport_ready=True, peer_connected=False))
     assert "adapter" in out
     assert "waiting" in out
+    assert _panel_summary(Panel()) == ""
 
 
-def _drain_app(q: queue.Queue | None = None, calls: list[str] | None = None):
-    calls = [] if calls is None else calls
-    return SimpleNamespace(
+def test_io_rows_fall_back_to_signals_when_the_panel_has_none() -> None:
+    view = _view(signals=_signals(i1=True, o1=False))
+    inputs, outputs = _io_rows(view)
+    assert [(f.signal, f.value) for f in inputs] == [("I1", "ON")]
+    assert [(f.signal, f.value) for f in outputs] == [("O1", "OFF")]
+
+
+def test_io_rows_prefer_the_panels_own_rows() -> None:
+    panel = Panel(input_fields=(Field("T_FORCE", "Target force", value="400"),))
+    inputs, outputs = _io_rows(_view(panel=panel, signals=_signals(i1=True)))
+    assert [f.signal for f in inputs] == ["T_FORCE"]
+    assert outputs == ()
+
+
+# --- the tick: log, then paint only when the projection moved --------------
+
+
+def _drain_app(q: queue.Queue | None = None, *, version: int = 0, painted: int = 0):
+    painted_states: list[FleetState] = []
+    logged: list[str] = []
+    app = SimpleNamespace(
         _events=q if q is not None else queue.Queue(),
-        _selected="robot1",
-        _log=SimpleNamespace(write=lambda _msg: None),
-        _refresh_devices_table=lambda: calls.append("table"),
-        _refresh_detail=lambda: calls.append("detail"),
-        _refresh_detail_header=lambda: calls.append("header"),
-    ), calls
+        _log=SimpleNamespace(write=logged.append),
+        projection=SimpleNamespace(state=FleetState(version=version)),
+        _painted_version=painted,
+        _paint=painted_states.append,
+    )
+    return app, painted_states, logged
 
 
-def test_drain_refreshes_detail_even_with_no_events() -> None:
-    """The panel is polled, so state changed without an event is still seen."""
-    app, calls = _drain_app()
-
+def test_drain_paints_nothing_when_the_projection_did_not_move() -> None:
+    app, painted, _ = _drain_app(version=3, painted=3)
     MachinistApp._drain(app)
+    assert painted == []
 
-    assert calls == ["detail"]
 
-
-def test_drain_refreshes_detail_on_event_for_selected_device() -> None:
-    q: queue.Queue[Event] = queue.Queue()
-    q.put(Note(device="robot1", name="moving", data={"diameter_mm": 42.0}))
-    app, calls = _drain_app(q)
-
+def test_drain_paints_when_the_projection_moved() -> None:
+    app, painted, _ = _drain_app(version=4, painted=3)
     MachinistApp._drain(app)
+    assert len(painted) == 1 and painted[0].version == 4
 
-    assert calls == ["detail"]
 
-
-def test_drain_refreshes_detail_for_an_unselected_device_too() -> None:
-    """A poll cannot know which device changed, and does not need to."""
+def test_drain_logs_the_queued_events() -> None:
     q: queue.Queue[Event] = queue.Queue()
-    q.put(Note(device="other", name="moving"))
-    app, calls = _drain_app(q)
-
-    MachinistApp._drain(app)
-
-    assert calls == ["detail"]
-
-
-def test_drain_still_rebuilds_the_device_table_on_a_state_event() -> None:
-    q: queue.Queue[Event] = queue.Queue()
+    q.put(Note(device="robot1", name="rx", data={"line": "hi"}))
     q.put(LifecycleChanged(device="robot1", state=DeviceState.RUNNING))
-    app, calls = _drain_app(q)
-
+    app, _, logged = _drain_app(q)
     MachinistApp._drain(app)
+    assert len(logged) == 2 and "hi" in logged[0] and "running" in logged[1]
 
-    assert calls == ["table", "detail"]
+
+# --- the detail panel: populate, then update in place, then rebuild --------
+
+
+class _MockTable:
+    def __init__(self) -> None:
+        self.rows: dict[RowKey, object] = {}
+        self.row_count = 0
+        self.log: list[tuple] = []
+
+    def clear(self) -> None:
+        self.rows.clear()
+        self.row_count = 0
+        self.log.append(("clear",))
+
+    def add_row(self, *cells: object) -> RowKey:
+        rk = RowKey()
+        self.rows[rk] = object()
+        self.row_count = len(self.rows)
+        self.log.append(("add_row",) + cells)
+        return rk
+
+    def update_cell(self, row_key: object, column_key: object, value: object) -> None:
+        self.log.append(("update_cell", row_key, column_key, value))
+
+
+def _detail_app(selected: str | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        _selected=selected,
+        _painted=None,
+        inputs=_MockTable(),
+        outputs=_MockTable(),
+        derived=_MockTable(),
+        files=_MockTable(),
+        detail_header=SimpleNamespace(update=lambda _: None),
+        _inputs_col_label=ColumnKey("input"),
+        _inputs_col_value=ColumnKey("value"),
+        _outputs_col_label=ColumnKey("output"),
+        _outputs_col_value=ColumnKey("value"),
+        _derived_col_field=ColumnKey("field"),
+        _derived_col_value=ColumnKey("value"),
+        _selected_view=lambda state: state.devices.get(selected) if selected else None,
+        _refresh_files=lambda view: None,
+    )
+
+
+def test_refresh_detail_populates_then_updates_in_place_then_rebuilds_on_switch() -> None:
+    dev1 = _view("dev1", signals=_signals(i1=True, o1=False))
+    dev2 = _view("dev2", signals=_signals(i1=False, o1=True))
+    state = FleetState.of([dev1, dev2])
+    app = _detail_app("dev1")
+
+    MachinistApp._refresh_detail(app, state)
+    assert ("clear",) in app.inputs.log
+    assert app.inputs.row_count == 1 and app.outputs.row_count == 1
+
+    # same device, a value changed: cells are updated, rows are not rebuilt
+    app.inputs.log.clear(); app.outputs.log.clear()
+    changed = state.with_device(dev1.with_signal(SignalView("i1", Direction.INPUT, False)))
+    MachinistApp._refresh_detail(app, changed)
+    assert not any(c[0] in ("clear", "add_row") for c in app.inputs.log)
+    updates = [c for c in app.inputs.log if c[0] == "update_cell"]
+    assert len(updates) == 2 and updates[0][2] is app._inputs_col_label
+
+    # another device: rebuilt
+    app._selected = "dev2"
+    app._selected_view = lambda st: st.devices.get("dev2")
+    app.inputs.log.clear()
+    MachinistApp._refresh_detail(app, changed)
+    assert any(c[0] == "clear" for c in app.inputs.log)
+    assert any(c[0] == "add_row" for c in app.inputs.log)
+
+    # nothing selected: everything cleared
+    app._selected = None
+    app._selected_view = lambda st: None
+    app.derived.log.clear()
+    MachinistApp._refresh_detail(app, changed)
+    assert ("clear",) in app.derived.log
+    assert app._painted is None
+
+
+def test_refresh_files_lists_the_programs_of_the_view() -> None:
+    app = SimpleNamespace(files=_MockTable())
+    MachinistApp._refresh_files(app, _view("haas1", programs=("O0001.nc", "O0002.nc")))
+    assert [c[1] for c in app.files.log if c[0] == "add_row"] == ["O0001.nc", "O0002.nc"]
+    MachinistApp._refresh_files(app, _view("io1"))
+    assert app.files.log[-1] == ("clear",)
+
+
+# --- commands still go down to the devices through the World ------------
 
 
 class _FakeApp:
@@ -190,139 +290,6 @@ def test_cmd_run_reports_errors() -> None:
     assert any("already running" in w for w in app.writes)
 
 
-class _MockTable:
-    def __init__(self) -> None:
-        self.rows: dict[RowKey, object] = {}
-        self.row_count = 0
-        self.cursor_row = -1
-        self.log: list[tuple] = []
-
-    def clear(self) -> None:
-        self.rows.clear()
-        self.row_count = 0
-        self.log.append(("clear",))
-
-    def add_row(self, *cells: object) -> RowKey:
-        rk = RowKey()
-        self.rows[rk] = object()
-        self.row_count = len(self.rows)
-        self.log.append(("add_row",) + cells)
-        return rk
-
-    def update_cell(self, row_key: object, column_key: object, value: object) -> None:
-        self.log.append(("update_cell", row_key, column_key, value))
-
-    def move_cursor(self, row: int = 0) -> None:
-        pass
-
-
-def test_refresh_detail_populates_then_increments_then_rebuilds_on_switch() -> None:
-    """First call: clear + add_row.
-    Second call (same device): update_cell only (no clear/add_row).
-    Third call (different device): clear + add_row again.
-    Fourth call (None selected): clears everything.
-    """
-    from machinist.core.io import Direction
-
-    sigs = [
-        SimpleNamespace(name="i1", value=True, direction=Direction.INPUT),
-        SimpleNamespace(name="o1", value=False, direction=Direction.OUTPUT),
-    ]
-    _detail = Panel(
-        mode="test",
-        input_fields=(Field("i1", "Input 1", "byte 0", "bit", "ON"),),
-        output_fields=(Field("o1", "Output 1", "byte 0", "bit", "OFF"),),
-    )
-    device1 = FakeIODevice("dev1", io=sigs, detail=_detail)  # type: ignore[arg-type]
-    device2 = FakeIODevice("dev2", io=sigs, detail=_detail)  # type: ignore[arg-type]
-
-    in_label = ColumnKey("input")
-    in_value = ColumnKey("value")
-    out_label = ColumnKey("output")
-    out_value = ColumnKey("value")
-    der_value = ColumnKey("value")
-
-    inputs = _MockTable()
-    outputs = _MockTable()
-    derived = _MockTable()
-
-    app = SimpleNamespace(
-        _selected="dev1",
-        _lookup=lambda name: (device1 if name == "dev1" else device2) if name else None,
-        _last_selected=None,
-        inputs=inputs,
-        outputs=outputs,
-        derived=derived,
-        files=_MockTable(),
-        detail_header=SimpleNamespace(update=lambda _: None),
-        _inputs_col_label=in_label,
-        _inputs_col_value=in_value,
-        _outputs_col_label=out_label,
-        _outputs_col_value=out_value,
-        _derived_col_field=ColumnKey("field"),
-        _derived_col_value=der_value,
-        _refresh_detail_header=lambda _device: None,
-        _refresh_files=lambda _device: None,
-    )
-
-    # --- first call: populate ---
-    MachinistApp._refresh_detail(app)
-    assert ("clear",) in inputs.log
-    assert any(c[0] == "add_row" for c in inputs.log)
-    assert any(c[0] == "add_row" for c in outputs.log)
-    assert inputs.row_count == 1
-    assert outputs.row_count == 1
-
-    # --- second call: same device → incremental update_cell ---
-    inputs.log.clear()
-    outputs.log.clear()
-    derived.log.clear()
-    MachinistApp._refresh_detail(app)
-
-    assert not any(c[0] == "clear" for c in inputs.log)
-    assert not any(c[0] == "add_row" for c in inputs.log)
-    input_updates = [c for c in inputs.log if c[0] == "update_cell"]
-    output_updates = [c for c in outputs.log if c[0] == "update_cell"]
-    assert len(input_updates) == 2  # label + value
-    assert len(output_updates) == 2
-    # ColumnKey objects passed by identity (not strings)
-    assert input_updates[0][2] is in_label
-    assert input_updates[1][2] is in_value
-    assert output_updates[0][2] is out_label
-    assert output_updates[1][2] is out_value
-
-    # --- third call: different device → rebuild ---
-    app._selected = "dev2"
-    inputs.log.clear()
-    outputs.log.clear()
-    derived.log.clear()
-    MachinistApp._refresh_detail(app)
-    last_clear = max(
-        (i for i, c in enumerate(inputs.log) if c[0] == "clear"), default=-1
-    )
-    last_add = max(
-        (i for i, c in enumerate(inputs.log) if c[0] == "add_row"), default=-1
-    )
-    assert last_clear >= 0 and last_add >= 0
-    assert any(c[0] == "clear" for c in inputs.log)  # rebuild: clear called
-    assert any(c[0] == "add_row" for c in inputs.log)
-
-    # --- fourth call: no device selected ---
-    app._selected = None
-    app._last_selected = None
-    inputs.log.clear()
-    outputs.log.clear()
-    derived.log.clear()
-    MachinistApp._refresh_detail(app)
-    assert ("clear",) in inputs.log
-    assert ("clear",) in outputs.log
-    assert ("clear",) in derived.log
-    assert app._last_selected is None
-
-
-# --- fault-injection verbs delegate to the shared dispatcher ------------
-
-
 class _FakeFaultApp:
     """Enough of the app for _cmd_fault: a world, a selection and a log."""
 
@@ -336,18 +303,14 @@ class _FakeFaultApp:
 def test_cmd_fault_injects_a_protective_stop() -> None:
     dobot = RecordingDobot()
     app = _FakeFaultApp(dobot)
-
     _cmd_fault(app, "pstop", "dobot1 error ids=17,116 sticky")
-
     assert dobot.stops == [{"robot_mode": 9, "controller_ids": (17, 116), "sticky": True}]
 
 
 def test_cmd_fault_falls_back_to_the_selected_device() -> None:
     dobot = RecordingDobot()
     app = _FakeFaultApp(dobot)
-
     _cmd_fault(app, "pstop", "")
-
     assert len(dobot.stops) == 1
 
 
@@ -356,86 +319,11 @@ def test_cmd_fault_sets_an_enable_failure() -> None:
 
     dobot = RecordingDobot()
     app = _FakeFaultApp(dobot)
-
     _cmd_fault(app, "failenable", "dobot1 stuck")
-
     assert dobot.enable_failures == [EnableFailure.STUCK]
 
 
 def test_cmd_fault_logs_the_error_instead_of_raising() -> None:
     app = _FakeFaultApp(RecordingDobot())
-
     _cmd_fault(app, "pstop", "dobot1 sideways")
-
     assert any("unknown pstop option" in w for w in app.writes)
-
-
-# --- the program table only rebuilds when the listing changes ----------
-
-
-class _FakeFilesApp:
-    """Enough of the app for _refresh_files: a files table and the cache."""
-
-    def __init__(self) -> None:
-        self._last_files = None
-        self.cleared = 0
-        self.rows: list[str] = []
-        self.files = SimpleNamespace(
-            clear=self._clear, add_row=lambda name: self.rows.append(name)
-        )
-
-    def _clear(self) -> None:
-        self.cleared += 1
-        self.rows.clear()
-
-
-def _programs(names):
-    return FakeProgramDevice("haas1", programs=FakeLibrary(list(names)))
-
-
-def test_refresh_files_lists_the_programs() -> None:
-    app = _FakeFilesApp()
-
-    MachinistApp._refresh_files(app, _programs(["O0001.nc", "O0002.nc"]))
-
-    assert app.rows == ["O0001.nc", "O0002.nc"]
-
-
-def test_refresh_files_skips_the_rebuild_when_nothing_changed() -> None:
-    app = _FakeFilesApp()
-    device = _programs(["O0001.nc"])
-
-    MachinistApp._refresh_files(app, device)
-    MachinistApp._refresh_files(app, device)
-
-    assert app.cleared == 1
-
-
-def test_refresh_files_rebuilds_when_a_program_appears() -> None:
-    app = _FakeFilesApp()
-    names = ["O0001.nc"]
-    device = FakeProgramDevice("haas1", programs=FakeLibrary(names))
-
-    MachinistApp._refresh_files(app, device)
-    names.append("O0002.nc")
-    MachinistApp._refresh_files(app, device)
-
-    assert app.rows == ["O0001.nc", "O0002.nc"]
-
-
-def test_refresh_files_rebuilds_when_the_device_changes() -> None:
-    app = _FakeFilesApp()
-
-    MachinistApp._refresh_files(app, _programs([]))
-    other = FakeProgramDevice("haas2", programs=FakeLibrary())
-    MachinistApp._refresh_files(app, other)
-
-    assert app.cleared == 2
-
-
-def test_refresh_files_clears_for_a_device_with_no_library() -> None:
-    app = _FakeFilesApp()
-
-    MachinistApp._refresh_files(app, FakeDevice("io1"))
-
-    assert app.rows == []

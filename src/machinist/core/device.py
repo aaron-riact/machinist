@@ -29,8 +29,8 @@ from typing import Any
 from ..transport.service import Service
 from .capabilities import HasIO
 from .events import DeviceFaulted, Event, EventBus, LifecycleChanged, Note
-from .io import Direction, SignalBank
-from .panel import Field, Panel
+from .io import SignalBank
+from .panel import Panel
 from .types import DeviceState, Endpoint
 
 #: How long a device waits for a service thread to exit after shutdown.
@@ -114,29 +114,11 @@ class Device(ABC):
     def build_detail(self) -> Panel:
         """The device's detail :class:`Panel`.
 
-        The default lists the device's discrete IO as bit fields. Devices
-        with a register map or an I/O block override it.
+        Empty by default: a device's discrete IO reaches the UI as
+        :class:`~machinist.core.io.SignalChanged` events, not as panel rows.
+        Devices with a register map or an I/O block override this.
         """
-        bank = self._signal_bank()
-        if bank is None:
-            return Panel()
-        rows = {
-            Direction.INPUT: [],
-            Direction.OUTPUT: [],
-        }
-        for sig in bank:
-            rows[sig.direction].append(
-                Field(
-                    signal=sig.name.upper(),
-                    name=sig.name,
-                    type="bit",
-                    value="ON" if sig.value else "OFF",
-                )
-            )
-        return Panel(
-            input_fields=tuple(rows[Direction.INPUT]),
-            output_fields=tuple(rows[Direction.OUTPUT]),
-        )
+        return Panel()
 
     def _signal_bank(self) -> SignalBank | None:
         """The device's IO bank if it declares :class:`HasIO`, else ``None``."""

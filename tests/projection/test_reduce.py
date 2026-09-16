@@ -41,8 +41,7 @@ def test_seed_reads_every_device_once() -> None:
     assert io1.lifecycle is DeviceState.CREATED
     assert set(io1.signals) == {"i1", "i2", "o1", "o2"}
     assert io1.signals["o1"].direction is Direction.OUTPUT
-    assert io1.panel.mode == "io"  # no override: the panel lists the bank as bit fields
-    assert {f.name for f in io1.panel.input_fields} == {"i1", "i2"}
+    assert io1.panel.mode == "io" and io1.panel.input_fields == ()  # IO comes from signals
     assert io1.arm is None and io1.machine is None and io1.programs is None
 
 
