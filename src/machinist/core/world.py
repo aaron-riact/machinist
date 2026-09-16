@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from .addressing import AddressAllocator
-from .config import SystemConfig
+from .config import FlangeLink, SystemConfig
 from .device import Device
 from .events import EventBus
 from .io import IOMap, SignalBank
@@ -54,7 +54,33 @@ class WorldBuilder:
         for link in config.io_links:
             io_map.link(link.source, link.target)
 
+        by_name = {d.name: d for d in devices}
+        for flange in config.flange_links:
+            _wire_flange(flange, by_name)
+
         return World(devices=tuple(devices), bus=bus, io_map=io_map)
+
+
+def _wire_flange(link: FlangeLink, by_name: dict[str, Device]) -> None:
+    """Attach a device to an arm's flange bus, once both devices exist.
+
+    Runs after every device is built, like io_links do: a device factory is
+    handed only its own config and cannot reach across the fleet.
+    """
+    master = by_name.get(link.master)
+    if master is None:
+        raise KeyError(f"flange_link names unknown master {link.master!r}")
+    slave = by_name.get(link.slave)
+    if slave is None:
+        raise KeyError(f"flange_link names unknown slave {link.slave!r}")
+
+    bus = getattr(master, "flange", None)
+    if bus is None:
+        raise TypeError(f"{link.master!r} has no tool flange to wire {link.slave!r} onto")
+    registers = getattr(slave, "register_port", None)
+    if registers is None:
+        raise TypeError(f"{link.slave!r} has no registers to expose on a flange")
+    bus.attach(link.slave_id, registers)
 
 
 def _absorb_io(device: Device, io_map: IOMap) -> None:

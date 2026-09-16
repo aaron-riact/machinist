@@ -52,21 +52,36 @@ class IOLink(_Frozen):
     target: str  # "device.signal"
 
 
+class FlangeLink(_Frozen):
+    """A device wired onto an arm's tool-flange serial line.
+
+    The arm owns a Modbus master on that line and reaches the device by
+    *slave_id*, so two entries naming the same master are how an OnRobot
+    Dual Quick Changer's pair of grippers is expressed.
+    """
+
+    master: str  # the arm whose flange carries the line
+    slave: str  # the device wired onto it
+    slave_id: int
+
+
 class SystemConfig(_Frozen):
     """Top-level configuration document."""
 
     devices: tuple[DeviceConfig, ...] = Field(default_factory=tuple)
     io_links: tuple[IOLink, ...] = Field(default_factory=tuple)
+    flange_links: tuple[FlangeLink, ...] = Field(default_factory=tuple)
 
 
 def load_config(paths: Iterable[Path]) -> SystemConfig:
     """Load and merge one or more YAML config files.
 
-    Multiple files are concatenated: device lists and io_links are
-    appended. Conflicting device *names* are rejected.
+    Multiple files are concatenated: device lists, io_links and
+    flange_links are appended. Conflicting device *names* are rejected.
     """
     devices: list[DeviceConfig] = []
     io_links: list[IOLink] = []
+    flange_links: list[FlangeLink] = []
     seen_names: set[str] = set()
 
     for path in paths:
@@ -78,5 +93,10 @@ def load_config(paths: Iterable[Path]) -> SystemConfig:
             seen_names.add(dev.name)
             devices.append(dev)
         io_links.extend(partial.io_links)
+        flange_links.extend(partial.flange_links)
 
-    return SystemConfig(devices=tuple(devices), io_links=tuple(io_links))
+    return SystemConfig(
+        devices=tuple(devices),
+        io_links=tuple(io_links),
+        flange_links=tuple(flange_links),
+    )
