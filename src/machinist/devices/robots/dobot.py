@@ -207,12 +207,56 @@ class DobotFeedbackPacket(ctypes.Structure):
 
 assert ctypes.sizeof(DobotFeedbackPacket) == 1440
 
+# Robot mode codes, "RobotMode" in the interface guide. Only the ones the
+# emulator can report are named here.
+ROBOT_MODE_DISABLED = 4
+ROBOT_MODE_ENABLE = 5
+ROBOT_MODE_RUNNING = 7
+ROBOT_MODE_ERROR = 9
+ROBOT_MODE_COLLISION = 11
+
+#: Modes an injected protective stop may report. A real controller reaches
+#: COLLISION on a detected impact, ERROR on an uncleared alarm, and DISABLED
+#: when it has dropped the servos -- the driver under test treats all three as
+#: a protective stop, but takes different paths to get there.
+PROTECTIVE_STOP_MODES = (ROBOT_MODE_COLLISION, ROBOT_MODE_ERROR, ROBOT_MODE_DISABLED)
+
 _ARM_MODE_TO_ROBOT_MODE: dict[ArmMode, int] = {
-    ArmMode.IDLE: 5,
-    ArmMode.MOVING: 7,
-    ArmMode.ESTOPPED: 9,
-    ArmMode.FAULTED: 9,
+    ArmMode.IDLE: ROBOT_MODE_ENABLE,
+    ArmMode.MOVING: ROBOT_MODE_RUNNING,
+    ArmMode.ESTOPPED: ROBOT_MODE_ERROR,
+    ArmMode.FAULTED: ROBOT_MODE_ERROR,
 }
+
+
+@dataclass(slots=True)
+class _FaultState:
+    """An injected controller fault: what the robot reports while stopped.
+
+    Held by the dashboard and shared *by reference* with the feedback-writer
+    thread, so raising a fault is seen on both the dashboard port and the
+    feedback stream without restarting anything.
+
+    The reported mode is an override rather than an arm mode because COLLISION
+    and DISABLED have no counterpart in the shared arm state machine, and no
+    other vendor's robot would use them.
+    """
+
+    active: bool = False
+    robot_mode: int = ROBOT_MODE_COLLISION
+    sticky: bool = False
+
+    @property
+    def robot_mode_override(self) -> int | None:
+        return self.robot_mode if self.active else None
+
+
+def _robot_mode(state: ArmStateView, fault: _FaultState | None = None) -> int:
+    """The mode code to report. A real e-stop outranks an injected fault."""
+    if state.mode is ArmMode.ESTOPPED or fault is None:
+        return _ARM_MODE_TO_ROBOT_MODE[state.mode]
+    override = fault.robot_mode_override
+    return _ARM_MODE_TO_ROBOT_MODE[state.mode] if override is None else override
 
 
 def _update_feedback_packet(
@@ -224,10 +268,11 @@ def _update_feedback_packet(
     robot_type_code: int = 5,
     tool: int = 0,
     payload: list[float] | None = None,
+    fault: _FaultState | None = None,
 ) -> None:
     pkt.len = 1440
     pkt.TestValue = 0x123456789abcdef
-    pkt.RobotMode = _ARM_MODE_TO_ROBOT_MODE[state.mode]
+    pkt.RobotMode = _robot_mode(state, fault)
     pkt.TimeStamp = now_us
     pkt.CRRobotType = robot_type_code
     pkt.SpeedScaling = state.speed_fraction
@@ -290,6 +335,7 @@ def _feedback_writer(
     tool_frames: dict[int, Pose] | None = None,
     active_tool: list[int] | None = None,
     payload: list[float] | None = None,
+    fault: _FaultState | None = None,
 ) -> None:
     pkt = DobotFeedbackPacket()
     tick = 0
@@ -298,7 +344,7 @@ def _feedback_writer(
         deadline = time.monotonic() + period
         s = arm.state.snapshot()
         active_tool_idx = active_tool[0] if active_tool else 0
-        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, tool=active_tool_idx, payload=payload)
+        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, tool=active_tool_idx, payload=payload, fault=fault)
         pkt.DigitalInputs = sum(
             (1 << (i - 1)) for i in range(1, tool_di_count + 1) if io[f"tooldi{i}"].value
         )
@@ -363,6 +409,7 @@ class DobotDashboard(LineServerDevice):
         self._running = threading.Event()
         self._running.set()
         self._error_ids: list[int] = []
+        self._fault = _FaultState()
         self._ai: list[float] = [0.0] * self._ai_count
         self._tool_ai: list[float] = [0.0] * self._tool_ai_count
         self._ao: list[float] = [0.0] * self._ao_count
@@ -397,7 +444,7 @@ class DobotDashboard(LineServerDevice):
 
             self._writer = threading.Thread(
                 target=_feedback_writer,
-                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running, self._tool_frames, self._active_tool, self._payload),
+                args=(self.arm, self._clients_fast, self._clients_med, self._clients_slow, self._current_command_id, self.io, self._robot_type_code, self._tool_di_count, self._tool_do_count, self._running, self._tool_frames, self._active_tool, self._payload, self._fault),
                 daemon=True,
             )
             self._writer.start()
@@ -474,7 +521,7 @@ class DobotDashboard(LineServerDevice):
             case "getangle":
                 return _ok(verb, args, value=",".join(f"{math.degrees(j):.4f}" for j in s.joints))
             case "robotmode":
-                return _ok(verb, args, value=str(_ARM_MODE_TO_ROBOT_MODE[s.mode]))
+                return _ok(verb, args, value=str(_robot_mode(s, self._fault)))
             case "tooldi":
                 idx, err = _int_arg(args, verb, hi=self._tool_di_count)
                 if err:
@@ -625,6 +672,41 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args, value=str(self._current_command_id[0]))
             case _:
                 return f"-10000,{{}},{verb}({args})"
+
+    # ----- fault injection ---------------------------------------------
+
+    def inject_protective_stop(
+        self,
+        *,
+        robot_mode: int = ROBOT_MODE_COLLISION,
+        controller_ids: Iterable[int] = (),
+        sticky: bool = False,
+    ) -> None:
+        """Put the robot into a protective stop, as a collision would.
+
+        *robot_mode* is what ``RobotMode`` and the feedback stream report --
+        one of :data:`PROTECTIVE_STOP_MODES`. *controller_ids* become the
+        ``GetErrorID`` reply, and may be changed by calling again while the
+        stop is still engaged. A *sticky* stop survives ``ClearError``, the way
+        an alarm whose cause is still present does on a real controller.
+        """
+        if robot_mode not in PROTECTIVE_STOP_MODES:
+            raise ValueError(
+                f"robot_mode {robot_mode} is not a protective stop; "
+                f"expected one of {PROTECTIVE_STOP_MODES}"
+            )
+        self.arm.fault()
+        self._error_ids = [int(code) for code in controller_ids]
+        self._fault.robot_mode = robot_mode
+        self._fault.sticky = sticky
+        self._fault.active = True
+
+    def clear_protective_stop(self) -> None:
+        """Release an injected protective stop, whether or not it is sticky."""
+        self._fault.active = False
+        self._fault.sticky = False
+        self._error_ids.clear()
+        self.arm.clear_fault()
 
     def build_detail(self) -> DeviceDetail:
         detail = super().build_detail()

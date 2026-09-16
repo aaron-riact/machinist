@@ -13,10 +13,14 @@ from machinist.devices.robots.arm import ArmMode, ArmStateView
 from machinist.devices.robots.dobot import (
     DOBOT_FEEDBACK_FAST_PORT,
     DOBOT_ROBOT_MODELS,
+    PROTECTIVE_STOP_MODES,
+    ROBOT_MODE_COLLISION,
+    ROBOT_MODE_DISABLED,
     DobotDashboard,
     DobotFeedbackPacket,
     _ARM_MODE_TO_ROBOT_MODE,
     _CR20A_DH,
+    _FaultState,
     _update_feedback_packet,
 )
 from machinist.kinematics.api import KinematicsOptions
@@ -726,3 +730,104 @@ def test_dobot_getpose_rejects_undefined_tool(dobot: DobotDashboard) -> None:
 def test_dobot_getpose_rejects_bad_user_index(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "GetPose(user=99)")
     assert reply.startswith("-40001,")
+
+
+# --- injected protective stop ----------------------------------------
+
+
+def test_robotmode_reports_the_injected_collision(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop()
+
+    assert _send(dobot, "RobotMode()") == "0,{11},RobotMode()"
+
+
+def test_robotmode_reports_an_injected_disabled_stop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(robot_mode=ROBOT_MODE_DISABLED)
+
+    assert _send(dobot, "RobotMode()") == "0,{4},RobotMode()"
+
+
+def test_injected_stop_does_not_engage_the_estop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop()
+
+    s = dobot.arm.state.snapshot()
+    assert s.faulted
+    assert not s.estopped
+
+
+def test_injected_stop_halts_a_move_in_progress(dobot: DobotDashboard) -> None:
+    _send(dobot, "MovJ(10,20,30,40,50,60)")
+    assert dobot.arm.state.snapshot().moving
+
+    dobot.inject_protective_stop()
+    assert not dobot.arm.state.snapshot().moving
+
+
+def test_geterrorid_reports_the_injected_alarm_ids(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17, 116])
+
+    assert _send(dobot, "GetErrorID()") == "0,{[17,116]},GetErrorID()"
+
+
+def test_alarm_ids_can_change_while_the_stop_stays_engaged(dobot: DobotDashboard) -> None:
+    """The driver re-derives its alarm text every tick, not only on transition."""
+    dobot.inject_protective_stop(controller_ids=[17])
+    assert _send(dobot, "GetErrorID()") == "0,{[17]},GetErrorID()"
+
+    dobot.inject_protective_stop(controller_ids=[26])
+    assert _send(dobot, "GetErrorID()") == "0,{[26]},GetErrorID()"
+    assert _send(dobot, "RobotMode()") == "0,{11},RobotMode()"
+
+
+def test_clear_protective_stop_returns_the_robot_to_idle(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17])
+    dobot.clear_protective_stop()
+
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+    assert _send(dobot, "GetErrorID()") == "0,{[]},GetErrorID()"
+
+
+def test_a_real_estop_outranks_an_injected_stop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(robot_mode=ROBOT_MODE_DISABLED)
+    _send(dobot, "EmergencyStop()")
+
+    assert _send(dobot, "RobotMode()") == "0,{9},RobotMode()"
+
+
+def test_injecting_a_non_protective_stop_mode_is_rejected(dobot: DobotDashboard) -> None:
+    with pytest.raises(ValueError, match="not a protective stop"):
+        dobot.inject_protective_stop(robot_mode=5)
+
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+
+
+def test_feedback_packet_reports_the_injected_mode() -> None:
+    pkt = DobotFeedbackPacket()
+    state = ArmStateView(
+        joints=(0.0,) * 6, pose=(0.0,) * 6, mode=ArmMode.FAULTED,
+        servo_on=True, program_running=False, speed_fraction=1.0,
+    )
+    fault = _FaultState(active=True, robot_mode=ROBOT_MODE_COLLISION)
+
+    _update_feedback_packet(pkt, state, fault=fault)
+
+    assert pkt.RobotMode == ROBOT_MODE_COLLISION
+    assert pkt.ErrorStatus == 1
+
+
+def test_feedback_packet_ignores_an_inactive_fault() -> None:
+    pkt = DobotFeedbackPacket()
+    state = ArmStateView(
+        joints=(0.0,) * 6, pose=(0.0,) * 6, mode=ArmMode.IDLE,
+        servo_on=True, program_running=False, speed_fraction=1.0,
+    )
+
+    _update_feedback_packet(pkt, state, fault=_FaultState())
+
+    assert pkt.RobotMode == 5
+
+
+def test_every_protective_stop_mode_is_injectable(dobot: DobotDashboard) -> None:
+    for mode in PROTECTIVE_STOP_MODES:
+        dobot.inject_protective_stop(robot_mode=mode)
+        assert _send(dobot, "RobotMode()") == f"0,{{{mode}}},RobotMode()"
