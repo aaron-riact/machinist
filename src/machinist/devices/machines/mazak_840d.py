@@ -16,13 +16,14 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.s7_server import S7Server, S7Store
-from .state import MachineState
+from .state import HasMachineState, MachineState
 
 
 @dataclass(slots=True)
@@ -56,7 +57,7 @@ class MazakSinumerik840DOptions:
     s7_backend: str = "stub"
 
 
-class MazakSinumerik840D(Device):
+class MazakSinumerik840D(Device, HasMachineState, HasIO):
     kind = "mazak_840d"
     DEFAULT_PORT = 102
 

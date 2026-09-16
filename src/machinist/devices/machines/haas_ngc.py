@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from ...core.capabilities import HasPrograms
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.programs import ProgramLibrary
@@ -31,7 +32,7 @@ from ...transport.line_server import LineServer, stateless
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from ...transport.smb_share import SmbConfig, build_share
 from .gcode import Interpreter
-from .state import MachineState, Toggle, machine_readers
+from .state import HasMachineState, MachineState, Toggle, machine_readers
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +58,7 @@ class HaasNGCOptions:
     opcua: OpcUaDeviceOptions | None = None
 
 
-class HaasNGC(Device):
+class HaasNGC(Device, HasMachineState, HasPrograms):
     kind = "haas_ngc"
 
     def __init__(

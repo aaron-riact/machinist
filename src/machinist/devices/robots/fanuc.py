@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -29,7 +30,7 @@ from ...transport.focas import FocasSubpacket
 from ...transport.focas_server import FocasServer
 from ...transport.framing import NEWLINE
 from ...transport.line_server import LineServer, stateless
-from .arm import ArmOptions, RobotArm, arm_from_options
+from .arm import ArmOptions, HasArm, RobotArm, arm_from_options
 
 FANUC_PORT = 18735  # fanucpy default Karel port
 FOCAS_PORT = 8193  # standard FOCAS1/2 port
@@ -46,7 +47,7 @@ class FanucKarelServerOptions:
     digital_inputs: int = 16
 
 
-class FanucKarelServer(LineServerDevice):
+class FanucKarelServer(LineServerDevice, HasArm, HasIO):
     kind = "fanuc_r30ib"
     DEFAULT_PORT = FANUC_PORT
     FRAMER = NEWLINE
@@ -141,7 +142,7 @@ class FanucFocasRobotOptions:
     karel_port: int = FANUC_PORT
 
 
-class FanucFocasRobot(Device):
+class FanucFocasRobot(Device, HasArm, HasIO):
     kind = "fanuc_focas_robot"
 
     def __init__(

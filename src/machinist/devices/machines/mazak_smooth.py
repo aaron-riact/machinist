@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.capabilities import HasIO
 from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -20,7 +21,7 @@ from ...transport.ethernetip import (
     MazakEthernetIPAdapter,
 )
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
-from .state import CycleState, MachineState
+from .state import CycleState, HasMachineState, MachineState
 
 BLOCK_SIZE = 110
 PROGRAM_OFFSET = 44
@@ -218,7 +219,7 @@ class MazakSmoothOptions:
     _eeip_client_factory: Any = None
 
 
-class MazakSmoothEmulator(Device):
+class MazakSmoothEmulator(Device, HasMachineState, HasIO):
     kind = "mazak_smooth"
 
     input_signal_points = INPUT_SIGNAL_POINTS

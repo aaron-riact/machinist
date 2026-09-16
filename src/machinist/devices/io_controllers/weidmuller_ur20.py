@@ -12,6 +12,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from ...core.capabilities import HasIO, HasRegisters
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -30,7 +31,7 @@ class WeidmullerUR20Options:
     outputs: int = 16
 
 
-class WeidmullerUR20(Device):
+class WeidmullerUR20(Device, HasIO, HasRegisters):
     kind = "weidmuller_ur20"
     DEFAULT_PORT = 502
 

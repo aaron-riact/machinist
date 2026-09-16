@@ -35,6 +35,7 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 
+from ...core.capabilities import HasFlange, HasIO
 from ...core.device import DeviceDetail, DetailField
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -45,7 +46,7 @@ from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
-from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
+from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, RobotArm, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
 DOBOT_FEEDBACK_FAST_PORT = 30004
@@ -447,7 +448,7 @@ def _feedback_writer(
             time.sleep(remaining)
 
 
-class DobotDashboard(LineServerDevice):
+class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     """Emulated Dobot TCP/IP dashboard (port 29999)."""
 
     kind = "dobot_dashboard"

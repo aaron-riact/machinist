@@ -15,6 +15,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
@@ -27,7 +28,7 @@ class PneumaticGripperOptions:
     settle_seconds: float = 0.3
 
 
-class PneumaticGripper(Device):
+class PneumaticGripper(Device, HasIO):
     kind = "pneumatic_gripper"
 
     def __init__(

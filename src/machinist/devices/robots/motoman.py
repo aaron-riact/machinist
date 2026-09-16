@@ -33,7 +33,7 @@ from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.framing import CRLF
 from ...transport.line_server import Reply, SessionHandler
-from .arm import ArmOptions, ArmMode, RobotArm, arm_from_options
+from .arm import ArmMode, ArmOptions, HasArm, RobotArm, arm_from_options
 
 MOTOMAN_PORT = 80
 SERVER_BANNER = "OK: NX Information Server(Ver 1.10)."
@@ -127,7 +127,7 @@ class _Session:
                 return "ERROR:E2010"
 
 
-class MotomanNX100(LineServerDevice):
+class MotomanNX100(LineServerDevice, HasArm):
     kind = "motoman_nx100"
     DEFAULT_PORT = MOTOMAN_PORT
     FRAMER = CRLF

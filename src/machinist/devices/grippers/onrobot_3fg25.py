@@ -49,6 +49,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.capabilities import HasRegisters
 from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
 from ...core.events import EventBus
 from ...core.registry import register
@@ -175,7 +176,7 @@ class _State:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
-class OnRobot3FG25(Device):
+class OnRobot3FG25(Device, HasRegisters):
     kind = "onrobot_3fg25"
     DEFAULT_PORT = 502
 

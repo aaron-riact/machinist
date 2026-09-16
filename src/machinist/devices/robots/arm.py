@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import time
+from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
@@ -458,6 +459,16 @@ class RobotArm:
             self.move_logger.progress(seq=seq, kind=kind, t=t, elapsed=elapsed, joints=joints, pose=pose)
             if done:
                 self.move_logger.move_end(seq=seq, kind=kind, joints=joints, pose=pose)
+
+
+class HasArm(ABC):
+    """A device that drives a :class:`RobotArm`.
+
+    Declared by every robot emulator so the World, TUI and web API can reach
+    the arm with a plain ``isinstance`` check.
+    """
+
+    arm: RobotArm
 
 
 def _lerp(a: float, b: float, t: float) -> float:

@@ -13,6 +13,7 @@ Per-vendor modules expose this state through their wire protocol.
 from __future__ import annotations
 
 import threading
+from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
@@ -87,6 +88,12 @@ class MachineState:
             subs = list(self.dprint_subscribers)
         for sub in subs:
             sub(text)
+
+
+class HasMachineState(ABC):
+    """A device (a CNC) whose domain state is a :class:`MachineState`."""
+
+    state: MachineState
 
 
 def machine_readers(state: MachineState) -> dict[str, Callable[[], object]]:

@@ -31,7 +31,7 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.framing import NEWLINE
-from .arm import ArmOptions, ArmMode, RobotArm, arm_from_options
+from .arm import ArmMode, ArmOptions, HasArm, RobotArm, arm_from_options
 
 UR_DASHBOARD_PORT = 29999
 
@@ -43,7 +43,7 @@ class _LoadedProgram:
     name: str = ""
 
 
-class URDashboardServer(LineServerDevice):
+class URDashboardServer(LineServerDevice, HasArm):
     """Universal Robots Dashboard text protocol on port 29999."""
 
     kind = "ur_dashboard"

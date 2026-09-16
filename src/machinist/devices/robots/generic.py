@@ -25,7 +25,7 @@ from ...kinematics.api import DHParams, KinematicsOptions
 from ...core.types import Endpoint
 from ...srci import SrciServer
 from ...transport.message import FrameHandler, MessageServer, open_server
-from .arm import ArmOptions, RobotArm, arm_from_options, arm_readers
+from .arm import ArmOptions, HasArm, RobotArm, arm_from_options, arm_readers
 
 if TYPE_CHECKING:
     from ...transport.opcua_server import OpcUaServer
@@ -60,7 +60,7 @@ class RobotDeviceOptions:
     opcua: OpcUaClientOptions | None = None
 
 
-class RobotDevice(Device):
+class RobotDevice(Device, HasArm):
     """A robot arm served over a configurable protocol + transport."""
 
     kind = "robot"

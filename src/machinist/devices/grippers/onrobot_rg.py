@@ -41,6 +41,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.capabilities import HasRegisters
 from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
 from ...core.events import EventBus
 from ...core.registry import register
@@ -133,7 +134,7 @@ def _from_signed(value: int) -> int:
     return value & 0xFFFF
 
 
-class OnRobotRG(Device):
+class OnRobotRG(Device, HasRegisters):
     kind = "onrobot_rg"
     DEFAULT_PORT = 502
 
