@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
+
+from .events import Event
 
 
 @dataclass(slots=True)
@@ -23,3 +26,12 @@ class ProgramLibrary:
 
     def write(self, name: str, body: str) -> None:
         (self.root / name).write_text(body, encoding="utf-8")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProgramsChanged(Event):
+    """A device's program library now lists *names*."""
+
+    KIND: ClassVar[str] = "programs"
+
+    names: tuple[str, ...]
