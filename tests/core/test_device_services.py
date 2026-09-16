@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from machinist.core.device import Device
-from machinist.core.events import Event, EventBus, LifecycleChanged
+from machinist.core.events import DeviceFaulted, Event, EventBus, LifecycleChanged
 from machinist.core.types import DeviceState, Endpoint
 from machinist.transport.service import Service
 
@@ -121,7 +121,8 @@ def test_a_service_that_never_binds_faults_the_device(monkeypatch: pytest.Monkey
     device._thread.join(timeout=2.0)
 
     assert device.lifecycle is DeviceState.FAULTED
-    assert any(e.kind == "error" and "failed to bind" in e.payload["message"] for e in events)
+    faults = [e for e in events if isinstance(e, DeviceFaulted)]
+    assert len(faults) == 1 and "failed to bind" in faults[0].message
     assert good.shut_down.is_set(), "services that did start are torn down again"
 
 

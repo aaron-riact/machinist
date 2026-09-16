@@ -78,6 +78,15 @@ class LifecycleChanged(Event):
     state: DeviceState
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeviceFaulted(Event):
+    """A device's worker died with *message*; its lifecycle is now FAULTED."""
+
+    KIND: ClassVar[str] = "error"
+
+    message: str
+
+
 class EventBus:
     """Trivial thread-safe pub/sub bus.
 

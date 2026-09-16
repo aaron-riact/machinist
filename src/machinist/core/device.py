@@ -28,7 +28,7 @@ from typing import Any
 
 from ..transport.service import Service
 from .capabilities import HasIO
-from .events import Event, EventBus, LifecycleChanged, Note
+from .events import DeviceFaulted, Event, EventBus, LifecycleChanged, Note
 from .io import Direction, SignalBank
 from .panel import Field, Panel
 from .types import DeviceState, Endpoint
@@ -206,7 +206,7 @@ class Device(ABC):
             with self._lifecycle_lock:
                 self._lifecycle = DeviceState.FAULTED
             self._ready.set()
-            self.emit("error", message=str(exc))
+            self.publish(DeviceFaulted(device=self.name, message=str(exc)))
             self._publish_lifecycle()
             return
         with self._lifecycle_lock:
