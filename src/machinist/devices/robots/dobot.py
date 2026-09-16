@@ -26,7 +26,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
@@ -47,6 +47,7 @@ from ...kinematics.api import DHParams, Joints, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
+from ...transport.line_server import Reply
 from ...transport.service import Service
 from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, arm_from_options
 
@@ -461,6 +462,16 @@ class DobotOptions(ArmOptions):
     feedback_ports: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class _Request:
+    """One dashboard command, with the state it is judged against."""
+
+    verb: str
+    args: str
+    arm: ArmStateView
+    fault: _FaultState
+
+
 class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     """Emulated Dobot TCP/IP dashboard (port 29999)."""
 
@@ -540,7 +551,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 math.degrees(t[3]), math.degrees(t[4]), math.degrees(t[5]),
             )
 
-    def handle_line(self, line: str) -> Iterable[str] | str | None:
+    def handle_line(self, line: str) -> Reply:
         verb, args = _parse(line)
         if os.environ.get("MACHINIST_LOG_STDERR"):
             try:
@@ -549,287 +560,315 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 log_level = 1
             if log_level >= 2 or verb.lower() not in self._quiet_commands:
                 print(f"[dobot/{self.name}] {line}", file=sys.stderr, flush=True)
-        s = self.arm.state.snapshot()
-        fault = self._fault.view
-        if verb.lower() in _MOTION_VERBS and fault.active:
+        req = _Request(verb=verb, args=args, arm=self.arm.state.view, fault=self._fault.view)
+        if verb.lower() in _MOTION_VERBS and req.fault.active:
             return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
-        match verb.lower():
-            case "enablerobot":
-                if fault.enable_failure is EnableFailure.ERROR:
-                    return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
-                if fault.enable_failure is EnableFailure.STUCK:
-                    # Accepted, but the servos never come on -- RobotMode keeps
-                    # reporting DISABLED, so a driver's enable loop times out.
-                    return _ok(verb, args)
-                self.arm.set_servo(True); return _ok(verb, args)
-            case "disablerobot":
-                self.arm.set_servo(False); return _ok(verb, args)
-            case "emergencystop":
-                self.arm.estop()
-                self._fault.update(alarm_ids=(1,))
-                return _ok(verb, args)
-            case "modbusrtucreate":
-                try:
-                    slave_id, baud, serial = _parse_modbus_rtu_create(args)
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                index = self._next_master_index()
-                if index is None:
-                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
-                self._masters[index] = _ModbusMaster(slave_id=slave_id, baud=baud, serial=serial)
-                self.announce_panel()
-                return _ok(verb, args, value=str(index))
-            case "modbusclose":
-                idx, err = _int_arg(args, verb, lo=0, hi=MAX_MODBUS_MASTERS - 1)
-                if err:
-                    return err
-                if self._masters.pop(idx, None) is None:
-                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
-                self.announce_panel()
-                return _ok(verb, args)
-            case "getholdregs":
-                try:
-                    index, addr, count, val_type = _parse_hold_regs_read(args)
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if val_type != MODBUS_VALUE_TYPE:
-                    return f"-40001,{{}},{verb}({args})"
-                master = self._masters.get(index)
-                if master is None:
-                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
-                try:
-                    values = self.flange.read_holding(master.slave_id, addr, count)
-                except NoSlaveError:
-                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
-                return _ok(verb, args, value=",".join(str(v) for v in values))
-            case "setholdregs":
-                try:
-                    index, addr, count, values, val_type = _parse_hold_regs_write(args)
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if val_type != MODBUS_VALUE_TYPE:
-                    return f"-40001,{{}},{verb}({args})"
-                if len(values) != count:
-                    return f"-30001,{{}},{verb}({args})"
-                master = self._masters.get(index)
-                if master is None:
-                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
-                try:
-                    self.flange.write_holding(master.slave_id, addr, values)
-                except NoSlaveError:
-                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
-                return _ok(verb, args)
-            case "clearerror":
-                self.arm.reset()
-                if fault.active and fault.sticky:
-                    # The alarm cause is still present, so the controller
-                    # reports the same alarm straight back. ClearError itself
-                    # still succeeds -- the guide says to re-read RobotMode to
-                    # find out whether the robot is actually clear.
-                    return _ok(verb, args)
-                self.clear_protective_stop()
-                return _ok(verb, args)
-            case "stop":
-                self.arm.stop()
-                return _ok(verb, args)
-            case "geterrorid":
-                return _ok(verb, args, value="[" + ",".join(str(e) for e in fault.alarm_ids) + "]")
-            case "getpose":
-                tool_idx = None
-                if args.strip():
-                    for part in args.split(","):
-                        part = part.strip()
-                        if "=" not in part:
-                            continue
-                        key, _, val = part.partition("=")
-                        key = key.strip()
-                        val = val.strip()
-                        if key == "tool":
-                            try:
-                                tool_idx = int(val)
-                            except ValueError:
-                                return f"-30001,{{}},{verb}({args})"
-                            if tool_idx < 0 or tool_idx > 50:
-                                return f"-40001,{{}},{verb}({args})"
-                            if tool_idx != 0 and tool_idx not in self._tool_frames:
-                                return f"-1,{{}},{verb}({args})"
-                        elif key == "user":
-                            try:
-                                user_idx = int(val)
-                            except ValueError:
-                                return f"-30001,{{}},{verb}({args})"
-                            if user_idx < 0 or user_idx > 50:
-                                return f"-40001,{{}},{verb}({args})"
+        handler = _VERBS.get(verb.lower())
+        if handler is None:
+            return f"-10000,{{}},{verb}({args})"
+        return handler(self, req)
 
-                pose = s.pose
-                if tool_idx is not None and tool_idx != 0:
-                    T_f = _pose_to_mat(pose)
-                    T_t = _pose_to_mat(self._tool_frames[tool_idx])
-                    pose = _mat_to_pose(T_f @ T_t)
-                pose_mm = (
-                    pose[0] * 1000,
-                    pose[1] * 1000,
-                    pose[2] * 1000,
-                    math.degrees(pose[3]),
-                    math.degrees(pose[4]),
-                    math.degrees(pose[5]),
-                )
-                return _ok(verb, args, value=",".join(f"{p:.4f}" for p in pose_mm))
-            case "getangle":
-                return _ok(verb, args, value=",".join(f"{math.degrees(j):.4f}" for j in s.joints))
-            case "robotmode":
-                return _ok(verb, args, value=str(_robot_mode(s, fault)))
-            case "tooldi":
-                idx, err = _int_arg(args, verb, hi=self._tool_di_count)
-                if err:
-                    return err
-                return _ok(verb, args, value=str(int(self.io[f"tooldi{idx}"].value)))
-            case "gettooldo":
-                idx, err = _int_arg(args, verb, hi=self._tool_do_count)
-                if err:
-                    return err
-                return _ok(verb, args, value=str(int(self.io[f"tooldo{idx}"].value)))
-            case "ai":
-                idx, err = _int_arg(args, verb, hi=len(self._ai))
-                if err:
-                    return err
-                return _ok(verb, args, value=str(self._ai[idx - 1]))
-            case "getao":
-                idx, err = _int_arg(args, verb, hi=len(self._ao))
-                if err:
-                    return err
-                return _ok(verb, args, value=str(self._ao[idx - 1]))
-            case "toolai":
-                idx, err = _int_arg(args, verb, hi=len(self._tool_ai))
-                if err:
-                    return err
-                return _ok(verb, args, value=str(self._tool_ai[idx - 1]))
-            case "speedfactor":
-                ratio, err = _int_arg(args, verb, hi=100)
-                if err:
-                    return err
-                self.arm.set_speed_factor(ratio / 100)
-                self.announce_panel()  # the panel shows the speed factor
-                return _ok(verb, args)
-            case "settool":
-                try:
-                    vals = _literal_eval_braced(args)
-                    index = int(vals[0])
-                    if index < 1 or index > 50:
-                        return f"-40001,{{}},{verb}({args})"
-                    pose = tuple(float(v) for v in vals[1])
-                    if len(pose) != 6:
-                        return f"-30001,{{}},{verb}({args})"
-                except Exception:
-                    return f"-30001,{{}},{verb}({args})"
-                self._tool_frames[index] = (
-                    Meters(pose[0] * 1e-3),
-                    Meters(pose[1] * 1e-3),
-                    Meters(pose[2] * 1e-3),
-                    Radians(math.radians(pose[3])),
-                    Radians(math.radians(pose[4])),
-                    Radians(math.radians(pose[5])),
-                )
-                # SetTool silently bumps CurrentCommandId even though the
-                # response carries no value field (it's "immediate" per the
-                # protocol docs, but the real Dobot queues it internally).
-                self._current_command_id += 1
-                return _ok(verb, args)
-            case "setpayload":
-                parts = [p.strip() for p in args.split(",")]
-                try:
-                    load = float(parts[0])
-                except (ValueError, IndexError):
-                    return f"-30001,{{}},{verb}({args})"
-                if len(parts) == 4:
+    # ----- dashboard verbs, one method each ----------------------------------
+
+    def _verb_enablerobot(self, req: _Request) -> Reply:
+        if req.fault.enable_failure is EnableFailure.ERROR:
+            return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{req.verb}({req.args})"
+        if req.fault.enable_failure is EnableFailure.STUCK:
+            # Accepted, but the servos never come on -- RobotMode keeps
+            # reporting DISABLED, so a driver'req.arm enable loop times out.
+            return _ok(req.verb, req.args)
+        self.arm.set_servo(True); return _ok(req.verb, req.args)
+
+    def _verb_disablerobot(self, req: _Request) -> Reply:
+        self.arm.set_servo(False); return _ok(req.verb, req.args)
+
+    def _verb_emergencystop(self, req: _Request) -> Reply:
+        self.arm.estop()
+        self._fault.update(alarm_ids=(1,))
+        return _ok(req.verb, req.args)
+
+    def _verb_modbusrtucreate(self, req: _Request) -> Reply:
+        try:
+            slave_id, baud, serial = _parse_modbus_rtu_create(req.args)
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        index = self._next_master_index()
+        if index is None:
+            return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
+        self._masters[index] = _ModbusMaster(slave_id=slave_id, baud=baud, serial=serial)
+        self.announce_panel()
+        return _ok(req.verb, req.args, value=str(index))
+
+    def _verb_modbusclose(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, lo=0, hi=MAX_MODBUS_MASTERS - 1)
+        if err:
+            return err
+        if self._masters.pop(idx, None) is None:
+            return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
+        self.announce_panel()
+        return _ok(req.verb, req.args)
+
+    def _verb_getholdregs(self, req: _Request) -> Reply:
+        try:
+            index, addr, count, val_type = _parse_hold_regs_read(req.args)
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        if val_type != MODBUS_VALUE_TYPE:
+            return f"-40001,{{}},{req.verb}({req.args})"
+        master = self._masters.get(index)
+        if master is None:
+            return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
+        try:
+            values = self.flange.read_holding(master.slave_id, addr, count)
+        except NoSlaveError:
+            return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
+        return _ok(req.verb, req.args, value=",".join(str(v) for v in values))
+
+    def _verb_setholdregs(self, req: _Request) -> Reply:
+        try:
+            index, addr, count, values, val_type = _parse_hold_regs_write(req.args)
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        if val_type != MODBUS_VALUE_TYPE:
+            return f"-40001,{{}},{req.verb}({req.args})"
+        if len(values) != count:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        master = self._masters.get(index)
+        if master is None:
+            return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
+        try:
+            self.flange.write_holding(master.slave_id, addr, values)
+        except NoSlaveError:
+            return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
+        return _ok(req.verb, req.args)
+
+    def _verb_clearerror(self, req: _Request) -> Reply:
+        self.arm.reset()
+        if req.fault.active and req.fault.sticky:
+            # The alarm cause is still present, so the controller
+            # reports the same alarm straight back. ClearError itself
+            # still succeeds -- the guide says to re-read RobotMode to
+            # find out whether the robot is actually clear.
+            return _ok(req.verb, req.args)
+        self.clear_protective_stop()
+        return _ok(req.verb, req.args)
+
+    def _verb_stop(self, req: _Request) -> Reply:
+        self.arm.stop()
+        return _ok(req.verb, req.args)
+
+    def _verb_geterrorid(self, req: _Request) -> Reply:
+        return _ok(req.verb, req.args, value="[" + ",".join(str(e) for e in req.fault.alarm_ids) + "]")
+
+    def _verb_getpose(self, req: _Request) -> Reply:
+        tool_idx = None
+        if req.args.strip():
+            for part in req.args.split(","):
+                part = part.strip()
+                if "=" not in part:
+                    continue
+                key, _, val = part.partition("=")
+                key = key.strip()
+                val = val.strip()
+                if key == "tool":
                     try:
-                        cx, cy, cz = float(parts[1]), float(parts[2]), float(parts[3])
+                        tool_idx = int(val)
                     except ValueError:
-                        return f"-30001,{{}},{verb}({args})"
-                    self._payload = (load, cx, cy, cz)
-                elif len(parts) == 1:
-                    self._payload = (load, 0.0, 0.0, 0.0)
-                else:
-                    return f"-30001,{{}},{verb}({args})"
-                self._current_command_id += 1
-                return _ok(verb, args, value=str(self._current_command_id))
-            case "tool":
-                idx, err = _int_arg(args, verb, lo=0, hi=50)
-                if err:
-                    return err
-                if idx != 0 and idx not in self._tool_frames:
-                    return f"-1,{{}},Tool({idx})"
-                self._active_tool = idx
-                self._current_command_id += 1
-                return _ok(verb, args, value=str(self._current_command_id))
-            case "reljointmovj":
-                try:
-                    deltas = _parse_required_floats(args, count=len(s.joints))
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                target: Joints = tuple(Radians(j + math.radians(d)) for j, d in zip(s.joints, deltas))
-                self.arm.movej(target)
-                self._current_command_id += 1
-                return _ok(verb, args, value=str(self._current_command_id))
-            case "relmovltool":
-                try:
-                    delta = _parse_required_floats(args, count=6)
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
-                                    math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
-                T_cur = _pose_to_mat(s.pose)
-                R = T_cur[:3, :3]
-                tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
-                T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
-                R_tool = T_tool[:3, :3]
-                R_tcp = R @ R_tool
-                p = R @ np.array([tool_pose[0], tool_pose[1], tool_pose[2]], dtype=float)
-                twist = np.zeros(6, dtype=float)
-                twist[:3] = R_tcp @ delta_m[:3]
-                twist[3:] = R_tcp @ delta_m[3:]
-                skew_p = np.array([[0, -p[2], p[1]],
-                                   [p[2], 0, -p[0]],
-                                   [-p[1], p[0], 0]], dtype=float)
-                twist[:3] = twist[:3] + skew_p @ twist[3:]
-                print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
-                print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in s.pose)})  tool={self._active_tool}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
-                print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
-                print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
-                self.arm.jog_cartesian(twist, dt=1.0)
-                self._current_command_id += 1
-                return _ok(verb, args, value=str(self._current_command_id))
-            case "movj":
-                try:
-                    vals, form = _parse_motion_args(args, count=len(s.joints))
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                if form == "joint":
-                    # MovJ(joint={j1..j6}): target is joint coordinates (degrees).
-                    self.arm.movej(tuple(Radians(math.radians(j)) for j in vals))
-                else:
-                    # MovJ(pose={…}) or bare floats: target is a Cartesian pose
-                    # (mm + deg); joint-interpolated motion to it via IK. This is
-                    # the default point type per the TCP/IP interface guide.
-                    self.arm.movej_pose((
-                        Meters(vals[0] * 1e-3), Meters(vals[1] * 1e-3), Meters(vals[2] * 1e-3),
-                        Radians(math.radians(vals[3])), Radians(math.radians(vals[4])), Radians(math.radians(vals[5])),
-                    ))
-                self._current_command_id += 1
-                return _ok(verb, args, value=str(self._current_command_id))
-            case "movl":
-                try:
-                    pose_mm, _form = _parse_motion_args(args, count=6)
-                except ValueError:
-                    return f"-30001,{{}},{verb}({args})"
-                self.arm.movel((
-                    Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
-                    Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
-                ))
-                self._current_command_id += 1
-                return _ok(verb, args, value=str(self._current_command_id))
-            case _:
-                return f"-10000,{{}},{verb}({args})"
+                        return f"-30001,{{}},{req.verb}({req.args})"
+                    if tool_idx < 0 or tool_idx > 50:
+                        return f"-40001,{{}},{req.verb}({req.args})"
+                    if tool_idx != 0 and tool_idx not in self._tool_frames:
+                        return f"-1,{{}},{req.verb}({req.args})"
+                elif key == "user":
+                    try:
+                        user_idx = int(val)
+                    except ValueError:
+                        return f"-30001,{{}},{req.verb}({req.args})"
+                    if user_idx < 0 or user_idx > 50:
+                        return f"-40001,{{}},{req.verb}({req.args})"
+
+        pose = req.arm.pose
+        if tool_idx is not None and tool_idx != 0:
+            T_f = _pose_to_mat(pose)
+            T_t = _pose_to_mat(self._tool_frames[tool_idx])
+            pose = _mat_to_pose(T_f @ T_t)
+        pose_mm = (
+            pose[0] * 1000,
+            pose[1] * 1000,
+            pose[2] * 1000,
+            math.degrees(pose[3]),
+            math.degrees(pose[4]),
+            math.degrees(pose[5]),
+        )
+        return _ok(req.verb, req.args, value=",".join(f"{p:.4f}" for p in pose_mm))
+
+    def _verb_getangle(self, req: _Request) -> Reply:
+        return _ok(req.verb, req.args, value=",".join(f"{math.degrees(j):.4f}" for j in req.arm.joints))
+
+    def _verb_robotmode(self, req: _Request) -> Reply:
+        return _ok(req.verb, req.args, value=str(_robot_mode(req.arm, req.fault)))
+
+    def _verb_tooldi(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, hi=self._tool_di_count)
+        if err:
+            return err
+        return _ok(req.verb, req.args, value=str(int(self.io[f"tooldi{idx}"].value)))
+
+    def _verb_gettooldo(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, hi=self._tool_do_count)
+        if err:
+            return err
+        return _ok(req.verb, req.args, value=str(int(self.io[f"tooldo{idx}"].value)))
+
+    def _verb_ai(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, hi=len(self._ai))
+        if err:
+            return err
+        return _ok(req.verb, req.args, value=str(self._ai[idx - 1]))
+
+    def _verb_getao(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, hi=len(self._ao))
+        if err:
+            return err
+        return _ok(req.verb, req.args, value=str(self._ao[idx - 1]))
+
+    def _verb_toolai(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, hi=len(self._tool_ai))
+        if err:
+            return err
+        return _ok(req.verb, req.args, value=str(self._tool_ai[idx - 1]))
+
+    def _verb_speedfactor(self, req: _Request) -> Reply:
+        ratio, err = _int_arg(req.args, req.verb, hi=100)
+        if err:
+            return err
+        self.arm.set_speed_factor(ratio / 100)
+        self.announce_panel()  # the panel shows the speed factor
+        return _ok(req.verb, req.args)
+
+    def _verb_settool(self, req: _Request) -> Reply:
+        try:
+            vals = _literal_eval_braced(req.args)
+            index = int(vals[0])
+            if index < 1 or index > 50:
+                return f"-40001,{{}},{req.verb}({req.args})"
+            pose = tuple(float(v) for v in vals[1])
+            if len(pose) != 6:
+                return f"-30001,{{}},{req.verb}({req.args})"
+        except Exception:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        self._tool_frames[index] = (
+            Meters(pose[0] * 1e-3),
+            Meters(pose[1] * 1e-3),
+            Meters(pose[2] * 1e-3),
+            Radians(math.radians(pose[3])),
+            Radians(math.radians(pose[4])),
+            Radians(math.radians(pose[5])),
+        )
+        # SetTool silently bumps CurrentCommandId even though the
+        # response carries no value field (it'req.arm "immediate" per the
+        # protocol docs, but the real Dobot queues it internally).
+        self._current_command_id += 1
+        return _ok(req.verb, req.args)
+
+    def _verb_setpayload(self, req: _Request) -> Reply:
+        parts = [p.strip() for p in req.args.split(",")]
+        try:
+            load = float(parts[0])
+        except (ValueError, IndexError):
+            return f"-30001,{{}},{req.verb}({req.args})"
+        if len(parts) == 4:
+            try:
+                cx, cy, cz = float(parts[1]), float(parts[2]), float(parts[3])
+            except ValueError:
+                return f"-30001,{{}},{req.verb}({req.args})"
+            self._payload = (load, cx, cy, cz)
+        elif len(parts) == 1:
+            self._payload = (load, 0.0, 0.0, 0.0)
+        else:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        self._current_command_id += 1
+        return _ok(req.verb, req.args, value=str(self._current_command_id))
+
+    def _verb_tool(self, req: _Request) -> Reply:
+        idx, err = _int_arg(req.args, req.verb, lo=0, hi=50)
+        if err:
+            return err
+        if idx != 0 and idx not in self._tool_frames:
+            return f"-1,{{}},Tool({idx})"
+        self._active_tool = idx
+        self._current_command_id += 1
+        return _ok(req.verb, req.args, value=str(self._current_command_id))
+
+    def _verb_reljointmovj(self, req: _Request) -> Reply:
+        try:
+            deltas = _parse_required_floats(req.args, count=len(req.arm.joints))
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        target: Joints = tuple(Radians(j + math.radians(d)) for j, d in zip(req.arm.joints, deltas))
+        self.arm.movej(target)
+        self._current_command_id += 1
+        return _ok(req.verb, req.args, value=str(self._current_command_id))
+
+    def _verb_relmovltool(self, req: _Request) -> Reply:
+        try:
+            delta = _parse_required_floats(req.args, count=6)
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
+                            math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
+        T_cur = _pose_to_mat(req.arm.pose)
+        R = T_cur[:3, :3]
+        tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
+        T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
+        R_tool = T_tool[:3, :3]
+        R_tcp = R @ R_tool
+        p = R @ np.array([tool_pose[0], tool_pose[1], tool_pose[2]], dtype=float)
+        twist = np.zeros(6, dtype=float)
+        twist[:3] = R_tcp @ delta_m[:3]
+        twist[3:] = R_tcp @ delta_m[3:]
+        skew_p = np.array([[0, -p[2], p[1]],
+                           [p[2], 0, -p[0]],
+                           [-p[1], p[0], 0]], dtype=float)
+        twist[:3] = twist[:3] + skew_p @ twist[3:]
+        print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
+        print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in req.arm.pose)})  tool={self._active_tool}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
+        print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
+        print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
+        self.arm.jog_cartesian(twist, dt=1.0)
+        self._current_command_id += 1
+        return _ok(req.verb, req.args, value=str(self._current_command_id))
+
+    def _verb_movj(self, req: _Request) -> Reply:
+        try:
+            vals, form = _parse_motion_args(req.args, count=len(req.arm.joints))
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        if form == "joint":
+            # MovJ(joint={j1..j6}): target is joint coordinates (degrees).
+            self.arm.movej(tuple(Radians(math.radians(j)) for j in vals))
+        else:
+            # MovJ(pose={…}) or bare floats: target is a Cartesian pose
+            # (mm + deg); joint-interpolated motion to it via IK. This is
+            # the default point type per the TCP/IP interface guide.
+            self.arm.movej_pose((
+                Meters(vals[0] * 1e-3), Meters(vals[1] * 1e-3), Meters(vals[2] * 1e-3),
+                Radians(math.radians(vals[3])), Radians(math.radians(vals[4])), Radians(math.radians(vals[5])),
+            ))
+        self._current_command_id += 1
+        return _ok(req.verb, req.args, value=str(self._current_command_id))
+
+    def _verb_movl(self, req: _Request) -> Reply:
+        try:
+            pose_mm, _form = _parse_motion_args(req.args, count=6)
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        self.arm.movel((
+            Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
+            Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
+        ))
+        self._current_command_id += 1
+        return _ok(req.verb, req.args, value=str(self._current_command_id))
 
     # ----- modbus masters ------------------------------------------------
 
@@ -959,6 +998,37 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             for i, v in enumerate(self._tool_ai)
         ]
         return replace(super().build_detail(), derived_fields=tuple(derived))
+
+
+#: Dashboard verb (lower case) -> the method that answers it.
+_VERBS: dict[str, Callable[[DobotDashboard, _Request], Reply]] = {
+    "enablerobot": DobotDashboard._verb_enablerobot,
+    "disablerobot": DobotDashboard._verb_disablerobot,
+    "emergencystop": DobotDashboard._verb_emergencystop,
+    "modbusrtucreate": DobotDashboard._verb_modbusrtucreate,
+    "modbusclose": DobotDashboard._verb_modbusclose,
+    "getholdregs": DobotDashboard._verb_getholdregs,
+    "setholdregs": DobotDashboard._verb_setholdregs,
+    "clearerror": DobotDashboard._verb_clearerror,
+    "stop": DobotDashboard._verb_stop,
+    "geterrorid": DobotDashboard._verb_geterrorid,
+    "getpose": DobotDashboard._verb_getpose,
+    "getangle": DobotDashboard._verb_getangle,
+    "robotmode": DobotDashboard._verb_robotmode,
+    "tooldi": DobotDashboard._verb_tooldi,
+    "gettooldo": DobotDashboard._verb_gettooldo,
+    "ai": DobotDashboard._verb_ai,
+    "getao": DobotDashboard._verb_getao,
+    "toolai": DobotDashboard._verb_toolai,
+    "speedfactor": DobotDashboard._verb_speedfactor,
+    "settool": DobotDashboard._verb_settool,
+    "setpayload": DobotDashboard._verb_setpayload,
+    "tool": DobotDashboard._verb_tool,
+    "reljointmovj": DobotDashboard._verb_reljointmovj,
+    "relmovltool": DobotDashboard._verb_relmovltool,
+    "movj": DobotDashboard._verb_movj,
+    "movl": DobotDashboard._verb_movl,
+}
 
 
 # --- helpers ---------------------------------------------------------
