@@ -22,6 +22,7 @@ from typing import Any, Iterable
 
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.programs import ProgramLibrary
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.broadcast import BroadcastServer
@@ -54,25 +55,6 @@ class HaasNGCOptions:
     mtconnect_port: int | None = None
     smb: SmbDeviceOptions | None = None
     opcua: OpcUaDeviceOptions | None = None
-
-
-@dataclass(slots=True)
-class ProgramLibrary:
-    """Directory of G-code files exposed to the TUI and SMB share."""
-
-    root: Path
-
-    def __post_init__(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-
-    def list(self) -> list[str]:
-        return sorted(p.name for p in self.root.iterdir() if p.is_file())
-
-    def read(self, name: str) -> str:
-        return (self.root / name).read_text(encoding="utf-8")
-
-    def write(self, name: str, body: str) -> None:
-        (self.root / name).write_text(body, encoding="utf-8")
 
 
 class HaasNGC(Device):
