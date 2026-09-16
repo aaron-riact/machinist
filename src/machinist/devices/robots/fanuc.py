@@ -116,7 +116,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         backend=opts.backend,
         dh_params=dh,
         urdf=opts.urdf,
-    ))
+    ), name=name, publish=bus.publish)
     return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name))
 
 
@@ -313,5 +313,5 @@ def _robot_factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[s
         backend=opt.backend,
         dh_params=dh,
         urdf=opt.urdf,
-    ))
+    ), name=name, publish=bus.publish)
     return FanucFocasRobot(name, endpoint, bus, opt, arm=arm, io=SignalBank(owner=name))

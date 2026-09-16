@@ -18,16 +18,28 @@ import threading
 import time
 from abc import ABC
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from enum import StrEnum, auto
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ...kinematics.api import DHParams, Joints, Kinematics, KinematicsOptions, NoOpKinematics, Pose, RobotModel
-from ...kinematics.units import Meters, Radians
+from ...core.events import Event
+from ...kinematics.api import (
+    DHParams,
+    Joints,
+    Kinematics,
+    KinematicsOptions,
+    NoOpKinematics,
+    Pose,
+    RobotModel,
+)
+from ...kinematics.units import Radians
 from ...transport.service import Service
+
+Publish = Callable[[Event], None]
 
 
 JOINT_COUNT_DEFAULT = 6
@@ -78,32 +90,6 @@ class _Move:
     requested_pose: Pose | None = None  # cartesian goal for movel (before IK)
 
 
-@dataclass(slots=True)
-class ArmState:
-    """Mutable, lock-protected robot state."""
-
-    joints: Joints = (Radians(0.0),) * JOINT_COUNT_DEFAULT
-    pose: Pose = (Meters(0.0), Meters(0.0), Meters(0.0), Radians(0.0), Radians(0.0), Radians(0.0))
-    mode: ArmMode = ArmMode.IDLE
-    servo_on: bool = True
-    program_running: bool = False
-    speed_fraction: float = 1.0
-    _lock: threading.Lock = field(default_factory=threading.Lock)
-    _move: _Move | None = None
-
-    def snapshot(self) -> "ArmStateView":
-        with self._lock:
-            return ArmStateView(
-                joints=self.joints,
-                pose=self.pose,
-                mode=self.mode,
-                servo_on=self.servo_on,
-                program_running=self.program_running,
-                speed_fraction=self.speed_fraction,
-                current_command=self._move.kind if self._move else None,
-            )
-
-
 @dataclass(frozen=True, slots=True)
 class ArmStateView:
     """Immutable point-in-time snapshot of :class:`ArmState`."""
@@ -127,6 +113,52 @@ class ArmStateView:
     @property
     def faulted(self) -> bool:
         return self.mode is ArmMode.FAULTED
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArmChanged(Event):
+    """An arm's state moved to *view*. Published on every command and every tick that moves."""
+
+    KIND: ClassVar[str] = "arm"
+
+    view: ArmStateView
+
+
+class ArmState:
+    """The single writer of an arm's :class:`ArmStateView`.
+
+    :class:`RobotArm` is the only caller of :meth:`update`. Everyone else reads
+    :attr:`view` (or its older spelling, :meth:`snapshot`).
+    """
+
+    def __init__(
+        self, *, joints: Joints, pose: Pose, owner: str = "arm", publish: Publish | None = None
+    ) -> None:
+        self._owner = owner
+        self._publish = publish
+        self._lock = threading.Lock()
+        self._view = ArmStateView(
+            joints=joints, pose=pose, mode=ArmMode.IDLE, servo_on=True,
+            program_running=False, speed_fraction=1.0,
+        )
+
+    @property
+    def view(self) -> ArmStateView:
+        return self._view
+
+    def snapshot(self) -> ArmStateView:
+        return self._view
+
+    def update(self, **changes: object) -> ArmStateView:
+        """Replace the given fields. Publishes only if something changed."""
+        with self._lock:
+            new = replace(self._view, **changes)
+            changed = new != self._view
+            if changed:
+                self._view = new
+        if changed and self._publish is not None:
+            self._publish(ArmChanged(device=self._owner, view=new))
+        return new
 
 
 def _joints_deg(joints: Joints) -> list[float]:
@@ -292,6 +324,10 @@ class RobotArm(Service):
     the arm alongside its protocol servers and the one device loop drives
     them all. :meth:`start_ticker` / :meth:`stop_ticker` run the same tick on
     a private thread for callers that have no device.
+
+    Every change of state goes through :attr:`state`'s ``update``, which
+    publishes an :class:`ArmChanged`. The arm's own lock only guards the
+    in-flight move it is interpolating.
     """
 
     def __init__(
@@ -299,6 +335,8 @@ class RobotArm(Service):
         *,
         joint_count: int = JOINT_COUNT_DEFAULT,
         kinematics: Kinematics | None = None,
+        owner: str = "arm",
+        publish: Publish | None = None,
     ) -> None:
         home_joints: Joints = (Radians(0.0),) * joint_count
         self._kinematics: Kinematics = kinematics or NoOpKinematics(
@@ -307,7 +345,11 @@ class RobotArm(Service):
         self.state = ArmState(
             joints=home_joints,
             pose=self._kinematics.forward(home_joints),
+            owner=owner,
+            publish=publish,
         )
+        self._lock = threading.Lock()
+        self._move: _Move | None = None
         self._tick_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.move_logger: MoveLogger | None = None
@@ -316,14 +358,14 @@ class RobotArm(Service):
     # ----- commands ---------------------------------------------------
 
     def estop(self) -> None:
-        with self.state._lock:
-            self.state.mode = ArmMode.ESTOPPED
-            self.state._move = None
+        with self._lock:
+            self._move = None
+            self.state.update(mode=ArmMode.ESTOPPED, current_command=None)
 
     def reset(self) -> None:
-        with self.state._lock:
-            if self.state.mode is ArmMode.ESTOPPED:
-                self.state.mode = ArmMode.IDLE
+        with self._lock:
+            if self.state.view.mode is ArmMode.ESTOPPED:
+                self.state.update(mode=ArmMode.IDLE)
 
     def fault(self) -> None:
         """Raise a controller fault, e.g. a collision or an unrecoverable alarm.
@@ -334,34 +376,34 @@ class RobotArm(Service):
         :meth:`reset` nor :meth:`stop` clears a fault -- only
         :meth:`clear_fault` does.
         """
-        with self.state._lock:
-            self.state.mode = ArmMode.FAULTED
-            self.state._move = None
+        with self._lock:
+            self._move = None
+            self.state.update(mode=ArmMode.FAULTED, current_command=None)
 
     def clear_fault(self) -> None:
-        with self.state._lock:
-            if self.state.mode is ArmMode.FAULTED:
-                self.state.mode = ArmMode.IDLE
+        with self._lock:
+            if self.state.view.mode is ArmMode.FAULTED:
+                self.state.update(mode=ArmMode.IDLE)
 
     def stop(self) -> None:
-        with self.state._lock:
-            self.state._move = None
-            if self.state.mode not in (ArmMode.ESTOPPED, ArmMode.FAULTED):
-                self.state.mode = ArmMode.IDLE
+        with self._lock:
+            self._move = None
+            if self.state.view.mode in (ArmMode.ESTOPPED, ArmMode.FAULTED):
+                self.state.update(current_command=None)
+            else:
+                self.state.update(mode=ArmMode.IDLE, current_command=None)
 
     def set_servo(self, on: bool) -> None:
-        with self.state._lock:
-            self.state.servo_on = on
+        self.state.update(servo_on=on)
 
     def set_speed_factor(self, fraction: float) -> None:
-        with self.state._lock:
-            self.state.speed_fraction = fraction
+        self.state.update(speed_fraction=fraction)
 
     def movej(self, target: Joints, *, duration: float = 1.0) -> None:
         self._begin_move(target, duration=duration, kind="movej")
 
     def movel(self, target_pose: Pose, *, duration: float = 1.0) -> None:
-        target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
+        target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
         self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose)
 
     def movej_pose(self, target_pose: Pose, *, duration: float = 1.0) -> None:
@@ -371,7 +413,7 @@ class RobotArm(Service):
         found by inverse kinematics from the Cartesian goal rather than given
         directly as joint angles.
         """
-        target_joints = self._kinematics.inverse(target_pose, seed=self.state.joints)
+        target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
         self._begin_move(target_joints, duration=duration, kind="movej", requested_pose=target_pose)
 
     def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
@@ -380,21 +422,24 @@ class RobotArm(Service):
         Updates arm state in-place — no interpolation delay.
         The *twist* is a 6-vector (m/s + rad/s) in the **flange** world frame.
         """
-        entry: tuple[int, Joints, Pose, Joints, Pose] | None = None
-        with self.state._lock:
-            start_joints = self.state.joints
-            start_pose = self.state.pose
-            new_joints = self._kinematics.velocity_step(self.state.joints, twist * dt, damping=damping)
-            self.state.joints = new_joints
-            self.state.pose = self._kinematics.forward(new_joints)
-            self.state._move = None
-            self.state.mode = ArmMode.IDLE
-            if self.move_logger is not None:
-                self._move_seq += 1
-                entry = (self._move_seq, start_joints, start_pose, new_joints, self.state.pose)
-        if entry is not None and self.move_logger is not None:
-            seq, sj, sp, nj, np_ = entry
-            self.move_logger.jog(seq=seq, start_joints=sj, start_pose=sp, joints=nj, pose=np_, twist=twist * dt)
+        with self._lock:
+            before = self.state.view
+            new_joints = self._kinematics.velocity_step(before.joints, twist * dt, damping=damping)
+            self._move = None
+            after = self.state.update(
+                joints=new_joints,
+                pose=self._kinematics.forward(new_joints),
+                mode=ArmMode.IDLE,
+                current_command=None,
+            )
+            if self.move_logger is None:
+                return
+            self._move_seq += 1
+            seq = self._move_seq
+        self.move_logger.jog(
+            seq=seq, start_joints=before.joints, start_pose=before.pose,
+            joints=after.joints, pose=after.pose, twist=twist * dt,
+        )
 
     # ----- background tick -------------------------------------------
 
@@ -422,29 +467,27 @@ class RobotArm(Service):
     # -----------------------------------------------------------------
 
     def _begin_move(self, target: Joints, *, duration: float, kind: str, requested_pose: Pose | None = None) -> None:
-        start: tuple[int, float, Joints, Pose] | None = None
-        with self.state._lock:
-            if self.state.mode is ArmMode.ESTOPPED or not self.state.servo_on:
-                raise RuntimeError(f"cannot move: mode={self.state.mode} servo={self.state.servo_on}")
+        with self._lock:
+            view = self.state.view
+            if view.mode is ArmMode.ESTOPPED or not view.servo_on:
+                raise RuntimeError(f"cannot move: mode={view.mode} servo={view.servo_on}")
             self._move_seq += 1
-            scaled = max(duration, 1e-3) / max(self.state.speed_fraction, 1e-3)
-            self.state._move = _Move(
+            scaled = max(duration, 1e-3) / max(view.speed_fraction, 1e-3)
+            self._move = _Move(
                 target=target,
                 duration=scaled,
                 started_at=time.monotonic(),
-                started_joints=self.state.joints,
+                started_joints=view.joints,
                 kind=kind,
                 seq=self._move_seq,
                 requested_pose=requested_pose,
             )
-            self.state.mode = ArmMode.MOVING
-            if self.move_logger is not None:
-                start = (self._move_seq, scaled, self.state.joints, self.state.pose)
-        if start is not None and self.move_logger is not None:
-            seq, scaled, start_joints, start_pose = start
+            self.state.update(mode=ArmMode.MOVING, current_command=kind)
+            seq = self._move_seq
+        if self.move_logger is not None:
             self.move_logger.move_start(
                 seq=seq, kind=kind, duration=scaled,
-                start_joints=start_joints, start_pose=start_pose,
+                start_joints=view.joints, start_pose=view.pose,
                 target_joints=target, target_fk_pose=self._kinematics.forward(target),
                 requested_pose=requested_pose,
             )
@@ -456,29 +499,26 @@ class RobotArm(Service):
             self.move_logger.close()
 
     def _tick(self) -> None:
-        s = self.state
-        entry: tuple[int, str, float, float, Joints, Pose, bool] | None = None
-        with s._lock:
-            move = s._move
+        with self._lock:
+            move = self._move
             if move is None:
                 return
             elapsed = time.monotonic() - move.started_at
             t = min(elapsed / move.duration, 1.0)
-            s.joints = tuple(
+            joints = tuple(
                 Radians(_lerp(a, b, t)) for a, b in zip(move.started_joints, move.target, strict=False)
             )
-            s.pose = self._kinematics.forward(s.joints)
+            pose = self._kinematics.forward(joints)
             done = t >= 1.0
-            if self.move_logger is not None:
-                entry = (move.seq, move.kind, t, elapsed, s.joints, s.pose, done)
             if done:
-                s._move = None
-                s.mode = ArmMode.IDLE
-        if entry is not None and self.move_logger is not None:
-            seq, kind, t, elapsed, joints, pose, done = entry
-            self.move_logger.progress(seq=seq, kind=kind, t=t, elapsed=elapsed, joints=joints, pose=pose)
+                self._move = None
+                self.state.update(joints=joints, pose=pose, mode=ArmMode.IDLE, current_command=None)
+            else:
+                self.state.update(joints=joints, pose=pose)
+        if self.move_logger is not None:
+            self.move_logger.progress(seq=move.seq, kind=move.kind, t=t, elapsed=elapsed, joints=joints, pose=pose)
             if done:
-                self.move_logger.move_end(seq=seq, kind=kind, joints=joints, pose=pose)
+                self.move_logger.move_end(seq=move.seq, kind=move.kind, joints=joints, pose=pose)
 
 
 class HasArm(ABC):
@@ -499,8 +539,13 @@ def joints_almost_equal(a: Joints, b: Joints, *, tol: float = 1e-6) -> bool:
     return len(a) == len(b) and all(math.isclose(x, y, abs_tol=tol) for x, y in zip(a, b, strict=True))
 
 
-def arm_from_options(options: ArmOptions, *, name: str = "arm") -> RobotArm:
+def arm_from_options(
+    options: ArmOptions, *, name: str = "arm", publish: Publish | None = None
+) -> RobotArm:
     """Build a :class:`RobotArm` from typed arm options.
+
+    *publish* is where the arm announces its :class:`ArmChanged` events; a
+    device passes its own ``publish``.
 
     If ``MACHINIST_MOVE_LOG`` is set in the environment, the arm is attached to
     a :class:`MoveLogger` (see :func:`move_logger_from_env`) that records every
@@ -509,7 +554,12 @@ def arm_from_options(options: ArmOptions, *, name: str = "arm") -> RobotArm:
     from ...kinematics.api import build_kinematics
 
     kin_opts = _kinematics_options(options)
-    arm = RobotArm(joint_count=kin_opts.joint_count, kinematics=build_kinematics(kin_opts))
+    arm = RobotArm(
+        joint_count=kin_opts.joint_count,
+        kinematics=build_kinematics(kin_opts),
+        owner=name,
+        publish=publish,
+    )
     arm.move_logger = move_logger_from_env(name)
     return arm
 
@@ -532,11 +582,11 @@ def arm_readers(arm: RobotArm) -> dict[str, Callable[[], object]]:
     OPC-UA publisher — stay oblivious to the arm's locking.
     """
     return {
-        "mode": lambda: str(arm.state.snapshot().mode),
-        "servo_on": lambda: arm.state.snapshot().servo_on,
-        "estopped": lambda: arm.state.snapshot().mode is ArmMode.ESTOPPED,
-        "moving": lambda: arm.state.snapshot().mode is ArmMode.MOVING,
-        "command": lambda: arm.state.snapshot().current_command or "none",
-        "joints": lambda: arm.state.snapshot().joints,
-        "pose": lambda: arm.state.snapshot().pose,
+        "mode": lambda: str(arm.state.view.mode),
+        "servo_on": lambda: arm.state.view.servo_on,
+        "estopped": lambda: arm.state.view.mode is ArmMode.ESTOPPED,
+        "moving": lambda: arm.state.view.mode is ArmMode.MOVING,
+        "command": lambda: arm.state.view.current_command or "none",
+        "joints": lambda: arm.state.view.joints,
+        "pose": lambda: arm.state.view.pose,
     }

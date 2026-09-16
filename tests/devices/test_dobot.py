@@ -241,7 +241,7 @@ def test_dobot_toolai_rejects_out_of_range_index(dobot: DobotDashboard) -> None:
 def test_dobot_speedfactor_sets_global_speed_ratio(dobot: DobotDashboard) -> None:
     reply = _send(dobot, "SpeedFactor(50)")
     assert reply == "0,{},SpeedFactor(50)"
-    assert dobot.arm.state.speed_fraction == 0.5
+    assert dobot.arm.state.view.speed_fraction == 0.5
 
 
 def test_dobot_speedfactor_appears_in_build_detail(dobot: DobotDashboard) -> None:

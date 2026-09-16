@@ -135,7 +135,7 @@ class MotomanNX100(LineServerDevice, HasArm):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.arm = arm_from_options(options, name=name)
+        self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
 
     def make_session(self) -> SessionHandler:

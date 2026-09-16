@@ -123,7 +123,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         backend=opt.backend,
         dh_params=dh,
         urdf=opt.urdf,
-    ))
+    ), name=name, publish=bus.publish)
     device = RobotDevice(name, endpoint, bus, opt, arm=arm)
     device.add_service(open_server(opt.transport, endpoint.host, endpoint.port, device.dispatch))
     opcua = _maybe_opcua(name, endpoint.host, opt.opcua, arm)
