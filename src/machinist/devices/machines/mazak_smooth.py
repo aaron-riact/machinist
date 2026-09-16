@@ -11,7 +11,7 @@ from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
-from ...core.panel import Field, Panel
+from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.ethernetip import (
@@ -279,6 +279,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._alarm_code: int | None = None
         self._alarm_message = ""
         self._connection_up = False
+        self._last_panel: Panel | None = None
         self._door_motion_deadline: float | None = None
         self._door_target_open: bool | None = None
         self._front_door_motion_deadline: float | None = None
@@ -434,6 +435,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         if was_set:
             self._refresh_outputs()
             self.emit("alarm", code=0, message="cleared")
+            self._publish_panel()
 
     def _declare_signals(self) -> None:
         for point in self._input_signal_points.values():
@@ -479,6 +481,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
                 now = time.monotonic()
                 self._poll_ethernetip(now)
                 self._scan_cycle(now=now)
+                self._publish_panel()  # link state and program changes land here
                 stop.wait(self._scan_interval)
         finally:
             if self._ethernetip is not None:
@@ -814,6 +817,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             self._write_output_bit(103, False)
         self._write_output_bit(4, True)
         self.emit("alarm", code=code, message=message)
+        self._publish_panel()
 
     def _read_input_bit(self, number: int) -> bool:
         with self._lock:
@@ -878,6 +882,14 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
     def _emit_snapshot_change(self, direction: str) -> None:
         self.emit("snapshot", interface="ethernetip", direction=direction)
+        self._publish_panel()
+
+    def _publish_panel(self) -> None:
+        """Announce the detail panel if it reads differently from the last one published."""
+        panel = self.build_detail()
+        if panel != self._last_panel:
+            self._last_panel = panel
+            self.publish(PanelChanged(device=self.name, panel=panel))
 
 
 def _bit_value(block: bytes | bytearray, byte: int, bit: int) -> bool:

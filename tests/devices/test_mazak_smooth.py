@@ -768,3 +768,28 @@ def test_any_work_number_is_accepted_when_no_library_is_configured() -> None:
     assert device.io["do101"].value is True
     assert device.alarm_code is None
     assert device.active_program == "999"
+
+
+def test_block_writes_and_alarms_announce_the_panel() -> None:
+    from machinist.core.panel import PanelChanged
+
+    bus = EventBus()
+    panels: list[PanelChanged] = []
+    bus.subscribe(lambda e: panels.append(e) if isinstance(e, PanelChanged) else None)
+    device = MazakSmoothEmulator(
+        "mazak1",
+        Endpoint("127.0.0.1", 0),
+        bus,
+        MazakSmoothOptions(interfaces=["ethernetip"]),
+        io=SignalBank(owner="mazak1", publish=bus.publish),
+    )
+    panels.clear()
+
+    device.write_input_block(b"\x01\x02", offset=12)
+    device.inject_alarm(4711, "door jam")
+
+    assert panels, "the block write announced the panel"
+    assert "01 02" in panels[0].panel.input_block_hex
+    derived = {f.name: f.value for f in panels[-1].panel.derived_fields}
+    assert derived["Alarm code"] == "4711"
+    assert derived["Alarm message"] == "door jam"
