@@ -59,6 +59,7 @@ def _arm(arm: Any) -> dict[str, Any] | None:
         "mode": str(s.mode),
         "servo_on": s.servo_on,
         "estopped": s.estopped,
+        "faulted": s.faulted,
         "moving": s.moving,
         "command": s.current_command,
         "speed_fraction": s.speed_fraction,

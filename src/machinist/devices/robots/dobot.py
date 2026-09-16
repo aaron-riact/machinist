@@ -242,6 +242,14 @@ class EnableFailure(StrEnum):
 #: so a queued move cannot quietly resume while the stop is engaged.
 _MOTION_VERBS = frozenset({"movj", "movl", "reljointmovj", "relmovltool"})
 
+_ROBOT_MODE_NAMES: dict[int, str] = {
+    ROBOT_MODE_DISABLED: "DISABLED",
+    ROBOT_MODE_ENABLE: "ENABLE",
+    ROBOT_MODE_RUNNING: "RUNNING",
+    ROBOT_MODE_ERROR: "ERROR",
+    ROBOT_MODE_COLLISION: "COLLISION",
+}
+
 _ARM_MODE_TO_ROBOT_MODE: dict[ArmMode, int] = {
     ArmMode.IDLE: ROBOT_MODE_ENABLE,
     ArmMode.MOVING: ROBOT_MODE_RUNNING,
@@ -764,12 +772,35 @@ class DobotDashboard(LineServerDevice):
         self.clear_protective_stop()
         self.set_enable_failure(None)
 
+    # ----- detail panel -------------------------------------------------
+
+    def _protective_stop_detail(self) -> str:
+        if not self._fault.active:
+            return "clear"
+        name = _ROBOT_MODE_NAMES.get(self._fault.robot_mode, "?")
+        sticky = ", sticky" if self._fault.sticky else ""
+        return f"ENGAGED: {name} ({self._fault.robot_mode}){sticky}"
+
+    def _alarm_ids_detail(self) -> str:
+        return ",".join(str(code) for code in self._error_ids) or "-"
+
+    def _enable_failure_detail(self) -> str:
+        failure = self._fault.enable_failure
+        if failure is None:
+            return "-"
+        if failure is EnableFailure.STUCK:
+            return "stuck (stays DISABLED)"
+        return "error (EnableRobot rejected)"
+
     def build_detail(self) -> DeviceDetail:
         detail = super().build_detail()
         s = self.arm.state.snapshot()
         detail["derived_fields"] = [
             DetailField(signal="robottype", name="Robot type", offset="0", type="int", value=str(self._robot_type_code)),
             DetailField(signal="speedfactor", name="Speed factor", offset="0", type="int", value=f"{int(s.speed_fraction * 100)}%"),
+            DetailField(signal="pstop", name="Protective stop", offset="0", type="str", value=self._protective_stop_detail()),
+            DetailField(signal="alarmids", name="Alarm IDs", offset="0", type="str", value=self._alarm_ids_detail()),
+            DetailField(signal="enablefail", name="Enable failure", offset="0", type="str", value=self._enable_failure_detail()),
         ] + [
             DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._ai)

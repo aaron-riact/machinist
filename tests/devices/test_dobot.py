@@ -977,3 +977,50 @@ def test_a_sticky_error_stop_keeps_a_driver_enable_loop_failing(
     _send(dobot, "EnableRobot()")
 
     assert _send(dobot, "RobotMode()") == "0,{9},RobotMode()"
+
+
+# --- the injected fault is visible in the detail panel ----------------
+
+
+def _derived(dobot: DobotDashboard) -> dict[str, str]:
+    return {f["signal"]: f["value"] for f in dobot.build_detail()["derived_fields"]}
+
+
+def test_detail_panel_reads_clear_when_nothing_is_injected(dobot: DobotDashboard) -> None:
+    fields = _derived(dobot)
+
+    assert fields["pstop"] == "clear"
+    assert fields["alarmids"] == "-"
+    assert fields["enablefail"] == "-"
+
+
+def test_detail_panel_names_the_engaged_stop_mode(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17, 116])
+
+    fields = _derived(dobot)
+    assert fields["pstop"] == "ENGAGED: COLLISION (11)"
+    assert fields["alarmids"] == "17,116"
+
+
+def test_detail_panel_marks_a_sticky_stop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(robot_mode=ROBOT_MODE_ERROR, sticky=True)
+
+    assert _derived(dobot)["pstop"] == "ENGAGED: ERROR (9), sticky"
+
+
+def test_detail_panel_shows_the_enable_failure(dobot: DobotDashboard) -> None:
+    dobot.set_enable_failure(EnableFailure.STUCK)
+    assert _derived(dobot)["enablefail"] == "stuck (stays DISABLED)"
+
+    dobot.set_enable_failure(EnableFailure.ERROR)
+    assert _derived(dobot)["enablefail"] == "error (EnableRobot rejected)"
+
+
+def test_detail_panel_goes_back_to_clear_after_clear_faults(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17], sticky=True)
+    dobot.set_enable_failure(EnableFailure.STUCK)
+
+    dobot.clear_faults()
+
+    assert _derived(dobot)["pstop"] == "clear"
+    assert _derived(dobot)["enablefail"] == "-"
