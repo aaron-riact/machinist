@@ -47,3 +47,21 @@ def test_service_needs_both_halves_of_the_lifecycle() -> None:
 
     with pytest.raises(TypeError):
         ServeOnly()  # type: ignore[abstract]
+
+
+@pytest.mark.timeout(5)
+def test_poller_calls_its_function_until_shut_down() -> None:
+    from machinist.transport.service import Poller
+
+    calls: list[float] = []
+    poller = Poller(lambda: calls.append(1.0), interval=0.01)
+    ready = threading.Event()
+    thread = threading.Thread(target=poller.serve_forever, args=(ready,), daemon=True)
+    thread.start()
+    assert ready.wait(timeout=1.0)
+    deadline = threading.Event()
+    deadline.wait(0.05)
+    poller.shutdown()
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert len(calls) >= 2

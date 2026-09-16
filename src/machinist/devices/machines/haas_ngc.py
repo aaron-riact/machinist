@@ -30,6 +30,7 @@ from ...transport.broadcast import BroadcastServer
 from ...transport.framing import CRLF
 from ...transport.line_server import LineServer, stateless
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
+from ...transport.service import Poller
 from ...transport.smb_share import SmbConfig, build_share
 from .gcode import Interpreter
 from .state import HasMachineState, MachineState, machine_readers
@@ -73,7 +74,8 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
         root = Path(folder).expanduser() if folder else (
             Path.cwd() / ".machinist_programs" / name
         )
-        self.programs = ProgramLibrary(root=root)
+        self.programs = ProgramLibrary(root=root, owner=name, publish=self.publish)
+        self.add_service(Poller(self.programs.refresh, interval=0.5))
         self.interpreter = Interpreter(state=self.state)
 
         self._runner: threading.Thread | None = None
