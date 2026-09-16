@@ -1,5 +1,8 @@
 """Convenient :class:`Device` subclass for line-protocol devices.
 
+The line server is registered as the device's one service, so the base
+:class:`Device` run loop starts and stops it.
+
 Subclasses either:
 
 * override :meth:`handle_line` for a stateless protocol, **or**
@@ -9,7 +12,6 @@ Subclasses either:
 
 from __future__ import annotations
 
-import threading
 from typing import ClassVar
 
 from ..transport.framing import Framer, TerminatorFramer
@@ -31,11 +33,13 @@ class LineServerDevice(Device):
 
     def __init__(self, name: str, endpoint: Endpoint, bus: EventBus) -> None:
         super().__init__(name, endpoint, bus)
-        self._server = LineServer(
-            endpoint.host,
-            endpoint.port,
-            session_factory=self.make_session,
-            framer=self.FRAMER,
+        self.add_service(
+            LineServer(
+                endpoint.host,
+                endpoint.port,
+                session_factory=self.make_session,
+                framer=self.FRAMER,
+            )
         )
 
     # ----- subclass hooks --------------------------------------------
@@ -68,19 +72,3 @@ class LineServerDevice(Device):
         if reply is not None and not quiet:
             self.emit("tx", reply=reply if isinstance(reply, str) else list(reply))
         return reply
-
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._server.serve_forever, args=(ready,), daemon=True
-        )
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
-
-    def _shutdown(self) -> None:
-        self._server.shutdown()
