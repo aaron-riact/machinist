@@ -316,10 +316,29 @@ class RobotArm:
             if self.state.mode is ArmMode.ESTOPPED:
                 self.state.mode = ArmMode.IDLE
 
+    def fault(self) -> None:
+        """Raise a controller fault, e.g. a collision or an unrecoverable alarm.
+
+        Deliberately *not* :meth:`estop`: a fault and an emergency stop are
+        distinct conditions on a real controller, reported through different
+        registers, and a driver has to be able to tell them apart. Neither
+        :meth:`reset` nor :meth:`stop` clears a fault -- only
+        :meth:`clear_fault` does.
+        """
+        with self.state._lock:
+            self.state.mode = ArmMode.FAULTED
+            self.state._move = None
+
+    def clear_fault(self) -> None:
+        with self.state._lock:
+            if self.state.mode is ArmMode.FAULTED:
+                self.state.mode = ArmMode.IDLE
+
     def stop(self) -> None:
         with self.state._lock:
             self.state._move = None
-            self.state.mode = ArmMode.IDLE
+            if self.state.mode not in (ArmMode.ESTOPPED, ArmMode.FAULTED):
+                self.state.mode = ArmMode.IDLE
 
     def set_servo(self, on: bool) -> None:
         with self.state._lock:
