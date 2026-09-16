@@ -19,24 +19,23 @@ incoming-message boundaries).
 from __future__ import annotations
 
 import ast
-import math
-from collections.abc import Iterable
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Any
-
 import ctypes
+import math
 import os
 import socket
 import sys
 import threading
 import time
+from collections.abc import Iterable
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ...core.capabilities import HasFlange, HasIO
-from ...core.device import DeviceDetail, DetailField
+from ...core.device import DetailField, DeviceDetail
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
@@ -473,7 +472,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name)
-        self.arm.start_ticker()
+        self.add_service(self.arm)
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code
 
@@ -942,11 +941,9 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         return detail
 
     def _shutdown(self) -> None:
-        super()._shutdown()
         self._running.clear()
         for sock in self._feedback_socks:
             sock.close()
-        self.arm.stop_ticker()
 
 
 # --- helpers ---------------------------------------------------------

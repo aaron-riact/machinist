@@ -27,6 +27,7 @@ from numpy.typing import NDArray
 
 from ...kinematics.api import DHParams, Joints, Kinematics, KinematicsOptions, NoOpKinematics, Pose, RobotModel
 from ...kinematics.units import Meters, Radians
+from ...transport.service import Service
 
 
 JOINT_COUNT_DEFAULT = 6
@@ -283,8 +284,15 @@ def move_logger_from_env(name: str) -> MoveLogger | None:
     return MoveLogger(path, name=name, to_stderr=to_stderr)
 
 
-class RobotArm:
-    """Common robot-arm physics. Wire protocols compose this."""
+class RobotArm(Service):
+    """Common robot-arm physics. Wire protocols compose this.
+
+    The arm is also a :class:`Service`: its physics tick runs from
+    :meth:`serve_forever` until :meth:`shutdown`, so a robot device registers
+    the arm alongside its protocol servers and the one device loop drives
+    them all. :meth:`start_ticker` / :meth:`stop_ticker` run the same tick on
+    a private thread for callers that have no device.
+    """
 
     def __init__(
         self,
@@ -390,12 +398,22 @@ class RobotArm:
 
     # ----- background tick -------------------------------------------
 
+    def serve_forever(self, ready: threading.Event | None = None) -> None:
+        """Run the physics tick until :meth:`shutdown`. Ready at once."""
+        if ready is not None:
+            ready.set()
+        self._tick_loop()
+
+    def shutdown(self) -> None:
+        self._stop.set()
+
     def start_ticker(self) -> None:
+        """Run the tick on a private thread (for use without a device)."""
         self._tick_thread = threading.Thread(target=self._tick_loop, daemon=True)
         self._tick_thread.start()
 
     def stop_ticker(self) -> None:
-        self._stop.set()
+        self.shutdown()
         if self._tick_thread is not None:
             self._tick_thread.join(timeout=1.0)
         if self.move_logger is not None:
@@ -434,6 +452,8 @@ class RobotArm:
     def _tick_loop(self) -> None:
         while not self._stop.wait(0.02):
             self._tick()
+        if self.move_logger is not None:
+            self.move_logger.close()
 
     def _tick(self) -> None:
         s = self.state

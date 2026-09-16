@@ -21,15 +21,14 @@ gate before any verb runs — exactly what a real NX100 does.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...kinematics.units import Meters, Radians
 from ...transport.framing import CRLF
 from ...transport.line_server import Reply, SessionHandler
@@ -137,14 +136,10 @@ class MotomanNX100(LineServerDevice, HasArm):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name)
-        self.arm.start_ticker()
+        self.add_service(self.arm)
 
     def make_session(self) -> SessionHandler:
         return _TracingSession(self, _Session(arm=self.arm))
-
-    def _shutdown(self) -> None:
-        super()._shutdown()
-        self.arm.stop_ticker()
 
 
 @dataclass(slots=True)

@@ -57,7 +57,7 @@ class FanucKarelServer(LineServerDevice, HasArm, HasIO):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm
-        self.arm.start_ticker()
+        self.add_service(self.arm)
         self.io = io
         for i in range(1, options.digital_outputs + 1):
             self.io.declare(f"do{i}", Direction.OUTPUT)
@@ -96,10 +96,6 @@ class FanucKarelServer(LineServerDevice, HasArm, HasIO):
                 return "OK"
             case _:
                 return f"ERR:unknown verb {verb!r}"
-
-    def _shutdown(self) -> None:
-        super()._shutdown()
-        self.arm.stop_ticker()
 
 
 def _parse_floats(text: str, *, count: int) -> list[float]:
@@ -156,7 +152,7 @@ class FanucFocasRobot(Device, HasArm, HasIO):
         for i in range(1, options.digital_inputs + 1):
             self.io.declare(f"di{i}", Direction.INPUT)
         self._options = options
-        self.arm.start_ticker()
+        self.add_service(self.arm)
         self.add_service(
             FocasServer(
                 host=endpoint.host,
@@ -292,9 +288,6 @@ class FanucFocasRobot(Device, HasArm, HasIO):
                 self.io[f"do{address + i}"].set(bool(b))
             self.emit("io", section="Y", address=address, data=sp.payload.hex())
         return sp.encode_response_ok()
-
-    def _shutdown(self) -> None:
-        self.arm.stop_ticker()
 
 
 _FOCAS_ROBOT_HANDLERS: dict[tuple[int, int, int], Any] = {

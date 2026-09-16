@@ -19,19 +19,17 @@ secondary/RTDE channels.
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
-
-from ...kinematics.api import DHParams, KinematicsOptions
 
 from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...transport.framing import NEWLINE
-from .arm import ArmMode, ArmOptions, HasArm, RobotArm, arm_from_options
+from .arm import ArmMode, ArmOptions, HasArm, arm_from_options
 
 UR_DASHBOARD_PORT = 29999
 
@@ -56,7 +54,7 @@ class URDashboardServer(LineServerDevice, HasArm):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name)
-        self.arm.start_ticker()
+        self.add_service(self.arm)
         self._loaded = _LoadedProgram()
 
     def handle_line(self, line: str) -> Iterable[str] | str | None:
@@ -108,10 +106,6 @@ class URDashboardServer(LineServerDevice, HasArm):
             ArmMode.ESTOPPED: "PROTECTIVE_STOP",
             ArmMode.FAULTED: "FAULT",
         }[mode]
-
-    def _shutdown(self) -> None:
-        super()._shutdown()
-        self.arm.stop_ticker()
 
 
 @register("ur_dashboard", default_port=UR_DASHBOARD_PORT)
