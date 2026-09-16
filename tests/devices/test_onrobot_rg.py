@@ -228,3 +228,24 @@ def test_an_rg2_clamps_a_target_width_an_rg6_would_allow() -> None:
     rg.register_port.write(REG_TARGET_WIDTH, [1600])
 
     assert rg.register_port.read(REG_TARGET_WIDTH, 1) == [1100]
+
+
+def test_every_state_change_announces_the_panel() -> None:
+    from machinist.core.panel import PanelChanged
+
+    bus = EventBus()
+    panels: list[PanelChanged] = []
+    bus.subscribe(lambda e: panels.append(e) if isinstance(e, PanelChanged) else None)
+    rg = default_registry.create(
+        "onrobot_rg", "rg1", Endpoint("127.0.0.1", free_port()), bus, {"initial_width_mm": 80.0}
+    )
+    assert isinstance(rg, OnRobotRG)
+
+    rg.register_port.write(REG_TARGET_WIDTH, [400])
+    rg.register_port.write(REG_COMMAND, [CMD_GRIP])
+    _settle(rg)
+
+    assert panels, "a write announced the panel"
+    final = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    assert final["WIDTH_MM"] == "40.0"
+    assert final["BUSY"] == "0"

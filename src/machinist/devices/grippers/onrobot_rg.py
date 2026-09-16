@@ -38,14 +38,15 @@ reading the RS485 line on its tool flange.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ...core.capabilities import HasRegisters
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.panel import Field, Panel
+from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
+from ...core.state import StateCell
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
 from ...transport.registers import RegisterPort
@@ -110,8 +111,10 @@ class OnRobotRGOptions:
     held_object_mm: float | None = None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _State:
+    """The gripper as its registers see it. Written only through the device's StateCell."""
+
     actual_width_tenths: int = 0
     target_width_tenths: int = 0
     target_force_tenths: int = 400
@@ -123,7 +126,6 @@ class _State:
     busy: bool = False
     grip_detected: bool = False
     limits: _ModelLimits = RG_MODELS["rg2"]
-    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def _to_signed(value: int) -> int:
@@ -145,9 +147,13 @@ class OnRobotRG(Device, HasRegisters):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._settings = options
-        self._state = state
+        self._state = StateCell(state, on_change=lambda _view: self.announce_panel())
         self._server: HoldingRegisterServer | None = None
         self._mover: threading.Thread | None = None
+
+    def announce_panel(self) -> None:
+        """Publish the detail panel; called on every state change and client change."""
+        self.publish(PanelChanged(device=self.name, panel=self.build_detail()))
 
     # ----- register model -----------------------------------------------
 
@@ -157,46 +163,27 @@ class OnRobotRG(Device, HasRegisters):
         return RegisterPort(on_read=self._on_read, on_write=self._on_write)
 
     def _status_word(self) -> int:
-        s = self._state
+        s = self._state.view
         return (STATUS_BUSY if s.busy else 0) | (STATUS_GRIP_DETECTED if s.grip_detected else 0)
 
     def _on_read(self, address: int) -> int:
-        s = self._state
-        with s.lock:
-            return {
-                REG_TARGET_FORCE: s.target_force_tenths,
-                REG_TARGET_WIDTH: s.target_width_tenths,
-                REG_COMMAND: s.command,
-                REG_FINGERTIP_OFFSET: _from_signed(s.fingertip_offset_tenths),
-                REG_ACTUAL_DEPTH: 0,
-                REG_ACTUAL_RELATIVE_DEPTH: 0,
-                REG_ACTUAL_WIDTH: s.actual_width_tenths,
-                REG_STATUS: self._status_word(),
-                REG_WIDTH_WITH_OFFSET: max(
-                    0, s.actual_width_tenths - 2 * s.fingertip_offset_tenths
-                ),
-                REG_SET_FINGERTIP_OFFSET: _from_signed(s.fingertip_offset_tenths),
-            }.get(address, 0)
+        s = self._state.view
+        return {
+            REG_TARGET_FORCE: s.target_force_tenths,
+            REG_TARGET_WIDTH: s.target_width_tenths,
+            REG_COMMAND: s.command,
+            REG_FINGERTIP_OFFSET: _from_signed(s.fingertip_offset_tenths),
+            REG_ACTUAL_DEPTH: 0,
+            REG_ACTUAL_RELATIVE_DEPTH: 0,
+            REG_ACTUAL_WIDTH: s.actual_width_tenths,
+            REG_STATUS: self._status_word(),
+            REG_WIDTH_WITH_OFFSET: max(0, s.actual_width_tenths - 2 * s.fingertip_offset_tenths),
+            REG_SET_FINGERTIP_OFFSET: _from_signed(s.fingertip_offset_tenths),
+        }.get(address, 0)
 
     def _on_write(self, address: int, value: int) -> None:
-        s = self._state
-        start = False
-        with s.lock:
-            if address == REG_TARGET_FORCE:
-                s.target_force_tenths = min(value, s.limits.strongest_tenth_newtons)
-            elif address == REG_TARGET_WIDTH:
-                s.target_width_tenths = min(value, s.limits.fully_open_tenths)
-            elif address in (REG_FINGERTIP_OFFSET, REG_SET_FINGERTIP_OFFSET):
-                s.fingertip_offset_tenths = _to_signed(value)
-            elif address == REG_COMMAND:
-                s.command = value
-                if value == CMD_STOP:
-                    s.target_width_tenths = s.actual_width_tenths
-                    s.busy = False
-                elif value in (CMD_GRIP, CMD_GRIP_WITH_OFFSET):
-                    s.grip_detected = False
-                    start = True
-        if start:
+        self._state.swap(lambda s: _written(s, address, value))
+        if address == REG_COMMAND and value in (CMD_GRIP, CMD_GRIP_WITH_OFFSET):
             self._kick()
 
     # ----- motion --------------------------------------------------------
@@ -206,41 +193,19 @@ class OnRobotRG(Device, HasRegisters):
             self._mover = threading.Thread(target=self._move_loop, daemon=True)
             self._mover.start()
 
-    def _stop_width(self) -> int:
-        """Where the fingers actually come to rest.
-
-        Closing onto an object stops at the object's width, not the commanded
-        one -- that difference is what grip detection reports.
-        """
-        s = self._state
-        obstacle = s.held_object_tenths
-        if obstacle is not None and s.target_width_tenths < obstacle <= s.actual_width_tenths:
-            return obstacle
-        return s.target_width_tenths
-
     def _move_loop(self) -> None:
-        s = self._state
         while not self._stop_event.is_set():
-            with s.lock:
-                goal = self._stop_width()
-                if s.actual_width_tenths == goal:
-                    s.busy = False
-                    s.grip_detected = goal != s.target_width_tenths
-                    width, gripped = s.actual_width_tenths, s.grip_detected
-                    self.emit("settled", width_mm=width / 10, gripped=gripped)
-                    return
-                s.busy = True
-                delta = goal - s.actual_width_tenths
-                step = min(abs(delta), s.step_tenths)
-                s.actual_width_tenths += step if delta > 0 else -step
-                width = s.actual_width_tenths
-            self.emit("moving", width_mm=width / 10)
+            s = self._state.swap(_advanced)
+            if not s.busy:
+                self.emit("settled", width_mm=s.actual_width_tenths / 10, gripped=s.grip_detected)
+                return
+            self.emit("moving", width_mm=s.actual_width_tenths / 10)
             self._stop_event.wait(_STEP_SECONDS)
 
     # ----- device --------------------------------------------------------
 
     def build_detail(self) -> Panel:
-        s = self._state
+        s = self._state.view
         server = self._server
 
         return Panel(
@@ -277,6 +242,45 @@ def _reg(signal: str, name: str, offset: str, type_: str, value: str) -> Field:
     return Field(signal=signal, name=name, offset=offset, type=type_, value=value)
 
 
+def _written(s: _State, address: int, value: int) -> _State:
+    """The state after a Modbus write of *value* to *address*."""
+    if address == REG_TARGET_FORCE:
+        return replace(s, target_force_tenths=min(value, s.limits.strongest_tenth_newtons))
+    if address == REG_TARGET_WIDTH:
+        return replace(s, target_width_tenths=min(value, s.limits.fully_open_tenths))
+    if address in (REG_FINGERTIP_OFFSET, REG_SET_FINGERTIP_OFFSET):
+        return replace(s, fingertip_offset_tenths=_to_signed(value))
+    if address == REG_COMMAND:
+        if value == CMD_STOP:
+            return replace(s, command=value, target_width_tenths=s.actual_width_tenths, busy=False)
+        if value in (CMD_GRIP, CMD_GRIP_WITH_OFFSET):
+            return replace(s, command=value, grip_detected=False)
+        return replace(s, command=value)
+    return s
+
+
+def _stop_width(s: _State) -> int:
+    """Where the fingers actually come to rest.
+
+    Closing onto an object stops at the object's width, not the commanded
+    one -- that difference is what grip detection reports.
+    """
+    obstacle = s.held_object_tenths
+    if obstacle is not None and s.target_width_tenths < obstacle <= s.actual_width_tenths:
+        return obstacle
+    return s.target_width_tenths
+
+
+def _advanced(s: _State) -> _State:
+    """One mover tick: a step towards the stop width, or settled when there."""
+    goal = _stop_width(s)
+    if s.actual_width_tenths == goal:
+        return replace(s, busy=False, grip_detected=goal != s.target_width_tenths)
+    delta = goal - s.actual_width_tenths
+    step = min(abs(delta), s.step_tenths)
+    return replace(s, busy=True, actual_width_tenths=s.actual_width_tenths + (step if delta > 0 else -step))
+
+
 @register("onrobot_rg", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = OnRobotRGOptions(**options)
@@ -304,7 +308,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         host=endpoint.host,
         port=endpoint.port,
         registers=device.register_port,
-        on_connect_change=lambda count: device.emit("snapshot", clients=count),
+        on_connect_change=lambda count: device.announce_panel(),
     )
     device._server = server  # the detail panel reports its listener and clients
     device.add_service(server)
