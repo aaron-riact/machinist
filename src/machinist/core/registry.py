@@ -1,11 +1,12 @@
 """A type-safe registry of device factories.
 
-Devices declare themselves via :func:`register`. The CLI/loader looks
-them up by ``kind`` and instantiates them with their per-device config.
-This keeps adding a new device a one-liner::
+Devices declare themselves via :func:`register`, naming the
+:class:`~machinist.core.options.Options` model their YAML block parses into.
+The registry does that parsing once, at creation, so a factory is handed
+typed options and never a dict::
 
-    @register("ur_dashboard", default_port=29999)
-    def factory(name, endpoint, bus, options): ...
+    @register("ur_dashboard", default_port=29999, options=ArmOptions)
+    def factory(name, endpoint, bus, options: ArmOptions) -> Device: ...
 """
 
 from __future__ import annotations
@@ -16,15 +17,19 @@ from typing import Any
 
 from .device import Device
 from .events import EventBus
+from .options import Options, parse_options
 from .types import Endpoint
 
-DeviceFactory = Callable[[str, Endpoint, EventBus, dict[str, Any]], Device]
+#: A factory takes the device's parsed options (or the raw dict, for kinds
+#: registered without an options model).
+DeviceFactory = Callable[[str, Endpoint, EventBus, Any], Device]
 
 
 @dataclass(frozen=True, slots=True)
 class _Entry:
     factory: DeviceFactory
     default_port: int
+    options: type[Options] | None
 
 
 class DeviceRegistry:
@@ -33,15 +38,30 @@ class DeviceRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, _Entry] = {}
 
-    def register(self, kind: str, factory: DeviceFactory, *, default_port: int = 0) -> None:
+    def register(
+        self,
+        kind: str,
+        factory: DeviceFactory,
+        *,
+        default_port: int = 0,
+        options: type[Options] | None = None,
+    ) -> None:
         if kind in self._entries:
             raise ValueError(f"Device kind {kind!r} already registered")
-        self._entries[kind] = _Entry(factory=factory, default_port=default_port)
+        self._entries[kind] = _Entry(factory=factory, default_port=default_port, options=options)
 
     def create(
         self, kind: str, name: str, endpoint: Endpoint, bus: EventBus, config: dict[str, Any]
     ) -> Device:
-        return self._entry(kind).factory(name, endpoint, bus, config)
+        """Build a device: parse *config* into the kind's options, then call its factory."""
+        entry = self._entry(kind)
+        parsed: Any = config
+        if entry.options is not None:
+            parsed = parse_options(entry.options, config, kind=kind)
+        return entry.factory(name, endpoint, bus, parsed)
+
+    def options_for(self, kind: str) -> type[Options] | None:
+        return self._entry(kind).options
 
     def default_port(self, kind: str) -> int:
         return self._entry(kind).default_port
@@ -60,11 +80,13 @@ class DeviceRegistry:
 default_registry = DeviceRegistry()
 
 
-def register(kind: str, *, default_port: int = 0) -> Callable[[DeviceFactory], DeviceFactory]:
+def register(
+    kind: str, *, default_port: int = 0, options: type[Options] | None = None
+) -> Callable[[DeviceFactory], DeviceFactory]:
     """Decorator that registers a factory in :data:`default_registry`."""
 
     def decorator(factory: DeviceFactory) -> DeviceFactory:
-        default_registry.register(kind, factory, default_port=default_port)
+        default_registry.register(kind, factory, default_port=default_port, options=options)
         return factory
 
     return decorator
