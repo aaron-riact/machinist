@@ -394,3 +394,74 @@ def test_cmd_fault_logs_the_error_instead_of_raising() -> None:
     _cmd_fault(app, "pstop", "dobot1 sideways")
 
     assert any("unknown pstop option" in w for w in app.writes)
+
+
+# --- the program table only rebuilds when the listing changes ----------
+
+
+class _FakeFilesApp:
+    """Enough of the app for _refresh_files: a files table and the cache."""
+
+    def __init__(self) -> None:
+        self._last_files = None
+        self.cleared = 0
+        self.rows: list[str] = []
+        self.files = SimpleNamespace(
+            clear=self._clear, add_row=lambda name: self.rows.append(name)
+        )
+
+    def _clear(self) -> None:
+        self.cleared += 1
+        self.rows.clear()
+
+
+def _programs(names):
+    return SimpleNamespace(name="haas1", programs=SimpleNamespace(list=lambda: list(names)))
+
+
+def test_refresh_files_lists_the_programs() -> None:
+    app = _FakeFilesApp()
+
+    MachinistApp._refresh_files(app, _programs(["O0001.nc", "O0002.nc"]))
+
+    assert app.rows == ["O0001.nc", "O0002.nc"]
+
+
+def test_refresh_files_skips_the_rebuild_when_nothing_changed() -> None:
+    app = _FakeFilesApp()
+    device = _programs(["O0001.nc"])
+
+    MachinistApp._refresh_files(app, device)
+    MachinistApp._refresh_files(app, device)
+
+    assert app.cleared == 1
+
+
+def test_refresh_files_rebuilds_when_a_program_appears() -> None:
+    app = _FakeFilesApp()
+    names = ["O0001.nc"]
+    device = SimpleNamespace(name="haas1", programs=SimpleNamespace(list=lambda: list(names)))
+
+    MachinistApp._refresh_files(app, device)
+    names.append("O0002.nc")
+    MachinistApp._refresh_files(app, device)
+
+    assert app.rows == ["O0001.nc", "O0002.nc"]
+
+
+def test_refresh_files_rebuilds_when_the_device_changes() -> None:
+    app = _FakeFilesApp()
+
+    MachinistApp._refresh_files(app, _programs([]))
+    other = SimpleNamespace(name="haas2", programs=SimpleNamespace(list=lambda: []))
+    MachinistApp._refresh_files(app, other)
+
+    assert app.cleared == 2
+
+
+def test_refresh_files_clears_for_a_device_with_no_library() -> None:
+    app = _FakeFilesApp()
+
+    MachinistApp._refresh_files(app, SimpleNamespace(name="io1", programs=None))
+
+    assert app.rows == []

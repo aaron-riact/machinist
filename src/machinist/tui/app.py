@@ -83,6 +83,7 @@ class MachinistApp(App[None]):
             world.devices[0].name if world.devices else None
         )
         self._last_selected: Device | None = None
+        self._last_files: tuple[str, list[str]] | None = None
         self._log_size: int = 0  # 0=medium, 1=small, 2=large
 
     # ----- widgets -----------------------------------------------------
@@ -194,6 +195,7 @@ class MachinistApp(App[None]):
             self.files.clear()
             self.derived.clear()
             self._last_selected = None
+            self._last_files = None
             return
         self._refresh_detail_header(device)
         snapshot = device.build_detail()
@@ -276,11 +278,18 @@ class MachinistApp(App[None]):
         self.detail_header.update(_detail_header(current))
 
     def _refresh_files(self, device: Device) -> None:
-        self.files.clear()
+        """Rebuild the program table only when the listing actually changed.
+
+        ``programs.list()`` scans a directory, so this must stay cheap enough
+        to call on every UI tick rather than only on an event.
+        """
         programs = getattr(device, "programs", None)
-        if programs is None:
+        names = list(programs.list()) if programs is not None else []
+        if (device.name, names) == self._last_files:
             return
-        for name in programs.list():
+        self._last_files = (device.name, names)
+        self.files.clear()
+        for name in names:
             self.files.add_row(name)
 
     def _lookup(self, name: str | None) -> Device | None:
