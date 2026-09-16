@@ -105,33 +105,56 @@ def test_snapshot_summary_reports_mode_and_link_state() -> None:
     assert "waiting" in out
 
 
-def test_drain_does_not_refresh_when_no_events() -> None:
-    calls: list[str] = []
-    app = SimpleNamespace(
-        _events=queue.Queue(),
+def _drain_app(q: queue.Queue | None = None, calls: list[str] | None = None):
+    calls = [] if calls is None else calls
+    return SimpleNamespace(
+        _events=q if q is not None else queue.Queue(),
         _selected="robot1",
         _log=SimpleNamespace(write=lambda _msg: None),
         _refresh_devices_table=lambda: calls.append("table"),
         _refresh_detail=lambda: calls.append("detail"),
         _refresh_detail_header=lambda: calls.append("header"),
-    )
+    ), calls
+
+
+def test_drain_refreshes_detail_even_with_no_events() -> None:
+    """The panel is polled, so state changed without an event is still seen."""
+    app, calls = _drain_app()
+
     MachinistApp._drain(app)
-    assert calls == []
+
+    assert calls == ["detail"]
 
 
 def test_drain_refreshes_detail_on_event_for_selected_device() -> None:
     q: queue.Queue[Event] = queue.Queue()
     q.put(Event(device="robot1", kind="moving", payload={"diameter_mm": 42.0}))
-    calls: list[str] = []
-    app = SimpleNamespace(
-        _events=q,
-        _selected="robot1",
-        _log=SimpleNamespace(write=lambda _msg: None),
-        _refresh_devices_table=lambda: calls.append("table"),
-        _refresh_detail=lambda: calls.append("detail"),
-    )
+    app, calls = _drain_app(q)
+
     MachinistApp._drain(app)
+
     assert calls == ["detail"]
+
+
+def test_drain_refreshes_detail_for_an_unselected_device_too() -> None:
+    """A poll cannot know which device changed, and does not need to."""
+    q: queue.Queue[Event] = queue.Queue()
+    q.put(Event(device="other", kind="moving", payload={}))
+    app, calls = _drain_app(q)
+
+    MachinistApp._drain(app)
+
+    assert calls == ["detail"]
+
+
+def test_drain_still_rebuilds_the_device_table_on_a_state_event() -> None:
+    q: queue.Queue[Event] = queue.Queue()
+    q.put(Event(device="robot1", kind="state", payload={}))
+    app, calls = _drain_app(q)
+
+    MachinistApp._drain(app)
+
+    assert calls == ["table", "detail"]
 
 
 class _FakeApp:

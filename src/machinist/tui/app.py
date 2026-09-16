@@ -151,7 +151,18 @@ class MachinistApp(App[None]):
             self._events.put_nowait(event)
 
     def _drain(self) -> None:
-        refresh = False
+        """Drain the event queue, then repaint the detail panel.
+
+        The repaint is a *poll*, not a reaction to the events just drained.
+        Making it event-driven meant any state a device changed without
+        emitting -- an injected fault, a value written straight to a field --
+        was left on screen stale until something unrelated happened to fire.
+        The browser UI already polls /api/state for the same reason.
+
+        Events still drive the log and the device table, where they carry
+        information a poll cannot reconstruct: that something happened, and
+        when.
+        """
         for _ in range(50):
             try:
                 event = self._events.get_nowait()
@@ -161,10 +172,7 @@ class MachinistApp(App[None]):
                 self._log.write(_format_event(event))
             if event.kind == "state":
                 self._refresh_devices_table()
-            if event.device == self._selected:
-                refresh = True
-        if refresh:
-            self._refresh_detail()
+        self._refresh_detail()
 
     # ----- selection / detail -------------------------------------------
 
