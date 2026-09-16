@@ -2,11 +2,15 @@
 
 Every emulated machine — robot arm, CNC, gripper, IO controller —
 implements this interface. The base class is intentionally thin: it owns
-*lifecycle* (start/stop) and *status reporting*, and delegates everything
-else to subclasses.
+*lifecycle* (start/stop), the *services* the device serves, and *status
+reporting*, and delegates everything else to subclasses.
 
-Concurrency model: one worker thread per device. What the device runs
-*inside* that thread (threads, asyncio, simpy, …) is its own business.
+Concurrency model: one worker thread per device. That thread starts each
+registered :class:`~machinist.transport.service.Service` on a thread of
+its own, waits for every one to bind, marks the device running, then runs
+:meth:`Device._serve` until asked to stop. What a device does inside
+``_serve`` (poll a bus, tick a simulation, or just wait) is its own
+business.
 
 Two names are carefully distinguished:
 
@@ -19,13 +23,17 @@ Two names are carefully distinguished:
 from __future__ import annotations
 
 import threading
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, TypedDict
 
+from ..transport.service import Service
 from .capabilities import HasIO
 from .events import Event, EventBus
 from .io import Direction, SignalBank
 from .types import DeviceState, Endpoint
+
+#: How long a service gets to bind its listener before the device faults.
+SERVICE_BIND_TIMEOUT = 2.0
 
 
 class DetailSignal(TypedDict):
@@ -70,8 +78,21 @@ class Device(ABC):
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._services: list[Service] = []
 
     # ----- public API --------------------------------------------------
+
+    @property
+    def services(self) -> tuple[Service, ...]:
+        """The servers this device runs, in start order."""
+        return tuple(self._services)
+
+    def add_service(self, service: Service) -> None:
+        """Register a server to start with the device. Call before :meth:`start`."""
+        with self._lifecycle_lock:
+            if self._lifecycle is not DeviceState.CREATED:
+                raise RuntimeError(f"{self.name} already started; add services before start()")
+        self._services.append(service)
 
     @property
     def lifecycle(self) -> DeviceState:
@@ -160,16 +181,48 @@ class Device(ABC):
 
     # ----- subclass hooks ---------------------------------------------
 
-    @abstractmethod
-    def _run(self, stop: threading.Event) -> None:
-        """Long-running worker; must return when ``stop`` is set.
+    def _serve(self, stop: threading.Event) -> None:
+        """The device's own work, run once every service is up.
 
-        Subclasses MUST call :meth:`_mark_running` once their listener
-        (TCP socket, HTTP server, …) is bound and accepting connections.
+        Must return when *stop* is set. The default has no work of its own
+        and simply waits; a device that polls or simulates overrides this.
         """
+        stop.wait()
 
     def _shutdown(self) -> None:
         """Optional hook for releasing OS resources before joining."""
+
+    def _run(self, stop: threading.Event) -> None:
+        """The worker thread: start every service, serve, then tear down.
+
+        Subclasses normally leave this alone and override :meth:`_serve`.
+        """
+        threads: list[threading.Thread] = []
+        try:
+            for service in self._services:
+                threads.append(self._start_service(service))
+            self._mark_running()
+            self._serve(stop)
+        finally:
+            for service in self._services:
+                service.shutdown()
+            for thread in threads:
+                thread.join(timeout=SERVICE_BIND_TIMEOUT)
+
+    def _start_service(self, service: Service) -> threading.Thread:
+        """Serve *service* on its own thread and wait until it has bound."""
+        label = type(service).__name__
+        ready = threading.Event()
+        thread = threading.Thread(
+            target=service.serve_forever,
+            args=(ready,),
+            name=f"machinist-{self.name}-{label}",
+            daemon=True,
+        )
+        thread.start()
+        if not ready.wait(timeout=SERVICE_BIND_TIMEOUT):
+            raise RuntimeError(f"{self.name}: {label} failed to bind")
+        return thread
 
     # ----- subclass helpers -------------------------------------------
 
