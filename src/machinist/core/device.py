@@ -22,8 +22,9 @@ import threading
 from abc import ABC, abstractmethod
 from typing import Any, TypedDict
 
+from .capabilities import HasIO
 from .events import Event, EventBus
-from .io import Direction
+from .io import Direction, SignalBank
 from .types import DeviceState, Endpoint
 
 
@@ -115,7 +116,7 @@ class Device(ABC):
         and derived state.  The dict format is the single source for
         both the TUI and the web API.
         """
-        bank = getattr(self, "io", None)
+        bank = self._signal_bank()
         signals: list[DetailSignal] = []
         if bank is not None:
             signals = [
@@ -130,8 +131,8 @@ class Device(ABC):
                 val = "ON" if sig.value else "OFF"
                 field: DetailField = {
                     "signal": sig.name.upper(),
-                    "name": getattr(sig, "description", sig.name),
-                    "offset": getattr(sig, "offset", ""),
+                    "name": sig.name,
+                    "offset": "",
                     "type": "bit",
                     "value": val,
                 }
@@ -152,6 +153,10 @@ class Device(ABC):
             "derived_fields": [],
             "signals": signals,
         }
+
+    def _signal_bank(self) -> SignalBank | None:
+        """The device's IO bank if it declares :class:`HasIO`, else ``None``."""
+        return self.io if isinstance(self, HasIO) else None
 
     # ----- subclass hooks ---------------------------------------------
 
