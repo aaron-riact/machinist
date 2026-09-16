@@ -17,8 +17,10 @@ from machinist.devices.robots.dobot import (
     PROTECTIVE_STOP_MODES,
     ROBOT_MODE_COLLISION,
     ROBOT_MODE_DISABLED,
+    ROBOT_MODE_ERROR,
     DobotDashboard,
     DobotFeedbackPacket,
+    EnableFailure,
     _ARM_MODE_TO_ROBOT_MODE,
     _CR20A_DH,
     _FaultState,
@@ -900,3 +902,78 @@ def test_clearerror_still_releases_an_emergency_stop(dobot: DobotDashboard) -> N
 
     assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
     assert _send(dobot, "GetErrorID()") == "0,{[]},GetErrorID()"
+
+
+# --- an EnableRobot that will not succeed ----------------------------
+
+
+def test_enablerobot_is_rejected_under_an_error_failure(dobot: DobotDashboard) -> None:
+    dobot.set_enable_failure(EnableFailure.ERROR)
+
+    reply = _send(dobot, "EnableRobot()")
+    assert reply == f"{ERR_ROBOT_IN_ERROR_STATE},{{}},EnableRobot()"
+
+
+def test_enablerobot_is_accepted_but_stays_disabled_under_a_stuck_failure(
+    dobot: DobotDashboard,
+) -> None:
+    dobot.set_enable_failure(EnableFailure.STUCK)
+
+    assert _send(dobot, "EnableRobot()") == "0,{},EnableRobot()"
+    assert _send(dobot, "RobotMode()") == "0,{4},RobotMode()"
+
+
+def test_a_stuck_failure_survives_clearerror(dobot: DobotDashboard) -> None:
+    """A driver's unlock is ClearError then EnableRobot; both must not help."""
+    dobot.set_enable_failure(EnableFailure.STUCK)
+
+    _send(dobot, "ClearError()")
+    _send(dobot, "EnableRobot()")
+
+    assert _send(dobot, "RobotMode()") == "0,{4},RobotMode()"
+
+
+def test_an_engaged_stop_outranks_a_stuck_failure(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop()
+    dobot.set_enable_failure(EnableFailure.STUCK)
+
+    assert _send(dobot, "RobotMode()") == "0,{11},RobotMode()"
+
+
+def test_clearing_the_enable_failure_lets_the_robot_enable_again(
+    dobot: DobotDashboard,
+) -> None:
+    dobot.set_enable_failure(EnableFailure.STUCK)
+    dobot.set_enable_failure(None)
+
+    assert _send(dobot, "EnableRobot()") == "0,{},EnableRobot()"
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+
+
+def test_clear_faults_releases_the_stop_and_the_enable_failure(
+    dobot: DobotDashboard,
+) -> None:
+    dobot.inject_protective_stop(controller_ids=[17], sticky=True)
+    dobot.set_enable_failure(EnableFailure.STUCK)
+
+    dobot.clear_faults()
+
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+    assert _send(dobot, "GetErrorID()") == "0,{[]},GetErrorID()"
+
+
+def test_a_sticky_error_stop_keeps_a_driver_enable_loop_failing(
+    dobot: DobotDashboard,
+) -> None:
+    """The combination a failing unlock needs: a mode outside 'enabled'.
+
+    A driver treats COLLISION as already-enabled, so a stop that must defeat
+    an enable loop has to report ERROR or DISABLED.
+    """
+    dobot.inject_protective_stop(robot_mode=ROBOT_MODE_ERROR, controller_ids=[17], sticky=True)
+    dobot.set_enable_failure(EnableFailure.STUCK)
+
+    _send(dobot, "ClearError()")
+    _send(dobot, "EnableRobot()")
+
+    assert _send(dobot, "RobotMode()") == "0,{9},RobotMode()"

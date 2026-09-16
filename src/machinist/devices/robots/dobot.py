@@ -22,6 +22,7 @@ import ast
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 import ctypes
@@ -225,6 +226,18 @@ PROTECTIVE_STOP_MODES = (ROBOT_MODE_COLLISION, ROBOT_MODE_ERROR, ROBOT_MODE_DISA
 #: decoded by the vendor client ("The robot is in an error state").
 ERR_ROBOT_IN_ERROR_STATE = -2
 
+class EnableFailure(StrEnum):
+    """How an injected ``EnableRobot`` failure presents itself.
+
+    ``STUCK`` is the realistic one: the controller accepts the command but
+    never leaves DISABLED, because the alarm cause is still present. ``ERROR``
+    is the blunter case where the command itself is rejected.
+    """
+
+    STUCK = "stuck"
+    ERROR = "error"
+
+
 #: Verbs that start motion. A robot in a protective stop refuses them all,
 #: so a queued move cannot quietly resume while the stop is engaged.
 _MOTION_VERBS = frozenset({"movj", "movl", "reljointmovj", "relmovltool"})
@@ -253,10 +266,17 @@ class _FaultState:
     active: bool = False
     robot_mode: int = ROBOT_MODE_COLLISION
     sticky: bool = False
+    enable_failure: EnableFailure | None = None
 
     @property
     def robot_mode_override(self) -> int | None:
-        return self.robot_mode if self.active else None
+        if self.active:
+            return self.robot_mode
+        if self.enable_failure is EnableFailure.STUCK:
+            # Refusing to enable *is* being disabled, so report it even with no
+            # protective stop engaged.
+            return ROBOT_MODE_DISABLED
+        return None
 
 
 def _robot_mode(state: ArmStateView, fault: _FaultState | None = None) -> int:
@@ -471,6 +491,12 @@ class DobotDashboard(LineServerDevice):
             return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
         match verb.lower():
             case "enablerobot":
+                if self._fault.enable_failure is EnableFailure.ERROR:
+                    return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
+                if self._fault.enable_failure is EnableFailure.STUCK:
+                    # Accepted, but the servos never come on -- RobotMode keeps
+                    # reporting DISABLED, so a driver's enable loop times out.
+                    return _ok(verb, args)
                 self.arm.set_servo(True); return _ok(verb, args)
             case "disablerobot":
                 self.arm.set_servo(False); return _ok(verb, args)
@@ -717,12 +743,26 @@ class DobotDashboard(LineServerDevice):
         self._fault.sticky = sticky
         self._fault.active = True
 
+    def set_enable_failure(self, failure: EnableFailure | None) -> None:
+        """Make ``EnableRobot`` fail, so an unlock attempt cannot succeed.
+
+        Independent of :meth:`inject_protective_stop`, because a robot can
+        refuse to enable without being in a protective stop. Pass ``None`` to
+        let it enable normally again.
+        """
+        self._fault.enable_failure = failure
+
     def clear_protective_stop(self) -> None:
         """Release an injected protective stop, whether or not it is sticky."""
         self._fault.active = False
         self._fault.sticky = False
         self._error_ids.clear()
         self.arm.clear_fault()
+
+    def clear_faults(self) -> None:
+        """Release everything injected: the stop and any enable failure."""
+        self.clear_protective_stop()
+        self.set_enable_failure(None)
 
     def build_detail(self) -> DeviceDetail:
         detail = super().build_detail()
