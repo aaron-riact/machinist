@@ -10,9 +10,9 @@ codes our emulators actually use:
 * 0x06  Write Single Register
 * 0x10  Write Multiple Registers
 
-The server exposes a callable interface (``on_read``/``on_write``) so a
-device can map register addresses to its own state without coupling to
-the wire format.
+The server serves a device's :class:`~machinist.transport.registers.RegisterPort`,
+so a device maps register addresses to its own state without coupling to
+the wire format -- and the same port can be served over another front end.
 """
 
 from __future__ import annotations
@@ -22,8 +22,9 @@ import struct
 import threading
 from collections.abc import Callable
 
-ReadCallback = Callable[[int], int]
-WriteCallback = Callable[[int, int], None]
+from .registers import ReadCallback, RegisterPort, WriteCallback
+
+__all__ = ["HoldingRegisterServer", "ReadCallback", "RegisterPort", "WriteCallback"]
 
 _MBAP = struct.Struct(">HHHB")  # txn id, proto id, length, unit id
 _HEADER_LEN = _MBAP.size
@@ -44,14 +45,12 @@ class HoldingRegisterServer:
         *,
         host: str,
         port: int,
-        on_read: ReadCallback,
-        on_write: WriteCallback,
+        registers: RegisterPort,
         on_connect_change: Callable[[int], None] | None = None,
     ) -> None:
         self._host = host
         self._port = port
-        self._on_read = on_read
-        self._on_write = on_write
+        self._registers = registers
         self._on_connect_change = on_connect_change
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
@@ -137,20 +136,18 @@ class HoldingRegisterServer:
 
     def _read_holding(self, body: bytes) -> bytes:
         address, count = struct.unpack(">HH", body[1:5])
-        values = [self._on_read(address + i) & 0xFFFF for i in range(count)]
-        payload = b"".join(struct.pack(">H", v) for v in values)
+        payload = b"".join(struct.pack(">H", v) for v in self._registers.read(address, count))
         return bytes([_FUNC_READ_HOLDING, len(payload)]) + payload
 
     def _write_single(self, body: bytes) -> bytes:
         address, value = struct.unpack(">HH", body[1:5])
-        self._on_write(address, value)
+        self._registers.write(address, [value])
         return bytes([_FUNC_WRITE_SINGLE]) + struct.pack(">HH", address, value)
 
     def _write_multiple(self, body: bytes) -> bytes:
         address, count = struct.unpack(">HH", body[1:5])
-        for i in range(count):
-            value, = struct.unpack(">H", body[6 + i * 2 : 8 + i * 2])
-            self._on_write(address + i, value)
+        values = [struct.unpack(">H", body[6 + i * 2 : 8 + i * 2])[0] for i in range(count)]
+        self._registers.write(address, values)
         return bytes([_FUNC_WRITE_MULTIPLE]) + struct.pack(">HH", address, count)
 
 

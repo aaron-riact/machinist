@@ -18,6 +18,7 @@ from ...core.io import Direction, SignalBank
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
+from ...transport.registers import RegisterPort
 
 REG_INPUTS = 0x0000
 REG_OUTPUTS = 0x0100
@@ -53,6 +54,11 @@ class WeidmullerUR20(Device):
         if REG_OUTPUTS <= address < REG_OUTPUTS + 16:
             return self._pack_signals("o", base=(address - REG_OUTPUTS) * 16, count=16)
         return 0
+
+    @property
+    def register_port(self) -> RegisterPort:
+        """This controller's holding registers, servable over any front end."""
+        return RegisterPort(on_read=self._on_read, on_write=self._on_write)
 
     def _on_write(self, address: int, value: int) -> None:
         if not (REG_OUTPUTS <= address < REG_OUTPUTS + 16):
@@ -94,7 +100,6 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     device._server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,
-        on_read=device._on_read,
-        on_write=device._on_write,
+        registers=device.register_port,
     )
     return device

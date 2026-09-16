@@ -54,6 +54,7 @@ from ...core.events import EventBus
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
+from ...transport.registers import RegisterPort
 
 # --- write registers --------------------------------------------------------
 REG_TARGET_FORCE = 0x0000
@@ -306,6 +307,11 @@ class OnRobot3FG25(Device):
         lo = ord(serial[idx + 1]) if idx + 1 < len(serial) else 0
         return (hi << 8) | lo
 
+    @property
+    def register_port(self) -> RegisterPort:
+        """This gripper's holding registers, servable over any front end."""
+        return RegisterPort(on_read=self._on_read, on_write=self._on_write)
+
     def _on_write(self, address: int, value: int) -> None:
         s = self._state
         with s.lock:
@@ -387,8 +393,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     device._server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,
-        on_read=device._on_read,
-        on_write=device._on_write,
+        registers=device.register_port,
         on_connect_change=lambda count: device.emit("snapshot", clients=count),
     )
     return device

@@ -26,9 +26,7 @@ def test_write_then_read_outputs() -> None:
         io=SignalBank(owner="io1"),
     )
     device._server = HoldingRegisterServer(
-        host="127.0.0.1", port=port,
-        on_read=device._on_read,
-        on_write=device._on_write,
+        host="127.0.0.1", port=port, registers=device.register_port,
     )
     device.start()
     try:
