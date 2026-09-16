@@ -20,8 +20,7 @@ from .events import EventBus
 from .options import Options, parse_options
 from .types import Endpoint
 
-#: A factory takes the device's parsed options (or the raw dict, for kinds
-#: registered without an options model).
+#: A factory is handed the device's options already parsed into its model.
 DeviceFactory = Callable[[str, Endpoint, EventBus, Any], Device]
 
 
@@ -29,7 +28,7 @@ DeviceFactory = Callable[[str, Endpoint, EventBus, Any], Device]
 class _Entry:
     factory: DeviceFactory
     default_port: int
-    options: type[Options] | None
+    options: type[Options]
 
 
 class DeviceRegistry:
@@ -43,8 +42,8 @@ class DeviceRegistry:
         kind: str,
         factory: DeviceFactory,
         *,
+        options: type[Options],
         default_port: int = 0,
-        options: type[Options] | None = None,
     ) -> None:
         if kind in self._entries:
             raise ValueError(f"Device kind {kind!r} already registered")
@@ -55,12 +54,10 @@ class DeviceRegistry:
     ) -> Device:
         """Build a device: parse *config* into the kind's options, then call its factory."""
         entry = self._entry(kind)
-        parsed: Any = config
-        if entry.options is not None:
-            parsed = parse_options(entry.options, config, kind=kind)
-        return entry.factory(name, endpoint, bus, parsed)
+        return entry.factory(name, endpoint, bus, parse_options(entry.options, config, kind=kind))
 
-    def options_for(self, kind: str) -> type[Options] | None:
+    def options_for(self, kind: str) -> type[Options]:
+        """The options model a kind's YAML block is parsed into."""
         return self._entry(kind).options
 
     def default_port(self, kind: str) -> int:
@@ -81,7 +78,7 @@ default_registry = DeviceRegistry()
 
 
 def register(
-    kind: str, *, default_port: int = 0, options: type[Options] | None = None
+    kind: str, *, options: type[Options], default_port: int = 0
 ) -> Callable[[DeviceFactory], DeviceFactory]:
     """Decorator that registers a factory in :data:`default_registry`."""
 

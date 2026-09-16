@@ -30,7 +30,6 @@ class _Lamp(Device):
 def _registry() -> DeviceRegistry:
     reg = DeviceRegistry()
     reg.register("lamp", _Lamp, default_port=1, options=_LampOptions)
-    reg.register("raw", lambda n, e, b, o: _Lamp(n, e, b, o))
     return reg
 
 
@@ -60,7 +59,15 @@ def test_parsed_options_are_frozen() -> None:
         lamp.options.watts = 1  # type: ignore[misc]
 
 
-def test_a_kind_without_an_options_model_still_gets_the_raw_dict() -> None:
-    lamp = _create(_registry(), "raw", {"anything": 1})
-    assert lamp.options == {"anything": 1}
+def test_every_kind_names_its_options_model() -> None:
     assert _registry().options_for("lamp") is _LampOptions
+    with pytest.raises(TypeError):
+        DeviceRegistry().register("nameless", _Lamp)  # type: ignore[call-arg]
+
+
+def test_every_builtin_kind_registers_an_options_model() -> None:
+    import machinist.devices  # noqa: F401  (registration side-effect)
+    from machinist.core.registry import default_registry
+
+    for kind in default_registry.kinds():
+        assert issubclass(default_registry.options_for(kind), Options), kind

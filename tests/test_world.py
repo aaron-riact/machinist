@@ -8,6 +8,7 @@ import yaml
 from machinist.core.capabilities import HasFlange, HasRegisters
 from machinist.core.config import DeviceConfig, FlangeLink, SystemConfig
 from machinist.core.device import Device
+from machinist.core.options import Options
 from machinist.core.registry import DeviceRegistry
 from machinist.core.world import WorldBuilder
 from machinist.transport.flange_bus import FlangeBus
@@ -72,8 +73,8 @@ class _Gripper(Device, HasRegisters):
 
 def _registry() -> DeviceRegistry:
     reg = DeviceRegistry()
-    reg.register("fake_arm", lambda n, e, b, o: _Arm(n, e, b))
-    reg.register("fake_gripper", lambda n, e, b, o: _Gripper(n, e, b))
+    reg.register("fake_arm", lambda n, e, b, o: _Arm(n, e, b), options=Options)
+    reg.register("fake_gripper", lambda n, e, b, o: _Gripper(n, e, b), options=Options)
     return reg
 
 
