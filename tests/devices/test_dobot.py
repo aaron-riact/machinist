@@ -7,6 +7,7 @@ import time
 import pytest
 
 from machinist.core.events import EventBus
+from machinist.core.registry import default_registry
 from machinist.core.types import Endpoint
 from machinist.devices.robots.arm import ArmOptions
 from machinist.devices.robots.arm import ArmMode, ArmStateView
@@ -1142,3 +1143,112 @@ def test_closing_an_out_of_range_index_fails(dobot: DobotDashboard) -> None:
 
 def test_a_dobot_starts_with_an_empty_flange(dobot: DobotDashboard) -> None:
     assert dobot.flange.slave_ids == ()
+
+
+# --- holding registers across the flange ------------------------------
+
+
+@pytest.fixture
+def dobot_with_rg(dobot: DobotDashboard):
+    """A Dobot with an RG2 on its flange as slave 0x41, and a master open."""
+    rg = default_registry.create(
+        "onrobot_rg", "rg1", Endpoint("127.0.0.1", free_port()), EventBus(),
+        {"initial_width_mm": 75.0, "travel_mm_per_sec": 1000.0},
+    )
+    dobot.flange.attach(0x41, rg.register_port)
+    _send(dobot, "ModbusRTUCreate(65,115200,E,1)")
+    return dobot, rg
+
+
+def test_getholdregs_reads_the_grippers_status_window(dobot_with_rg) -> None:
+    """The window riact scans: {'addr': 0x010B, 'count': 2}."""
+    dobot, _ = dobot_with_rg
+
+    assert _send(dobot, "GetHoldRegs(0,267,2,U16)") == "0,{750,0},GetHoldRegs(0,267,2,U16)"
+
+
+def test_getholdregs_defaults_to_u16_when_the_type_is_omitted(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    assert _send(dobot, "GetHoldRegs(0,267,1)") == "0,{750},GetHoldRegs(0,267,1)"
+
+
+def test_setholdregs_writes_through_to_the_gripper(dobot_with_rg) -> None:
+    dobot, rg = dobot_with_rg
+
+    reply = _send(dobot, "SetHoldRegs(0,0,3,{400,600,1},U16)")
+
+    assert reply == "0,{},SetHoldRegs(0,0,3,{400,600,1},U16)"
+    assert rg.register_port.read(0, 3) == [400, 600, 1]
+
+
+def test_a_write_then_a_read_sees_the_gripper_move(dobot_with_rg) -> None:
+    dobot, rg = dobot_with_rg
+
+    _send(dobot, "SetHoldRegs(0,0,3,{400,300,1},U16)")
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and rg._mover is not None and rg._mover.is_alive():
+        time.sleep(0.005)
+
+    assert _send(dobot, "GetHoldRegs(0,267,1)") == "0,{300},GetHoldRegs(0,267,1)"
+
+
+def test_setholdregs_without_a_value_type_defaults_to_u16(dobot_with_rg) -> None:
+    dobot, rg = dobot_with_rg
+
+    _send(dobot, "SetHoldRegs(0,0,1,{250})")
+
+    assert rg.register_port.read(0, 1) == [250]
+
+
+def test_a_value_type_other_than_u16_is_refused(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    assert _send(dobot, "GetHoldRegs(0,267,2,F32)").startswith("-40001,")
+    assert _send(dobot, "SetHoldRegs(0,0,1,{1},U32)").startswith("-40001,")
+
+
+def test_a_count_that_disagrees_with_the_value_table_is_refused(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    assert _send(dobot, "SetHoldRegs(0,0,3,{1,2},U16)").startswith("-30001,")
+
+
+def test_a_write_with_no_value_table_is_refused(dobot_with_rg) -> None:
+    dobot, _ = dobot_with_rg
+
+    assert _send(dobot, "SetHoldRegs(0,0,1,1,U16)").startswith("-30001,")
+
+
+def test_reading_through_a_master_that_was_never_created(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "GetHoldRegs(0,267,2,U16)") == f"{ERR_COMMAND_FAILED},{{}},GetHoldRegs(0,267,2,U16)"
+
+
+def test_reading_a_slave_that_is_not_on_the_flange(dobot: DobotDashboard) -> None:
+    """A master exists on the line whether or not a gripper answers."""
+    _send(dobot, "ModbusRTUCreate(65,115200,E,1)")
+
+    assert _send(dobot, "GetHoldRegs(0,267,2,U16)").startswith(f"{ERR_COMMAND_FAILED},")
+
+
+def test_writing_a_slave_that_is_not_on_the_flange(dobot: DobotDashboard) -> None:
+    _send(dobot, "ModbusRTUCreate(65,115200,E,1)")
+
+    assert _send(dobot, "SetHoldRegs(0,0,1,{1},U16)").startswith(f"{ERR_COMMAND_FAILED},")
+
+
+def test_each_master_reaches_its_own_gripper(dobot: DobotDashboard) -> None:
+    """The Dual Quick Changer case, from the wire down."""
+    ports = {}
+    for slave_id, name in ((0x41, "rg1"), (0x42, "rg2")):
+        rg = default_registry.create(
+            "onrobot_rg", name, Endpoint("127.0.0.1", free_port()), EventBus(),
+            {"initial_width_mm": 40.0 if slave_id == 0x41 else 90.0},
+        )
+        dobot.flange.attach(slave_id, rg.register_port)
+        ports[slave_id] = rg
+    _send(dobot, "ModbusRTUCreate(65,115200)")
+    _send(dobot, "ModbusRTUCreate(66,115200)")
+
+    assert _send(dobot, "GetHoldRegs(0,267,1)") == "0,{400},GetHoldRegs(0,267,1)"
+    assert _send(dobot, "GetHoldRegs(1,267,1)") == "0,{900},GetHoldRegs(1,267,1)"

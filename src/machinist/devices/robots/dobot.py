@@ -43,7 +43,7 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
 from ...kinematics.units import Meters, Radians
-from ...transport.flange_bus import FlangeBus
+from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
 from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
 
@@ -229,6 +229,11 @@ ERR_ROBOT_IN_ERROR_STATE = -2
 
 #: Reply ErrorID for a command the controller could not carry out.
 ERR_COMMAND_FAILED = -1
+
+#: The only Modbus value type the emulator serves. U32/F32/F64 repack values
+#: across register pairs; refusing them keeps a future caller from silently
+#: getting U16 data back under another name.
+MODBUS_VALUE_TYPE = "U16"
 
 class EnableFailure(StrEnum):
     """How an injected ``EnableRobot`` failure presents itself.
@@ -448,7 +453,9 @@ class DobotDashboard(LineServerDevice):
     kind = "dobot_dashboard"
     DEFAULT_PORT = DOBOT_DASHBOARD_PORT
     FRAMER = PAREN
-    _quiet_commands = frozenset({"tooldi", "gettooldo", "ai", "getao", "toolai", "geterrorid"})
+    _quiet_commands = frozenset(
+        {"tooldi", "gettooldo", "ai", "getao", "toolai", "geterrorid", "getholdregs"}
+    )
 
     _FEEDBACK_PORTS = (DOBOT_FEEDBACK_FAST_PORT, DOBOT_FEEDBACK_MED_PORT, DOBOT_FEEDBACK_SLOW_PORT)
 
@@ -563,6 +570,38 @@ class DobotDashboard(LineServerDevice):
                 if err:
                     return err
                 if self._masters.pop(idx, None) is None:
+                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
+                return _ok(verb, args)
+            case "getholdregs":
+                try:
+                    index, addr, count, val_type = _parse_hold_regs_read(args)
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                if val_type != MODBUS_VALUE_TYPE:
+                    return f"-40001,{{}},{verb}({args})"
+                master = self._masters.get(index)
+                if master is None:
+                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
+                try:
+                    values = self.flange.read_holding(master.slave_id, addr, count)
+                except NoSlaveError:
+                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
+                return _ok(verb, args, value=",".join(str(v) for v in values))
+            case "setholdregs":
+                try:
+                    index, addr, count, values, val_type = _parse_hold_regs_write(args)
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                if val_type != MODBUS_VALUE_TYPE:
+                    return f"-40001,{{}},{verb}({args})"
+                if len(values) != count:
+                    return f"-30001,{{}},{verb}({args})"
+                master = self._masters.get(index)
+                if master is None:
+                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
+                try:
+                    self.flange.write_holding(master.slave_id, addr, values)
+                except NoSlaveError:
                     return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
                 return _ok(verb, args)
             case "clearerror":
@@ -914,6 +953,40 @@ def _parse_modbus_rtu_create(args: str) -> tuple[int, int, str]:
     if len(parts) < 2:
         raise ValueError(f"expected at least slave_id and baud, got {args!r}")
     return int(parts[0]), int(parts[1]), ",".join(parts[2:])
+
+
+def _parse_hold_regs_read(args: str) -> tuple[int, int, int, str]:
+    """Split ``GetHoldRegs(index,addr,count[,valType])``."""
+    parts = [p.strip() for p in args.split(",") if p.strip()]
+    if len(parts) not in (3, 4):
+        raise ValueError(f"expected index, addr, count[, valType], got {args!r}")
+    val_type = parts[3] if len(parts) == 4 else MODBUS_VALUE_TYPE
+    return int(parts[0]), int(parts[1]), int(parts[2]), val_type
+
+
+def _parse_hold_regs_write(args: str) -> tuple[int, int, int, list[int], str]:
+    """Split ``SetHoldRegs(index,addr,count,{v,...}[,valType])``.
+
+    The value table is brace-wrapped, so it cannot be split on commas along
+    with the rest.
+    """
+    head, brace, rest = args.partition("{")
+    if not brace:
+        raise ValueError(f"expected a braced value table in {args!r}")
+    table, close, tail = rest.partition("}")
+    if not close:
+        raise ValueError(f"unterminated value table in {args!r}")
+
+    leading = [p.strip() for p in head.split(",") if p.strip()]
+    if len(leading) != 3:
+        raise ValueError(f"expected index, addr, count before the table in {args!r}")
+    trailing = [p.strip() for p in tail.split(",") if p.strip()]
+    if len(trailing) > 1:
+        raise ValueError(f"unexpected arguments after the value table in {args!r}")
+    val_type = trailing[0] if trailing else MODBUS_VALUE_TYPE
+
+    values = [int(v.strip()) for v in table.split(",") if v.strip()]
+    return int(leading[0]), int(leading[1]), int(leading[2]), values, val_type
 
 
 def _parse_floats(text: str, *, count: int) -> list[float]:
