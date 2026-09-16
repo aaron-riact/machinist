@@ -13,9 +13,11 @@ the browser and the terminal stay feature-equivalent.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from ..core.world import World
+from ..devices.robots.dobot import PROTECTIVE_STOP_MODE_BY_NAME, EnableFailure
 
 
 def snapshot_world(world: World) -> dict[str, Any]:
@@ -176,10 +178,87 @@ def _cmd_run(world: World, rest: str) -> dict[str, Any]:
     return _ok(f"started {program} on {target}")
 
 
+@dataclass(frozen=True, slots=True)
+class _PstopArgs:
+    """A parsed ``pstop`` command line."""
+
+    device: str
+    clear: bool = False
+    robot_mode: str = "collision"
+    controller_ids: tuple[int, ...] = ()
+    sticky: bool = False
+
+
+def _parse_pstop(rest: str) -> _PstopArgs:
+    device, _, tail = rest.partition(" ")
+    if not device:
+        raise CommandError("usage: pstop <device> [clear|collision|error|disabled] [ids=…] [sticky]")
+
+    clear = False
+    robot_mode = "collision"
+    controller_ids: tuple[int, ...] = ()
+    sticky = False
+    for token in tail.split():
+        if token == "clear":
+            clear = True
+        elif token == "sticky":
+            sticky = True
+        elif token in PROTECTIVE_STOP_MODE_BY_NAME:
+            robot_mode = token
+        elif token.startswith("ids="):
+            try:
+                controller_ids = tuple(int(c) for c in token[4:].split(",") if c)
+            except ValueError as exc:
+                raise CommandError(f"bad alarm ids: {token[4:]!r}") from exc
+        else:
+            raise CommandError(f"unknown pstop option: {token!r}")
+    return _PstopArgs(device, clear, robot_mode, controller_ids, sticky)
+
+
+def _faultable(world: World, name: str) -> Any:
+    device = _lookup(world, name)
+    if not hasattr(device, "inject_protective_stop"):
+        raise CommandError(f"{name!r} cannot be put into a protective stop")
+    return device
+
+
+def _cmd_pstop(world: World, rest: str) -> dict[str, Any]:
+    args = _parse_pstop(rest)
+    device = _faultable(world, args.device)
+    if args.clear:
+        device.clear_protective_stop()
+        return _ok(f"protective stop cleared on {args.device}")
+    device.inject_protective_stop(
+        robot_mode=PROTECTIVE_STOP_MODE_BY_NAME[args.robot_mode],
+        controller_ids=args.controller_ids,
+        sticky=args.sticky,
+    )
+    ids = ",".join(str(c) for c in args.controller_ids) or "none"
+    sticky = ", sticky" if args.sticky else ""
+    return _ok(f"protective stop {args.robot_mode} on {args.device} (alarms {ids}{sticky})")
+
+
+def _cmd_failenable(world: World, rest: str) -> dict[str, Any]:
+    name, _, value = rest.partition(" ")
+    value = value.strip()
+    device = _faultable(world, name)
+    if value in ("off", ""):
+        device.set_enable_failure(None)
+        return _ok(f"{name} enables normally again")
+    try:
+        failure = EnableFailure(value)
+    except ValueError as exc:
+        raise CommandError(f"usage: failenable <device> stuck|error|off") from exc
+    device.set_enable_failure(failure)
+    return _ok(f"{name} will fail to enable ({failure.value})")
+
+
 def _cmd_help(_world: World, _rest: str) -> dict[str, Any]:
     return _ok(
         "commands: estop <device> | reset <device> | servo <device> on|off | "
-        "set <device.signal> 0|1 | ls <device> | run <device> <program>"
+        "set <device.signal> 0|1 | ls <device> | run <device> <program> | "
+        "pstop <device> [clear|collision|error|disabled] [ids=17,116] [sticky] | "
+        "failenable <device> stuck|error|off"
     )
 
 
@@ -194,5 +273,7 @@ _COMMANDS = {
     "set": _cmd_set,
     "ls": _cmd_ls,
     "run": _cmd_run,
+    "pstop": _cmd_pstop,
+    "failenable": _cmd_failenable,
     "help": _cmd_help,
 }

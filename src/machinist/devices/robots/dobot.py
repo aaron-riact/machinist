@@ -242,6 +242,13 @@ class EnableFailure(StrEnum):
 #: so a queued move cannot quietly resume while the stop is engaged.
 _MOTION_VERBS = frozenset({"movj", "movl", "reljointmovj", "relmovltool"})
 
+#: Protective-stop modes by the name the ``pstop`` command accepts.
+PROTECTIVE_STOP_MODE_BY_NAME: dict[str, int] = {
+    "collision": ROBOT_MODE_COLLISION,
+    "error": ROBOT_MODE_ERROR,
+    "disabled": ROBOT_MODE_DISABLED,
+}
+
 _ROBOT_MODE_NAMES: dict[int, str] = {
     ROBOT_MODE_DISABLED: "DISABLED",
     ROBOT_MODE_ENABLE: "ENABLE",

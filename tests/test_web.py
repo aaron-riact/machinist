@@ -183,3 +183,98 @@ def test_dispatch_help_lists_verbs() -> None:
     assert result["ok"] is True
     assert "estop" in result["message"]
     assert "set" in result["message"]
+
+
+# --- fault injection commands -------------------------------------------
+
+
+class _FakeDobot:
+    """Records what the dispatch layer asked for, without binding any port."""
+
+    name = "dobot1"
+
+    def __init__(self) -> None:
+        self.stops: list[dict] = []
+        self.cleared = 0
+        self.enable_failures: list[object] = []
+
+    def inject_protective_stop(self, *, robot_mode, controller_ids, sticky) -> None:
+        self.stops.append(
+            {"robot_mode": robot_mode, "controller_ids": tuple(controller_ids), "sticky": sticky}
+        )
+
+    def clear_protective_stop(self) -> None:
+        self.cleared += 1
+
+    def set_enable_failure(self, failure) -> None:
+        self.enable_failures.append(failure)
+
+
+def _dobot_world() -> tuple[World, _FakeDobot]:
+    dobot = _FakeDobot()
+    return SimpleNamespace(devices=[dobot]), dobot
+
+
+def test_dispatch_pstop_defaults_to_a_collision() -> None:
+    world, dobot = _dobot_world()
+
+    result = dispatch_command(world, "pstop dobot1")
+
+    assert result["ok"] is True
+    assert dobot.stops == [{"robot_mode": 11, "controller_ids": (), "sticky": False}]
+
+
+def test_dispatch_pstop_accepts_a_mode_alarm_ids_and_sticky() -> None:
+    world, dobot = _dobot_world()
+
+    dispatch_command(world, "pstop dobot1 error ids=17,116 sticky")
+
+    assert dobot.stops == [{"robot_mode": 9, "controller_ids": (17, 116), "sticky": True}]
+
+
+def test_dispatch_pstop_clear_releases_the_stop() -> None:
+    world, dobot = _dobot_world()
+
+    dispatch_command(world, "pstop dobot1 clear")
+
+    assert dobot.cleared == 1
+    assert dobot.stops == []
+
+
+def test_dispatch_pstop_rejects_an_unknown_option() -> None:
+    world, _ = _dobot_world()
+
+    with pytest.raises(CommandError, match="unknown pstop option"):
+        dispatch_command(world, "pstop dobot1 sideways")
+
+
+def test_dispatch_pstop_rejects_non_numeric_alarm_ids() -> None:
+    world, _ = _dobot_world()
+
+    with pytest.raises(CommandError, match="bad alarm ids"):
+        dispatch_command(world, "pstop dobot1 ids=17,oops")
+
+
+def test_dispatch_pstop_requires_a_device_that_can_be_stopped() -> None:
+    world = _gripper_world()
+
+    with pytest.raises(CommandError, match="cannot be put into a protective stop"):
+        dispatch_command(world, "pstop g1")
+
+
+def test_dispatch_failenable_sets_and_clears_the_failure() -> None:
+    from machinist.devices.robots.dobot import EnableFailure
+
+    world, dobot = _dobot_world()
+
+    dispatch_command(world, "failenable dobot1 stuck")
+    dispatch_command(world, "failenable dobot1 off")
+
+    assert dobot.enable_failures == [EnableFailure.STUCK, None]
+
+
+def test_dispatch_failenable_rejects_an_unknown_kind() -> None:
+    world, _ = _dobot_world()
+
+    with pytest.raises(CommandError, match="stuck|error|off"):
+        dispatch_command(world, "failenable dobot1 explode")
