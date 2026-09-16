@@ -23,7 +23,7 @@ def test_door_command_sets_status_signals() -> None:
     device.io["door_open_cmd"].set(True)
     assert device.io["door_is_open"].value is True
     assert device.io["door_is_closed"].value is False
-    assert device.state.door("main").open is True
+    assert device.state.view.door_open("main") is True
 
     device.io["door_close_cmd"].set(True)
     assert device.io["door_is_closed"].value is True

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...core.capabilities import HasIO
-from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
+from ...core.device import DetailField, DetailSignal, Device, DeviceDetail
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.registry import register
@@ -17,8 +17,8 @@ from ...transport.ethernetip import (
     EtherNetIPAdapter,
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
-    EtherNetIPTransport,
     EtherNetIPScannerConfig,
+    EtherNetIPTransport,
     MazakEthernetIPAdapter,
 )
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
@@ -233,12 +233,18 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         *, io: SignalBank,
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.state = MachineState()
-        self.state.door("main").set(open=False)
+        self._variant = options.variant
+        self._front_door = bool(options.front_door) and options.variant == "smoothai"
+        # A SmoothAi has a side door (plus an optional front door); a SmoothX
+        # has one main door. Declaring them here is what lets the state view
+        # refuse a typo later instead of inventing a door.
+        doors = ["side"] if self._variant == "smoothai" else ["main"]
+        if self._front_door:
+            doors.append("front")
+        self.state = MachineState(owner=name, publish=self.publish, doors=doors)
 
         self._input_signal_points = _build_input_points(options.variant)
         self._output_signal_points = _build_output_points(options.variant)
-        self._variant = options.variant
 
         self._lock = threading.RLock()
         self._input_block = bytearray(BLOCK_SIZE)
@@ -266,7 +272,6 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._work_search_failed = False
         self._heartbeat_interval = options.heartbeat_interval_seconds
         self._heartbeat_timeout = options.heartbeat_timeout_seconds
-        self._front_door = bool(options.front_door) and options.variant == "smoothai"
         self._interfaces = _enabled_interfaces(options)
         self._ethernetip_mode = options.ethernetip_mode
         self._io_writable = "io" in self._interfaces
@@ -314,7 +319,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
     @property
     def active_program(self) -> str:
-        return self.state.program
+        return self.state.view.program
 
     @property
     def ethernetip_mode(self) -> str:
@@ -355,7 +360,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             alarm_code = self._alarm_code
             alarm_message = self._alarm_message
             connection_up = self._connection_up
-            active_program = self.state.program
+            active_program = self.state.view.program
             transport = self._ethernetip
 
         transport_ready = transport is not None and transport.connected
@@ -616,8 +621,8 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
                 self.emit("program.search_failed", program=self._pending_program)
                 self._prev_di101 = di101
                 return
-            program_changed = self._pending_program != self.state.program
-            self.state.program = self._pending_program
+            program_changed = self._pending_program != self.state.view.program
+            self.state.update(program=self._pending_program)
             self._set_output_text(100, self._pending_program)
             self._write_output_bit(101, True)
             self.emit("program", program=self._pending_program)
@@ -671,7 +676,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
         if self._door_motion_deadline is not None and now >= self._door_motion_deadline:
             target_open = bool(self._door_target_open)
-            self.state.door(_door_name).set(open=target_open)
+            self.state.set_door(_door_name, open=target_open)
             self._write_output_bit(107, target_open)
             self._write_output_bit(108, not target_open)
             self._door_motion_deadline = None
@@ -709,7 +714,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
         if self._front_door_motion_deadline is not None and now >= self._front_door_motion_deadline:
             target_open = bool(self._front_door_target_open)
-            self.state.door("front").set(open=target_open)
+            self.state.set_door("front", open=target_open)
             self._write_output_bit(110, target_open)
             self._write_output_bit(111, not target_open)
             self._front_door_motion_deadline = None
@@ -728,15 +733,15 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
         if not stop_request:
             self._feed_hold = True
-            self.state.cycle = CycleState.PAUSED
+            self.state.update(cycle=CycleState.PAUSED)
             self._cycle_complete_deadline = None
             self._cycle_start_armed = False
             self._write_output_bit(103, False)
-        elif self._feed_hold and stop_request and self.state.cycle is CycleState.PAUSED:
+        elif self._feed_hold and stop_request and self.state.view.cycle is CycleState.PAUSED:
             self._feed_hold = False
 
         if nc_reset:
-            self.state.cycle = CycleState.IDLE
+            self.state.update(cycle=CycleState.IDLE)
             self._cycle_complete_deadline = None
             self._cycle_start_armed = False
             self._machining_complete_latched = False
@@ -751,8 +756,8 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             robot_ready
             and stop_request
             and self._alarm_code is None
-            and not self.state.door(_door_name).open
-            and self.state.cycle is not CycleState.RUNNING
+            and not self.state.view.door_open(_door_name)
+            and self.state.view.cycle is not CycleState.RUNNING
             and not _cycle_blocked
         )
         self._write_output_bit(102, can_cycle)
@@ -774,10 +779,10 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
         if not cycle_start and self._prev_di102:
             if self._cycle_start_armed and can_cycle:
-                self.state.cycle = CycleState.RUNNING
+                self.state.update(cycle=CycleState.RUNNING)
                 self._cycle_complete_deadline = now + self._cycle_seconds
                 self._write_output_bit(103, True)
-                self.emit("cycle.start", program=self.state.program or self._pending_program)
+                self.emit("cycle.start", program=self.state.view.program or self._pending_program)
             self._cycle_start_armed = False
 
         if self._cycle_complete_deadline is not None and now >= self._cycle_complete_deadline:
@@ -789,14 +794,14 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._prev_di102 = cycle_start
 
     def _complete_cycle(self) -> None:
-        if self.state.cycle is not CycleState.RUNNING:
+        if self.state.view.cycle is not CycleState.RUNNING:
             return
-        self.state.cycle = CycleState.IDLE
-        self.state.parts += 1
+        self.state.update(cycle=CycleState.IDLE)
+        self.state.bump(parts=1)
         self._cycle_complete_deadline = None
         self._machining_complete_latched = True
         self._write_output_bit(103, False)
-        self.emit("cycle.end", parts=self.state.parts)
+        self.emit("cycle.end", parts=self.state.view.parts)
 
     def _refresh_outputs(self) -> None:
         robot_ready = self._read_input_bit(1)
@@ -818,18 +823,20 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._write_output_bit(104, self._machining_complete_latched and robot_ready)
         _door_name = "side" if self._variant == "smoothai" else "main"
         with self._lock:
-            self.state.variables["alarm_code"] = self._alarm_code or 0
-            self.state.variables["alarm_message"] = self._alarm_message
-            self.state.variables["connection_up"] = self._connection_up
-            self.state.variables["robot_ready"] = robot_ready
-            self.state.variables["machine_stop_request"] = stop_request
+            self.state.set_variables(
+                alarm_code=self._alarm_code or 0,
+                alarm_message=self._alarm_message,
+                connection_up=self._connection_up,
+                robot_ready=robot_ready,
+                machine_stop_request=stop_request,
+            )
             self._state_snapshot = {
                 "alarm_code": self._alarm_code,
                 "alarm_message": self._alarm_message,
                 "connection_up": self._connection_up,
-                "active_program": self.state.program,
-                "cycle": self.state.cycle.value,
-                "door_open": self.state.door(_door_name).open,
+                "active_program": self.state.view.program,
+                "cycle": self.state.view.cycle.value,
+                "door_open": self.state.view.door_open(_door_name),
                 "feed_hold": self._feed_hold,
             }
 
@@ -843,7 +850,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             # A failed work search is the exception: it does not stop the running
             # program. DO103 stayed set for 38s after the alarm in mazak3.pcap
             # (t=1821.074 to t=1859.220).
-            self.state.cycle = CycleState.ABORTED
+            self.state.update(cycle=CycleState.ABORTED)
             self._write_output_bit(103, False)
         self._write_output_bit(4, True)
         self.emit("alarm", code=code, message=message)
@@ -1087,7 +1094,7 @@ def make_device(
             MTConnectAgent(
                 endpoint.host,
                 options_obj.mtconnect.port,
-                render=lambda render_endpoint: render_mtconnect(device.state, render_endpoint),
+                render=lambda render_endpoint: render_mtconnect(device.state.view, render_endpoint),
             )
         )
     if "ethernetip" in device._interfaces:

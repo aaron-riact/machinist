@@ -7,7 +7,7 @@ from textual.widgets._data_table import ColumnKey, RowKey
 
 from machinist.core.events import Event, LifecycleChanged, Note
 from machinist.core.types import DeviceState
-from machinist.devices.machines.state import MachineState, Toggle
+from machinist.devices.machines.state import MachineState
 from machinist.devices.robots.arm import RobotArm
 from machinist.tui.app import (
     MachinistApp,
@@ -67,14 +67,9 @@ def test_machine_summary_is_empty_for_non_machine() -> None:
 
 def test_machine_summary_reports_cycle_and_tooling() -> None:
     state = MachineState()
-    state.doors["main"] = Toggle(name="main", open=True)
-    state.program = "O0001\nG0 X0"
-    state.position.x = 12.0
-    state.position.y = -3.5
-    state.position.z = 8.25
-    state.spindle_rpm = 1500.0
-    state.tool = 3
-    state.parts = 7
+    state.set_door("main", open=True)
+    state.update(program="O0001\nG0 X0", spindle_rpm=1500.0, tool=3, parts=7)
+    state.move_to(x=12.0, y=-3.5, z=8.25)
     out = _machine_summary(FakeMachineDevice("mill", state=state))
     assert "O0001" in out
     assert "+12.000" in out
@@ -86,7 +81,7 @@ def test_machine_summary_reports_cycle_and_tooling() -> None:
 
 def test_detail_header_combines_static_and_dynamic_sections() -> None:
     state = MachineState()
-    state.program = "O0001"
+    state.update(program="O0001")
     device = FakeMachineDevice("mill", state=state)
     out = _detail_header(device)
     assert "mill" in out

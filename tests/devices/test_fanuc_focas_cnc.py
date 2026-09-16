@@ -29,9 +29,7 @@ def _make_device(**kwargs) -> tuple[FanucFocasCnc, int]:
         _next_port += 1
     opts = FanucFocasCncOptions(**kwargs)
     ep = Endpoint(host="127.0.0.1", port=port)
-    state = MachineState()
-    for i in range(1, opts.door_count + 1):
-        state.doors[str(i)] = state.door(str(i))
+    state = MachineState(doors=[str(i) for i in range(1, opts.door_count + 1)])
     dev = FanucFocasCnc("test-cnc", ep, EventBus(), opts, state=state)
     stop = threading.Event()
     t = threading.Thread(target=dev._run, args=(stop,), daemon=True)
@@ -146,7 +144,7 @@ class TestReadFunctions:
 
     def test_feedrate(self, cnc):
         dev, port = cnc
-        dev._state.feed = 250.0
+        dev._state.update(feed=250.0)
         sock = _connect(port)
         _send_recv(sock, FocasFrame(type=CONNECT_REQ).encode())
         sp = FocasSubpacket(c1=1, c2=1, c3=0x24)
@@ -169,7 +167,7 @@ class TestControlFunctions:
         )
         resp = _send_recv(sock, FocasFrame(type=VAR_REQ, subpackets=(sp,)).encode())
         assert resp.type == VAR_RESP
-        assert dev._state.door("1").open
+        assert dev._state.view.door_open("1")
         sock.close()
 
     def test_write_pmc_cycle(self, cnc):
@@ -183,5 +181,5 @@ class TestControlFunctions:
         )
         resp = _send_recv(sock, FocasFrame(type=VAR_REQ, subpackets=(sp,)).encode())
         assert resp.type == VAR_RESP
-        assert dev._state.cycle == CycleState.RUNNING
+        assert dev._state.view.cycle == CycleState.RUNNING
         sock.close()

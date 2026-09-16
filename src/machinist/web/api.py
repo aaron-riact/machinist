@@ -19,7 +19,7 @@ from typing import Any
 from ..core.capabilities import HasPrograms
 from ..core.device import Device
 from ..core.world import World
-from ..devices.machines.state import HasMachineState, MachineState
+from ..devices.machines.state import HasMachineState, MachineView
 from ..devices.robots.arm import HasArm, RobotArm
 from ..devices.robots.dobot import PROTECTIVE_STOP_MODE_BY_NAME, DobotDashboard, EnableFailure
 
@@ -48,7 +48,7 @@ def snapshot_device(device: Device) -> dict[str, Any]:
     if isinstance(device, HasArm):
         snap["arm"] = _arm_snapshot(device.arm)
     if isinstance(device, HasMachineState):
-        snap["machine"] = _machine_snapshot(device.state)
+        snap["machine"] = _machine_snapshot(device.state.view)
     if isinstance(device, HasPrograms):
         snap["programs"] = device.programs.list()
     return snap
@@ -69,7 +69,7 @@ def _arm_snapshot(arm: RobotArm) -> dict[str, Any]:
     }
 
 
-def _machine_snapshot(state: MachineState) -> dict[str, Any]:
+def _machine_snapshot(state: MachineView) -> dict[str, Any]:
     program = state.program.splitlines()[0] if state.program else ""
     return {
         "cycle": str(state.cycle),
@@ -83,8 +83,8 @@ def _machine_snapshot(state: MachineState) -> dict[str, Any]:
             "y": state.position.y,
             "z": state.position.z,
         },
-        "doors": {name: door.open for name, door in state.doors.items()},
-        "chucks": {name: chuck.open for name, chuck in state.chucks.items()},
+        "doors": dict(state.doors),
+        "chucks": dict(state.chucks),
     }
 
 

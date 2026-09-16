@@ -57,16 +57,13 @@ class Interpreter:
 
     def run(self, program: str) -> Iterator[str]:
         """Execute the program, yielding human-readable progress lines."""
-        with self.state._lock:
-            self.state.program = program
-            self.state.cycle = CycleState.RUNNING
+        self.state.update(program=program, cycle=CycleState.RUNNING)
         try:
             for line in program.splitlines():
                 yield from self._exec_line(line.strip())
         finally:
-            with self.state._lock:
-                if self.state.cycle is CycleState.RUNNING:
-                    self.state.cycle = CycleState.IDLE
+            if self.state.view.cycle is CycleState.RUNNING:
+                self.state.update(cycle=CycleState.IDLE)
 
     def _exec_line(self, line: str) -> Iterator[str]:
         if not line or line.startswith(";") or line.startswith("("):
@@ -77,18 +74,18 @@ class Interpreter:
             yield f"DPRINT {text!r}"
             return
         if (m := _VAR_ASSIGN.match(line)) is not None:
-            self.state.variables[m.group(1)] = _coerce(m.group(2).strip())
+            self.state.set_variables(**{m.group(1): _coerce(m.group(2).strip())})
             yield f"#{m.group(1)} = {m.group(2)}"
             return
         words = _words(line)
         yield from self._apply_tooling(words)
         if words.m == 30:
-            self.state.cycle = CycleState.IDLE
-            self.state.parts += 1
+            self.state.update(cycle=CycleState.IDLE)
+            self.state.bump(parts=1)
             yield "M30 program end"
             return
         if words.m in (0, 1):
-            self.state.cycle = CycleState.PAUSED
+            self.state.update(cycle=CycleState.PAUSED)
             yield "program stop"
             return
         if words.g == 4 and words.p is not None:
@@ -104,26 +101,23 @@ class Interpreter:
     def _apply_tooling(self, words: GCodeLine) -> Iterator[str]:
         """Update spindle, feed and tool state from a parsed line."""
         if words.f is not None:
-            self.state.feed = words.f
+            self.state.update(feed=words.f)
         if words.t is not None:
-            self.state.tool = words.t
+            self.state.update(tool=words.t)
         if words.m == 6:
-            self.state.tool_changes += 1
-            yield f"tool change T{self.state.tool}"
+            view = self.state.bump(tool_changes=1)
+            yield f"tool change T{view.tool}"
         if words.m in (3, 4):
-            self.state.spindle_rpm = words.s if words.s is not None else self.state.spindle_rpm
+            if words.s is not None:
+                self.state.update(spindle_rpm=words.s)
             direction = "CW" if words.m == 3 else "CCW"
-            yield f"spindle {direction} {self.state.spindle_rpm:g}"
+            yield f"spindle {direction} {self.state.view.spindle_rpm:g}"
         elif words.m == 5:
-            self.state.spindle_rpm = 0.0
+            self.state.update(spindle_rpm=0.0)
             yield "spindle stop"
 
     def _apply_position(self, words: GCodeLine) -> None:
-        self.state.position.move_to(
-            x=words.x,
-            y=words.y,
-            z=words.z,
-        )
+        self.state.move_to(x=words.x, y=words.y, z=words.z)
 
 
 def _words(line: str) -> GCodeLine:

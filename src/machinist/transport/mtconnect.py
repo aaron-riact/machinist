@@ -27,7 +27,7 @@ from .service import Service
 
 
 class MTConnectAgent(Service):
-    """HTTP server that renders a :class:`MachineState` as MTConnect XML."""
+    """HTTP server that renders a machine's state view as MTConnect XML."""
 
     def __init__(self, host: str, port: int, render: Callable[[str], str]) -> None:
         self._host = host
@@ -108,10 +108,10 @@ def _render_current(state) -> str:  # type: ignore[no-untyped-def]
         f'<ToolNumber dataItemId="tool">{state.tool}</ToolNumber>',
         f'<PartCount dataItemId="parts">{state.parts}</PartCount>',
     ]
-    for name, door in state.doors.items():
+    for name, door_open in state.doors.items():
         events.append(
             f'<DoorState dataItemId="door_{name}">'
-            f'{"OPEN" if door.open else "CLOSED"}'
+            f'{"OPEN" if door_open else "CLOSED"}'
             '</DoorState>'
         )
     events_xml = "".join(events)

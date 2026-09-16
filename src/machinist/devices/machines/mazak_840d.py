@@ -66,8 +66,7 @@ class MazakSinumerik840D(Device, HasMachineState, HasIO):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._maps = options.mappings
-        self.state = MachineState()
-        self.state.door("main")
+        self.state = MachineState(owner=name, publish=self.publish, doors=("main",))
         self.io = io
         self._store = store
         self.add_service(server)
@@ -111,7 +110,7 @@ class MazakSinumerik840D(Device, HasMachineState, HasIO):
         )
 
     def _move_door(self, *, open: bool) -> None:  # noqa: A002
-        self.state.door("main").set(open=open)
+        self.state.set_door("main", open=open)
         self.io["door_is_open"].set(open)
         self.io["door_is_closed"].set(not open)
         self.emit("door", open=open)

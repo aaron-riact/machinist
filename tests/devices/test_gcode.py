@@ -17,8 +17,8 @@ def test_dprint_and_variables() -> None:
     """
     list(interp.run(program))
     assert state.dprint_log == ["hello world"]
-    assert state.variables["100"] == 12.5
-    assert state.cycle is CycleState.IDLE
+    assert state.view.variables["100"] == 12.5
+    assert state.view.cycle is CycleState.IDLE
 
 
 def test_dwell_pauses() -> None:
@@ -45,12 +45,12 @@ def test_spindle_tool_feed_and_parts() -> None:
     M30
     """
     log = list(interp.run(program))
-    assert state.tool == 1
-    assert state.tool_changes == 1
-    assert state.feed == 250.0
+    assert state.view.tool == 1
+    assert state.view.tool_changes == 1
+    assert state.view.feed == 250.0
     # Spindle ends stopped (M5 after M3).
-    assert state.spindle_rpm == 0.0
-    assert state.parts == 1
+    assert state.view.spindle_rpm == 0.0
+    assert state.view.parts == 1
     assert any("tool change T1" in line for line in log)
     assert any("spindle CW 1500" in line for line in log)
 
@@ -59,13 +59,13 @@ def test_m_and_g_code_zero_padding_equivalent() -> None:
     state = MachineState()
     interp = Interpreter(state)
     list(interp.run("M03 S1000\nM30"))
-    assert state.spindle_rpm == 1000.0
+    assert state.view.spindle_rpm == 1000.0
 
 
 def test_motion_updates_xyz_position() -> None:
     state = MachineState()
     interp = Interpreter(state)
     list(interp.run("G1 X10 Y20 Z30\nG0 X40\nM30"))
-    assert state.position.x == 40.0
-    assert state.position.y == 20.0
-    assert state.position.z == 30.0
+    assert state.view.position.x == 40.0
+    assert state.view.position.y == 20.0
+    assert state.view.position.z == 30.0

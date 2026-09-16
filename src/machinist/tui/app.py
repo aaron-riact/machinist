@@ -40,7 +40,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ..core.capabilities import HasIO, HasPrograms
-from ..core.device import Device, DetailField, DetailSignal
+from ..core.device import DetailField, DetailSignal, Device
 from ..core.events import Event
 from ..core.types import DeviceState
 from ..core.world import World
@@ -412,7 +412,7 @@ def _machine_summary(device: Device) -> str:
     """One-line CNC status (cycle/program/spindle/tool/parts), or '' otherwise."""
     if not isinstance(device, HasMachineState):
         return ""
-    state = device.state
+    state = device.state.view
     cycle = str(state.cycle)
     cycle_colour = (
         "green" if cycle == "running" else "yellow" if cycle == "paused" else "grey50"
@@ -420,8 +420,8 @@ def _machine_summary(device: Device) -> str:
     program = state.program.splitlines()[0] if state.program else "[dim]none[/]"
     xyz = f"{state.position.x:+.3f}  {state.position.y:+.3f}  {state.position.z:+.3f}"
     doors = "  ".join(
-        f"{name}:{'[red]open[/]' if door.open else '[green]shut[/]'}"
-        for name, door in state.doors.items()
+        f"{name}:{'[red]open[/]' if door_open else '[green]shut[/]'}"
+        for name, door_open in state.doors.items()
     )
     return (
         f"\ncycle [{cycle_colour}]{cycle}[/]   program [cyan]{program}[/]\n"

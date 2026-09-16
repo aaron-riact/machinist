@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from machinist.kinematics.units import Radians
-from machinist.devices.machines.state import MachineState, Toggle, machine_readers
+from machinist.devices.machines.state import MachineState, machine_readers
 from machinist.devices.robots.arm import RobotArm, arm_readers
+from machinist.kinematics.units import Radians
 
 
 def test_arm_readers_initial_state() -> None:
@@ -57,16 +57,15 @@ def test_machine_readers_initial_state() -> None:
 def test_machine_readers_reflect_state_change() -> None:
     state = MachineState()
     readers = machine_readers(state)
-    state.parts = 42
-    state.position.x = 1.5
+    state.update(parts=42)
+    state.move_to(x=1.5)
     assert readers["parts"]() == 42
     assert readers["x"]() == 1.5
 
 
 def test_machine_readers_with_doors() -> None:
-    state = MachineState()
-    state.doors["main"] = Toggle(name="main", open=True)
-    state.doors["side"] = Toggle(name="side", open=False)
+    state = MachineState(doors=("main", "side"))
+    state.set_door("main", open=True)
     readers = machine_readers(state)
     assert "door_main_open" in readers
     assert "door_side_open" in readers
@@ -75,8 +74,7 @@ def test_machine_readers_with_doors() -> None:
 
 
 def test_machine_readers_with_chucks() -> None:
-    state = MachineState()
-    state.chucks["left"] = Toggle(name="left", open=False)
+    state = MachineState(chucks=("left",))
     readers = machine_readers(state)
     assert "chuck_left_open" in readers
     assert readers["chuck_left_open"]() is False

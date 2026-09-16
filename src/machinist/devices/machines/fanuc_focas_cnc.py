@@ -46,9 +46,9 @@ class FanucFocasCnc(Device):
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._options = options
-        self._state = state or MachineState()
+        self._state = state or MachineState(owner=name, publish=self.publish)
         for i in range(1, options.door_count + 1):
-            self._state.doors[str(i)] = self._state.doors.get(str(i), self._state.door(str(i)))
+            self._state.declare_door(str(i))
         self._pmc_store: dict[tuple[int, int], int] = {}  # (section, address) -> value
         self._diag_store: dict[int, int] = dict(options.initial_diagnostics)
         self.add_service(
@@ -114,12 +114,12 @@ class FanucFocasCnc(Device):
         return sp.encode_response_ok(struct.pack(">ii", 0, 0))  # run=0, main=0
 
     def _handle_feedrate(self, sp: FocasSubpacket) -> bytes:
-        feed = self._state.feed
+        feed = self._state.view.feed
         raw = struct.pack(">ii", int(feed * 1000), 0x0002000A)
         return sp.encode_response_ok(raw)
 
     def _handle_spindle_speed(self, sp: FocasSubpacket) -> bytes:
-        rpm = self._state.spindle_rpm
+        rpm = self._state.view.spindle_rpm
         raw = struct.pack(">ii", int(rpm * 1000), 0x0002000A)
         return sp.encode_response_ok(raw)
 
@@ -132,7 +132,7 @@ class FanucFocasCnc(Device):
 
     def _handle_axes(self, sp: FocasSubpacket) -> bytes:
         opts = self._options
-        pos = self._state.position
+        pos = self._state.view.position
         values = b"".join(
             struct.pack(">ii", int(v * 1000), 0x0002000A)
             for v in (pos.x, pos.y, pos.z)
@@ -177,7 +177,7 @@ class FanucFocasCnc(Device):
         return sp.encode_response_ok()
 
     def _handle_mdi(self, sp: FocasSubpacket) -> bytes:
-        prog = self._state.program[:sp.v1] if sp.v1 > 0 else self._state.program
+        prog = self._state.view.program[:sp.v1] if sp.v1 > 0 else self._state.view.program
         return sp.encode_response_ok(struct.pack(">i", 0) + prog.encode("ascii"))
 
     def _handle_set_time(self, sp: FocasSubpacket) -> bytes:
@@ -199,17 +199,13 @@ class FanucFocasCnc(Device):
             return
         if address == self._PMC_DOOR:
             val = self._pmc_store.get((9, address), 0)
-            door = self._state.door("1")
-            door.set(open=bool(val))
-            self.emit("door", name="1", open=door.open)
+            self._state.set_door("1", open=bool(val))
+            self.emit("door", name="1", open=bool(val))
         elif address == self._PMC_CYCLE:
             val = self._pmc_store.get((9, address), 0)
-            if val:
-                self._state.cycle = CycleState.RUNNING
-                self.emit("cycle", state=str(self._state.cycle))
-            else:
-                self._state.cycle = CycleState.IDLE
-                self.emit("cycle", state=str(self._state.cycle))
+            cycle = CycleState.RUNNING if val else CycleState.IDLE
+            self._state.update(cycle=cycle)
+            self.emit("cycle", state=str(cycle))
 
 
 _REQUEST_HANDLERS: dict[tuple[int, int, int], Any] = {
@@ -237,7 +233,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     if "initial_diagnostics" in opts:
         opts["initial_diagnostics"] = dict(opts["initial_diagnostics"])
     opt = FanucFocasCncOptions(**opts)
-    state = MachineState()
-    for i in range(1, opt.door_count + 1):
-        state.doors[str(i)] = state.door(str(i))
+    state = MachineState(
+        owner=name, publish=bus.publish, doors=[str(i) for i in range(1, opt.door_count + 1)]
+    )
     return FanucFocasCnc(name, endpoint, bus, opt, state=state)

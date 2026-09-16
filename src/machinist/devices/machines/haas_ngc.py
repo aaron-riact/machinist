@@ -32,7 +32,7 @@ from ...transport.line_server import LineServer, stateless
 from ...transport.mtconnect import MTConnectAgent, render_mtconnect
 from ...transport.smb_share import SmbConfig, build_share
 from .gcode import Interpreter
-from .state import HasMachineState, MachineState, Toggle, machine_readers
+from .state import HasMachineState, MachineState, machine_readers
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,9 +65,9 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
         self, name: str, endpoint: Endpoint, bus: EventBus, options: HaasNGCOptions,
     ) -> None:
         super().__init__(name, endpoint, bus)
-        self.state = MachineState()
-        for d in options.doors or ("main",):
-            self.state.doors[d] = Toggle(name=d)
+        self.state = MachineState(
+            owner=name, publish=self.publish, doors=options.doors or ("main",)
+        )
 
         folder = options.program_folder
         root = Path(folder).expanduser() if folder else (
@@ -88,23 +88,23 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
         if line.startswith("Q100"):
             return [f"SERIAL NUMBER, {self.name.upper()}"]
         if line.startswith("Q104"):
-            return [f"MODE, {self.state.cycle.value.upper()}"]
+            return [f"MODE, {self.state.view.cycle.value.upper()}"]
         if line.startswith("Q200"):
-            return [f"TOOL CHANGES, {self.state.tool_changes}"]
+            return [f"TOOL CHANGES, {self.state.view.tool_changes}"]
         if line.startswith("Q201"):
-            return [f"USING TOOL, {self.state.tool}"]
+            return [f"USING TOOL, {self.state.view.tool}"]
         if line.startswith("Q402"):
-            return [f"M30 #1, {self.state.parts}"]
+            return [f"M30 #1, {self.state.view.parts}"]
         if line.startswith("Q500"):
-            first = self.state.program.splitlines()[0] if self.state.program else "NONE"
+            first = self.state.view.program.splitlines()[0] if self.state.view.program else "NONE"
             return [
-                f"PROGRAM, {first}, {self.state.cycle.value.upper()}, "
-                f"PARTS, {self.state.parts}"
+                f"PROGRAM, {first}, {self.state.view.cycle.value.upper()}, "
+                f"PARTS, {self.state.view.parts}"
             ]
         if line.startswith("Q600"):
             _, _, var = line.partition(" ")
             var = var.strip()
-            value = self.state.variables.get(var, 0)
+            value = self.state.view.variables.get(var, 0)
             return [f"MACRO, {var}, {value}"]
         return [f"?{line}"]
 
@@ -124,7 +124,7 @@ class HaasNGC(Device, HasMachineState, HasPrograms):
         self.emit("program.start", program=name)
         for line in self.interpreter.run(body):
             self.emit("program.step", line=line)
-        self.emit("program.end", program=name, cycle=self.state.cycle.value)
+        self.emit("program.end", program=name, cycle=self.state.view.cycle.value)
 
 
 def make_device(
@@ -151,7 +151,7 @@ def make_device(
         device.add_service(
             MTConnectAgent(
                 endpoint.host, options.mtconnect_port,
-                render=lambda ep: render_mtconnect(device.state, ep),
+                render=lambda ep: render_mtconnect(device.state.view, ep),
             )
         )
     if options.smb is not None:

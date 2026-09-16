@@ -6,7 +6,7 @@ import pytest
 
 from machinist.core.config import DeviceConfig, IOLink, SystemConfig
 from machinist.core.world import World, WorldBuilder
-from machinist.devices.machines.state import MachineState, Toggle
+from machinist.devices.machines.state import MachineState
 from machinist.devices.robots.arm import RobotArm
 from machinist.web.api import (
     CommandError,
@@ -55,12 +55,9 @@ def test_snapshot_device_includes_arm_snapshot() -> None:
 
 def test_snapshot_device_includes_machine_state() -> None:
     state = MachineState()
-    state.program = "O0001\nG0 X0"
-    state.doors["main"] = Toggle(name="main", open=True)
-    state.spindle_rpm = 1500.0
-    state.tool = 3
-    state.parts = 7
-    state.position.x = 12.0
+    state.update(program="O0001\nG0 X0", spindle_rpm=1500.0, tool=3, parts=7)
+    state.set_door("main", open=True)
+    state.move_to(x=12.0)
     device = FakeMachineDevice("mill", state=state)
     machine = snapshot_device(device)["machine"]
     assert machine["program"] == "O0001"
