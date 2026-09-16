@@ -13,6 +13,7 @@ from machinist.devices.robots.arm import ArmMode, ArmStateView
 from machinist.devices.robots.dobot import (
     DOBOT_FEEDBACK_FAST_PORT,
     DOBOT_ROBOT_MODELS,
+    ERR_ROBOT_IN_ERROR_STATE,
     PROTECTIVE_STOP_MODES,
     ROBOT_MODE_COLLISION,
     ROBOT_MODE_DISABLED,
@@ -831,3 +832,71 @@ def test_every_protective_stop_mode_is_injectable(dobot: DobotDashboard) -> None
     for mode in PROTECTIVE_STOP_MODES:
         dobot.inject_protective_stop(robot_mode=mode)
         assert _send(dobot, "RobotMode()") == f"0,{{{mode}}},RobotMode()"
+
+
+# --- a protective stop refuses motion, and a sticky one survives ClearError ---
+
+
+def test_movj_is_refused_while_the_stop_is_engaged(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop()
+
+    reply = _send(dobot, "MovJ(10,20,30,40,50,60)")
+    assert reply == f"{ERR_ROBOT_IN_ERROR_STATE},{{}},MovJ(10,20,30,40,50,60)"
+    assert not dobot.arm.state.snapshot().moving
+
+
+def test_movl_is_refused_while_the_stop_is_engaged(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop()
+
+    reply = _send(dobot, "MovL(10,20,30,40,50,60)")
+    assert reply.startswith(f"{ERR_ROBOT_IN_ERROR_STATE},")
+
+
+def test_motion_is_accepted_again_once_the_stop_clears(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop()
+    dobot.clear_protective_stop()
+
+    reply = _send(dobot, "MovJ(10,20,30,40,50,60)")
+    assert reply.startswith("0,")
+
+
+def test_reading_commands_still_work_while_stopped(dobot: DobotDashboard) -> None:
+    """Only motion is refused -- the driver must still be able to poll."""
+    dobot.inject_protective_stop(controller_ids=[17])
+
+    assert _send(dobot, "GetErrorID()") == "0,{[17]},GetErrorID()"
+    assert _send(dobot, "GetAngle()").startswith("0,{")
+
+
+def test_clearerror_releases_a_non_sticky_stop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17])
+
+    _send(dobot, "ClearError()")
+
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+    assert _send(dobot, "GetErrorID()") == "0,{[]},GetErrorID()"
+
+
+def test_clearerror_does_not_release_a_sticky_stop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17], sticky=True)
+
+    assert _send(dobot, "ClearError()") == "0,{},ClearError()"
+    assert _send(dobot, "RobotMode()") == "0,{11},RobotMode()"
+    assert _send(dobot, "GetErrorID()") == "0,{[17]},GetErrorID()"
+
+
+def test_a_sticky_stop_is_still_released_by_clear_protective_stop(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17], sticky=True)
+    dobot.clear_protective_stop()
+
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+
+
+def test_clearerror_still_releases_an_emergency_stop(dobot: DobotDashboard) -> None:
+    """Regression: the sticky path must not change plain e-stop recovery."""
+    _send(dobot, "EmergencyStop()")
+
+    _send(dobot, "ClearError()")
+
+    assert _send(dobot, "RobotMode()") == "0,{5},RobotMode()"
+    assert _send(dobot, "GetErrorID()") == "0,{[]},GetErrorID()"

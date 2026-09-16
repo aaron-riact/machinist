@@ -221,6 +221,14 @@ ROBOT_MODE_COLLISION = 11
 #: a protective stop, but takes different paths to get there.
 PROTECTIVE_STOP_MODES = (ROBOT_MODE_COLLISION, ROBOT_MODE_ERROR, ROBOT_MODE_DISABLED)
 
+#: Reply ErrorID for a command refused because the robot is alarmed, as
+#: decoded by the vendor client ("The robot is in an error state").
+ERR_ROBOT_IN_ERROR_STATE = -2
+
+#: Verbs that start motion. A robot in a protective stop refuses them all,
+#: so a queued move cannot quietly resume while the stop is engaged.
+_MOTION_VERBS = frozenset({"movj", "movl", "reljointmovj", "relmovltool"})
+
 _ARM_MODE_TO_ROBOT_MODE: dict[ArmMode, int] = {
     ArmMode.IDLE: ROBOT_MODE_ENABLE,
     ArmMode.MOVING: ROBOT_MODE_RUNNING,
@@ -459,6 +467,8 @@ class DobotDashboard(LineServerDevice):
             if log_level >= 2 or verb.lower() not in self._quiet_commands:
                 print(f"[dobot/{self.name}] {line}", file=sys.stderr, flush=True)
         s = self.arm.state.snapshot()
+        if verb.lower() in _MOTION_VERBS and self._fault.active:
+            return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
         match verb.lower():
             case "enablerobot":
                 self.arm.set_servo(True); return _ok(verb, args)
@@ -470,7 +480,13 @@ class DobotDashboard(LineServerDevice):
                 return _ok(verb, args)
             case "clearerror":
                 self.arm.reset()
-                self._error_ids.clear()
+                if self._fault.active and self._fault.sticky:
+                    # The alarm cause is still present, so the controller
+                    # reports the same alarm straight back. ClearError itself
+                    # still succeeds -- the guide says to re-read RobotMode to
+                    # find out whether the robot is actually clear.
+                    return _ok(verb, args)
+                self.clear_protective_stop()
                 return _ok(verb, args)
             case "stop":
                 self.arm.stop()
