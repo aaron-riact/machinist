@@ -7,6 +7,7 @@ from machinist.transport.ethernetip import (
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
     EtherNetIPScannerConfig,
+    EtherNetIPTransport,
 )
 
 from ..conftest import free_port
@@ -129,3 +130,32 @@ def test_forward_open_t_o_api_is_read_from_the_request() -> None:
     assert _forward_open_t_o_api_us(bytes(packet)) is None
 
     assert _forward_open_t_o_api_us(b"\x00" * 40) is None
+
+
+def test_scanner_and_adapter_share_one_transport_interface() -> None:
+    scanner = EtherNetIPScanner(
+        EtherNetIPScannerConfig(host="192.0.2.10", output_length=4, input_length=4),
+        client_factory=_FakeEEIPClient,
+    )
+    adapter = EtherNetIPAdapter(
+        EtherNetIPAdapterConfig(host="127.0.0.1", output_length=4, input_length=4)
+    )
+    assert isinstance(scanner, EtherNetIPTransport)
+    assert isinstance(adapter, EtherNetIPTransport)
+
+
+def test_scanner_reports_its_peer_and_counts_connections() -> None:
+    scanner = EtherNetIPScanner(
+        EtherNetIPScannerConfig(host="192.0.2.10", output_length=4, input_length=4),
+        client_factory=_FakeEEIPClient,
+    )
+    assert scanner.peer_connected is False
+    assert scanner.connection_generation == 0
+
+    scanner.open()
+    assert scanner.peer_connected is True
+    assert scanner.connection_generation == 1
+
+    scanner.close()
+    scanner.open()
+    assert scanner.connection_generation == 2

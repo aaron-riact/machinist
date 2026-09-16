@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import threading
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -62,7 +63,43 @@ _CONNECTION_TYPES = {
 }
 
 
-class EtherNetIPScanner:
+class EtherNetIPTransport(ABC):
+    """One end of a Class 1 I/O link, seen from the device that owns it.
+
+    Both the outbound :class:`EtherNetIPScanner` and the listening
+    :class:`EtherNetIPAdapter` present the same face: open and close the
+    link, exchange the two I/O blocks, and report whether a peer is there.
+    """
+
+    @property
+    @abstractmethod
+    def connected(self) -> bool:
+        """This end is up: the scanner has a session, the adapter is listening."""
+
+    @property
+    @abstractmethod
+    def peer_connected(self) -> bool:
+        """A remote peer is exchanging I/O with us right now."""
+
+    @property
+    @abstractmethod
+    def connection_generation(self) -> int:
+        """Counts peer connections, so a reconnect is visible as a change."""
+
+    @abstractmethod
+    def open(self) -> None: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+    @abstractmethod
+    def write_output_block(self, data: bytes | bytearray) -> None: ...
+
+    @abstractmethod
+    def read_input_block(self) -> bytes: ...
+
+
+class EtherNetIPScanner(EtherNetIPTransport):
     """Owns one outbound Class 1 connection to an EtherNet/IP adapter."""
 
     def __init__(
@@ -76,10 +113,20 @@ class EtherNetIPScanner:
         self._client: Any | None = None
         self._lock = RLock()
         self._connected = False
+        self._connection_generation = 0
 
     @property
     def connected(self) -> bool:
         return self._connected
+
+    @property
+    def peer_connected(self) -> bool:
+        # A scanner only holds a session while the adapter answers.
+        return self._connected
+
+    @property
+    def connection_generation(self) -> int:
+        return self._connection_generation
 
     @property
     def last_received_at(self) -> datetime | None:
@@ -100,6 +147,7 @@ class EtherNetIPScanner:
             client.forward_open()
             self._client = client
             self._connected = True
+            self._connection_generation += 1
 
     def close(self) -> None:
         with self._lock:
@@ -164,7 +212,7 @@ class EtherNetIPScanner:
         return self._client
 
 
-class EtherNetIPAdapter:
+class EtherNetIPAdapter(EtherNetIPTransport):
     """Minimal EtherNet/IP adapter/server for Class 1 I/O."""
 
     def __init__(self, config: EtherNetIPAdapterConfig) -> None:

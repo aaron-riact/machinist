@@ -17,6 +17,7 @@ from ...transport.ethernetip import (
     EtherNetIPAdapter,
     EtherNetIPAdapterConfig,
     EtherNetIPScanner,
+    EtherNetIPTransport,
     EtherNetIPScannerConfig,
     MazakEthernetIPAdapter,
 )
@@ -297,7 +298,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._declare_signals()
 
         self._mtconnect: MTConnectAgent | None = None
-        self._ethernetip: EtherNetIPAdapter | EtherNetIPScanner | None = None
+        self._ethernetip: EtherNetIPTransport | None = None
         self._next_connect_attempt = 0.0
 
         self._initialize_defaults()
@@ -358,18 +359,13 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             active_program = self.state.program
             transport = self._ethernetip
 
-        transport_ready = bool(getattr(transport, "connected", False))
-        peer_connected = bool(
-            getattr(transport, "peer_connected", transport_ready)
-        )
+        transport_ready = transport is not None and transport.connected
+        peer_connected = transport is not None and transport.peer_connected
 
-        io = getattr(self, "io", None)
-        signals: list[DetailSignal] = []
-        if io is not None:
-            signals = [
-                DetailSignal(name=sig.name, direction=str(sig.direction), value=sig.value)
-                for sig in io
-            ]
+        signals = [
+            DetailSignal(name=sig.name, direction=str(sig.direction), value=sig.value)
+            for sig in self.io
+        ]
 
         input_fields = _field_rows(
             prefix="DI",
@@ -571,11 +567,11 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             self.emit("ethernetip.error", message=str(exc))
             return
         was_down = not self._connection_up
-        self._connection_up = bool(getattr(transport, "peer_connected", transport.connected))
+        self._connection_up = transport.peer_connected
         if was_down and self._connection_up:
             self.emit("ethernetip.connected", message="connection established")
         self.write_input_block(incoming)
-        gen = getattr(transport, "connection_generation", -1)
+        gen = transport.connection_generation
         if gen != self._last_connection_gen:
             self._last_connection_gen = gen
             self.clear_alarm()
@@ -1060,7 +1056,7 @@ def _enabled_interfaces(options: MazakSmoothOptions) -> set[str]:
 
 def _build_ethernetip_transport(
     endpoint: Endpoint, options: MazakSmoothOptions
-) -> EtherNetIPAdapter | EtherNetIPScanner:
+) -> EtherNetIPTransport:
     mode = options.ethernetip_mode
     if mode == "scanner":
         config = options.ethernetip_scanner_config
