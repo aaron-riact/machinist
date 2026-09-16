@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from machinist.core.capabilities import HasFlange, HasRegisters
 from machinist.core.config import DeviceConfig, FlangeLink, SystemConfig
 from machinist.core.device import Device
 from machinist.core.registry import DeviceRegistry
@@ -41,7 +42,7 @@ def test_world_builds_from_yaml(tmp_path: Path) -> None:
 
 
 
-class _Arm(Device):
+class _Arm(Device, HasFlange):
     kind = "fake_arm"
 
     def __init__(self, name, endpoint, bus) -> None:
@@ -52,7 +53,7 @@ class _Arm(Device):
         stop.wait()
 
 
-class _Gripper(Device):
+class _Gripper(Device, HasRegisters):
     kind = "fake_gripper"
 
     def __init__(self, name, endpoint, bus) -> None:

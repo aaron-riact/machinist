@@ -7,10 +7,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from .addressing import AddressAllocator
+from .capabilities import HasFlange, HasIO, HasRegisters
 from .config import FlangeLink, SystemConfig
 from .device import Device
 from .events import EventBus
-from .io import IOMap, SignalBank
+from .io import IOMap
 from .registry import DeviceRegistry, default_registry
 
 
@@ -74,20 +75,17 @@ def _wire_flange(link: FlangeLink, by_name: dict[str, Device]) -> None:
     if slave is None:
         raise KeyError(f"flange_link names unknown slave {link.slave!r}")
 
-    bus = getattr(master, "flange", None)
-    if bus is None:
+    if not isinstance(master, HasFlange):
         raise TypeError(f"{link.master!r} has no tool flange to wire {link.slave!r} onto")
-    registers = getattr(slave, "register_port", None)
-    if registers is None:
+    if not isinstance(slave, HasRegisters):
         raise TypeError(f"{link.slave!r} has no registers to expose on a flange")
-    bus.attach(link.slave_id, registers)
+    master.flange.attach(link.slave_id, slave.register_port)
 
 
 def _absorb_io(device: Device, io_map: IOMap) -> None:
-    """Register a device's :class:`SignalBank` with the IO map, if any."""
-    bank = getattr(device, "io", None)
-    if isinstance(bank, SignalBank):
-        io_map.adopt(bank)
+    """Register a device's :class:`SignalBank` with the IO map, if it has one."""
+    if isinstance(device, HasIO):
+        io_map.adopt(device.io)
 
 
 @contextmanager
