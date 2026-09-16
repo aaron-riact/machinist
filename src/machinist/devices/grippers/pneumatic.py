@@ -69,10 +69,8 @@ class PneumaticGripper(Device, HasIO):
         (self._is_open if target == "open" else self._is_closed).set(True)
         self.emit("settled", target=target)
 
-    def _run(self, stop: threading.Event) -> None:
-        # IO-only device: just block until shutdown.
-        self._mark_running()
-        stop.wait()
+    def _shutdown(self) -> None:
+        # IO-only device: nothing listens; just stop any in-flight settling.
         if self._timer is not None:
             self._timer.cancel()
 
