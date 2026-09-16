@@ -14,8 +14,10 @@ import socket
 import threading
 from collections.abc import Iterable
 
+from .service import Service
 
-class BroadcastServer:
+
+class BroadcastServer(Service):
     """Listen on TCP; broadcast any line to all connected clients."""
 
     def __init__(self, host: str, port: int, *, terminator: str = "\n") -> None:

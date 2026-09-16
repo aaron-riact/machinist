@@ -26,14 +26,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
-
-class SmbShare(Protocol):
-    """A running SMB share exposing a local directory."""
-
-    def serve_forever(self, ready: threading.Event | None = None) -> None: ...
-    def shutdown(self) -> None: ...
+from .service import Service
 
 
 @dataclass(slots=True)
@@ -47,7 +41,7 @@ class SmbConfig:
     smb1: bool = True
 
 
-BackendFactory = Callable[[SmbConfig], SmbShare]
+BackendFactory = Callable[[SmbConfig], Service]
 _BACKENDS: dict[str, BackendFactory] = {}
 
 
@@ -55,7 +49,7 @@ def register_backend(name: str, factory: BackendFactory) -> None:
     _BACKENDS[name] = factory
 
 
-def build_share(name: str, config: SmbConfig) -> SmbShare:
+def build_share(name: str, config: SmbConfig) -> Service:
     try:
         factory = _BACKENDS[name]
     except KeyError as exc:
@@ -68,7 +62,7 @@ def build_share(name: str, config: SmbConfig) -> SmbShare:
 # --- impacket back-end (lazy) ----------------------------------------
 
 
-def _impacket_factory(config: SmbConfig) -> SmbShare:
+def _impacket_factory(config: SmbConfig) -> Service:
     try:
         from impacket import smbserver  # type: ignore[import-untyped]
     except ImportError as exc:  # pragma: no cover
@@ -77,7 +71,7 @@ def _impacket_factory(config: SmbConfig) -> SmbShare:
             "`uv pip install impacket`"
         ) from exc
 
-    class _ImpacketShare:
+    class _ImpacketShare(Service):
         def __init__(self) -> None:
             # SimpleSMBServer binds on construction.
             self._server = smbserver.SimpleSMBServer(
@@ -113,7 +107,7 @@ for _name, _hint in [
     ("aiosmb", "aiosmb is client-only; use impacket for hosting."),
 ]:
     def _raising(_hint: str = _hint) -> BackendFactory:
-        def factory(_cfg: SmbConfig) -> SmbShare:
+        def factory(_cfg: SmbConfig) -> Service:
             raise RuntimeError(_hint)
         return factory
     register_backend(_name, _raising())

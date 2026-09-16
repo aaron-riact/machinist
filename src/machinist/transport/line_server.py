@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterable
 from typing import Protocol
 
 from .framing import Framer, TerminatorFramer
+from .service import Service
 
 Reply = Iterable[str] | str | None
 
@@ -53,7 +54,7 @@ def stateless(fn: Callable[[str], Reply]) -> SessionFactory:
     return lambda: _Stateless(fn)
 
 
-class LineServer:
+class LineServer(Service):
     """Threaded line-protocol TCP server."""
 
     def __init__(

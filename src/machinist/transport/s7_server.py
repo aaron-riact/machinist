@@ -22,7 +22,8 @@ import socket
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+
+from .service import Service
 
 BitListener = Callable[[bool], None]
 
@@ -79,12 +80,7 @@ class S7Store:
 # --- back-end protocol -------------------------------------------------
 
 
-class S7Backend(Protocol):
-    def serve_forever(self, ready: threading.Event | None = None) -> None: ...
-    def shutdown(self) -> None: ...
-
-
-BackendFactory = Callable[[str, int, S7Store], S7Backend]
+BackendFactory = Callable[[str, int, S7Store], Service]
 _BACKENDS: dict[str, BackendFactory] = {}
 
 
@@ -95,7 +91,7 @@ def register_backend(name: str, factory: BackendFactory) -> None:
 # --- stub back-end (default, always available) -------------------------
 
 
-class _StubBackend:
+class _StubBackend(Service):
     """Accept-and-park listener for reachability tests."""
 
     def __init__(self, host: str, port: int) -> None:
@@ -154,7 +150,7 @@ register_backend("stub", lambda h, p, _store: _StubBackend(h, p))
 # --- snap7 back-end (lazy) ---------------------------------------------
 
 
-def _snap7_factory(host: str, port: int, store: S7Store) -> S7Backend:
+def _snap7_factory(host: str, port: int, store: S7Store) -> Service:
     try:
         import snap7  # type: ignore[import-untyped]
         from snap7.type import Area  # type: ignore[import-untyped]
@@ -164,7 +160,7 @@ def _snap7_factory(host: str, port: int, store: S7Store) -> S7Backend:
             "`uv pip install python-snap7`"
         ) from exc
 
-    class _Snap7Backend:
+    class _Snap7Backend(Service):
         def __init__(self) -> None:
             self._srv = snap7.server.Server()
             # Pre-register any already-populated DBs; hot-growing DBs
@@ -194,7 +190,7 @@ register_backend("snap7", _snap7_factory)
 # --- public façade -----------------------------------------------------
 
 
-class S7Server:
+class S7Server(Service):
     """Pluggable S7 server. Back-end picked via the ``backend`` arg."""
 
     def __init__(

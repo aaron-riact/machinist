@@ -24,6 +24,8 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from .service import Service
+
 NodeReaders = Mapping[str, Callable[[], object]]
 
 DEFAULT_URI = "urn:machinist"
@@ -53,7 +55,7 @@ def _ensure_loop() -> None:
         t.start()
 
 
-class OpcUaServer:
+class OpcUaServer(Service):
     """Publish a device's state as OPC-UA variables on a background loop."""
 
     def __init__(

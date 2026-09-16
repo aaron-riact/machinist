@@ -21,6 +21,7 @@ from .focas import (
     CLOSE_REQ,
     CLOSE_RESP,
 )
+from .service import Service
 
 FocasHandler = Callable[[FocasSubpacket], bytes]
 ConnectHandler = Callable[[], bytes | None]
@@ -29,7 +30,7 @@ DisconnectHandler = Callable[[], None]
 _FRAME_HEADER = struct.Struct(">4sHHH")  # sync, version, type, length
 
 
-class FocasServer:
+class FocasServer(Service):
     """Threaded TCP server speaking the FOCAS wire protocol.
 
     Usage — device wires callbacks once, then calls ``serve_forever``::

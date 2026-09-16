@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
 
+from .service import Service
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessData:
@@ -36,7 +38,7 @@ class IOLinkPort(Protocol):
     def write_process_data(self, data: ProcessData) -> None: ...
 
 
-class IOLinkHttpMaster:
+class IOLinkHttpMaster(Service):
     """Single-port (port 1) IO-Link master HTTP gateway."""
 
     def __init__(self, *, host: str, port: int, port_device: IOLinkPort) -> None:

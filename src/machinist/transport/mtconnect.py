@@ -23,8 +23,10 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 
+from .service import Service
 
-class MTConnectAgent:
+
+class MTConnectAgent(Service):
     """HTTP server that renders a :class:`MachineState` as MTConnect XML."""
 
     def __init__(self, host: str, port: int, render: Callable[[str], str]) -> None:

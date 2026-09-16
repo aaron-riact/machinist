@@ -23,6 +23,7 @@ import threading
 from collections.abc import Callable
 
 from .registers import ReadCallback, RegisterPort, WriteCallback
+from .service import Service
 
 __all__ = ["HoldingRegisterServer", "ReadCallback", "RegisterPort", "WriteCallback"]
 
@@ -37,7 +38,7 @@ _EX_ILLEGAL_FUNCTION = 0x01
 _EX_ILLEGAL_DATA_ADDRESS = 0x02
 
 
-class HoldingRegisterServer:
+class HoldingRegisterServer(Service):
     """Threaded Modbus/TCP server exposing a holding-register callback."""
 
     def __init__(
