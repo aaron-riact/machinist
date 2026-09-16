@@ -22,11 +22,9 @@ def _echo(frame: bytes) -> bytes:
 @pytest.mark.parametrize("name", ["tcp", "udp"])
 def test_request_response_round_trip(name: str) -> None:
     port = free_port()
-    server = open_server(name, "127.0.0.1", port)
+    server = open_server(name, "127.0.0.1", port, _echo)
     ready = threading.Event()
-    thread = threading.Thread(
-        target=server.serve_forever, args=(_echo, ready), daemon=True
-    )
+    thread = threading.Thread(target=server.serve_forever, args=(ready,), daemon=True)
     thread.start()
     assert ready.wait(timeout=2.0)
     client = open_transport(name, "127.0.0.1", port)
@@ -43,7 +41,7 @@ def test_unknown_transport_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown transport"):
         open_transport("carrier-pigeon", "127.0.0.1", 1)
     with pytest.raises(ValueError, match="unknown transport"):
-        open_server("carrier-pigeon", "127.0.0.1", 1)
+        open_server("carrier-pigeon", "127.0.0.1", 1, _echo)
 
 
 def test_transports_lists_available() -> None:

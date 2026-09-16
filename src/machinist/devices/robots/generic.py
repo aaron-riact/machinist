@@ -13,7 +13,6 @@ without touching this device.
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -21,10 +20,10 @@ from typing import TYPE_CHECKING, Any
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.registry import register
-from ...kinematics.api import DHParams, KinematicsOptions
 from ...core.types import Endpoint
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...srci import SrciServer
-from ...transport.message import FrameHandler, MessageServer, open_server
+from ...transport.message import FrameHandler, open_server
 from .arm import ArmOptions, HasArm, RobotArm, arm_from_options, arm_readers
 
 if TYPE_CHECKING:
@@ -68,12 +67,11 @@ class RobotDevice(Device, HasArm):
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: RobotDeviceOptions,
-        *, arm: RobotArm, server: MessageServer, opcua: OpcUaServer | None = None,
+        *, arm: RobotArm,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm
-        self._server = server
-        self._opcua = opcua
+        self.add_service(self.arm)
         protocol = options.protocol
         try:
             factory = _PROTOCOLS[protocol]
@@ -83,48 +81,16 @@ class RobotDevice(Device, HasArm):
             ) from None
         self._handler = factory(self.arm)
 
-    def _run(self, stop: threading.Event) -> None:
-        self.arm.start_ticker()
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._server.serve_forever, args=(self._dispatch, ready), daemon=True
-        )
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        opcua_thread = self._start_opcua()
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
-        if self._opcua is not None:
-            self._opcua.shutdown()
-        if opcua_thread is not None:
-            opcua_thread.join(timeout=2.0)
+    def dispatch(self, frame: bytes) -> bytes:
+        """Answer one request frame, reporting the exchange on the event bus.
 
-    def _start_opcua(self) -> threading.Thread | None:
-        if self._opcua is None:
-            return None
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._opcua.serve_forever, args=(ready,), daemon=True
-        )
-        thread.start()
-        ready.wait(timeout=5.0)
-        self.emit("opcua", state="ready")
-        return thread
-
-    def _dispatch(self, frame: bytes) -> bytes:
+        This is the :data:`FrameHandler` the factory hands to the message
+        server.
+        """
         self.emit("rx", bytes=len(frame))
         reply = self._handler(frame)
         self.emit("tx", bytes=len(reply))
         return reply
-
-    def _shutdown(self) -> None:
-        self._server.shutdown()
-        if self._opcua is not None:
-            self._opcua.shutdown()
-        self.arm.stop_ticker()
 
 
 def _maybe_opcua(
@@ -158,6 +124,9 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         dh_params=dh,
         urdf=opt.urdf,
     ))
-    server = open_server(opt.transport, endpoint.host, endpoint.port)
+    device = RobotDevice(name, endpoint, bus, opt, arm=arm)
+    device.add_service(open_server(opt.transport, endpoint.host, endpoint.port, device.dispatch))
     opcua = _maybe_opcua(name, endpoint.host, opt.opcua, arm)
-    return RobotDevice(name, endpoint, bus, opt, arm=arm, server=server, opcua=opcua)
+    if opcua is not None:
+        device.add_service(opcua)
+    return device

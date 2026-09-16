@@ -74,11 +74,9 @@ def test_client_server_end_to_end(transport: str) -> None:
     arm.start_ticker()
     srci = SrciServer(arm)
     port = free_port()
-    channel = open_server(transport, "127.0.0.1", port)
+    channel = open_server(transport, "127.0.0.1", port, srci.handle)
     ready = threading.Event()
-    thread = threading.Thread(
-        target=channel.serve_forever, args=(srci.handle, ready), daemon=True
-    )
+    thread = threading.Thread(target=channel.serve_forever, args=(ready,), daemon=True)
     thread.start()
     assert ready.wait(timeout=2.0)
     try:

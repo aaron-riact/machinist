@@ -3,8 +3,8 @@
 :class:`SrciServer` is the bridge between the wire protocol and the
 shared :class:`~machinist.devices.robots.arm.RobotArm` physics. It is
 deliberately transport-free: feed it a request frame, get a response
-frame. A device wraps it with a :class:`MessageServer`; tests can drive
-it with raw bytes.
+frame. A device serves it over a message server from
+:mod:`machinist.transport.message`; tests can drive it with raw bytes.
 """
 
 from __future__ import annotations
