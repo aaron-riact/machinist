@@ -9,7 +9,6 @@ import pytest
 
 import machinist.devices  # noqa: F401  (import = device-kind registration)
 from machinist.core.config import DeviceConfig, IOLink, SystemConfig
-from machinist.core.events import Event
 from machinist.core.world import World, WorldBuilder
 from machinist.web.server import WebServer, event_to_dict
 
@@ -63,7 +62,7 @@ def _post(url: str, payload: dict) -> tuple[int, dict]:
 
 
 def test_event_to_dict_is_json_able() -> None:
-    frame = event_to_dict(Event(device="io1", kind="rx", payload={"line": "x"}, timestamp=1.0))
+    frame = event_to_dict(Note(device="io1", name="rx", data={"line": "x"}, timestamp=1.0))
     assert frame == {"device": "io1", "kind": "rx", "payload": {"line": "x"}, "timestamp": 1.0}
     json.dumps(frame)  # must not raise
 

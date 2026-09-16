@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from machinist.core.device import Device
-from machinist.core.events import Event, EventBus
+from machinist.core.events import Event, EventBus, LifecycleChanged
 from machinist.core.types import DeviceState, Endpoint
 from machinist.transport.service import Service
 
@@ -69,6 +69,19 @@ def test_services_are_served_then_shut_down_in_order() -> None:
     device.stop()
     assert first.shut_down.is_set() and second.shut_down.is_set()
     assert device.lifecycle is DeviceState.STOPPED
+
+
+@pytest.mark.timeout(5)
+def test_lifecycle_moves_are_published_as_typed_events() -> None:
+    events: list[Event] = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+    device = _device(bus=bus)
+    device.start()
+    assert device.wait_ready(timeout=2.0)
+    device.stop()
+    states = [e.state for e in events if isinstance(e, LifecycleChanged)]
+    assert states == [DeviceState.RUNNING, DeviceState.STOPPED]
 
 
 @pytest.mark.timeout(5)

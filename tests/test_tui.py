@@ -5,10 +5,23 @@ from types import SimpleNamespace
 
 from textual.widgets._data_table import ColumnKey, RowKey
 
-from machinist.core.events import Event
+from machinist.core.events import Event, LifecycleChanged, Note
 from machinist.core.types import DeviceState
 from machinist.devices.machines.state import MachineState, Toggle
 from machinist.devices.robots.arm import RobotArm
+from machinist.tui.app import (
+    MachinistApp,
+    _arm_summary,
+    _cmd_fault,
+    _cmd_ls,
+    _cmd_run,
+    _detail_header,
+    _format_event,
+    _machine_summary,
+    _paint_lifecycle,
+    _snapshot_summary,
+)
+
 from .fakes import (
     FakeArmDevice,
     FakeDevice,
@@ -18,22 +31,10 @@ from .fakes import (
     FakeProgramDevice,
     RecordingDobot,
 )
-from machinist.tui.app import (
-    MachinistApp,
-    _arm_summary,
-    _cmd_fault,
-    _cmd_ls,
-    _cmd_run,
-    _detail_header,
-    _snapshot_summary,
-    _format_event,
-    _machine_summary,
-    _paint_lifecycle,
-)
 
 
 def test_format_event_is_compact_and_deterministic() -> None:
-    ev = Event(device="ur1", kind="rx", payload={"line": "power on"}, timestamp=1234.567)
+    ev = Note(device="ur1", name="rx", data={"line": "power on"}, timestamp=1234.567)
     out = _format_event(ev)
     assert "ur1" in out
     assert "rx" in out
@@ -126,7 +127,7 @@ def test_drain_refreshes_detail_even_with_no_events() -> None:
 
 def test_drain_refreshes_detail_on_event_for_selected_device() -> None:
     q: queue.Queue[Event] = queue.Queue()
-    q.put(Event(device="robot1", kind="moving", payload={"diameter_mm": 42.0}))
+    q.put(Note(device="robot1", name="moving", data={"diameter_mm": 42.0}))
     app, calls = _drain_app(q)
 
     MachinistApp._drain(app)
@@ -137,7 +138,7 @@ def test_drain_refreshes_detail_on_event_for_selected_device() -> None:
 def test_drain_refreshes_detail_for_an_unselected_device_too() -> None:
     """A poll cannot know which device changed, and does not need to."""
     q: queue.Queue[Event] = queue.Queue()
-    q.put(Event(device="other", kind="moving", payload={}))
+    q.put(Note(device="other", name="moving"))
     app, calls = _drain_app(q)
 
     MachinistApp._drain(app)
@@ -147,7 +148,7 @@ def test_drain_refreshes_detail_for_an_unselected_device_too() -> None:
 
 def test_drain_still_rebuilds_the_device_table_on_a_state_event() -> None:
     q: queue.Queue[Event] = queue.Queue()
-    q.put(Event(device="robot1", kind="state", payload={}))
+    q.put(LifecycleChanged(device="robot1", state=DeviceState.RUNNING))
     app, calls = _drain_app(q)
 
     MachinistApp._drain(app)

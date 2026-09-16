@@ -28,7 +28,7 @@ from typing import Any, TypedDict
 
 from ..transport.service import Service
 from .capabilities import HasIO
-from .events import Event, EventBus
+from .events import Event, EventBus, LifecycleChanged, Note
 from .io import Direction, SignalBank
 from .types import DeviceState, Endpoint
 
@@ -126,9 +126,16 @@ class Device(ABC):
         """Block until the device has bound its listener(s)."""
         return self._ready.wait(timeout=timeout)
 
+    def publish(self, event: Event) -> None:
+        """Put a typed event about this device on the bus."""
+        self._bus.publish(event)
+
     def emit(self, kind: str, **payload: Any) -> None:
-        """Publish a status :class:`Event` for this device."""
-        self._bus.publish(Event(device=self.name, kind=kind, payload=payload))
+        """Publish an untyped :class:`Note` about this device (log-only)."""
+        self._bus.publish(Note(device=self.name, name=kind, data=payload))
+
+    def _publish_lifecycle(self) -> None:
+        self.publish(LifecycleChanged(device=self.name, state=self.lifecycle))
 
     def build_detail(self) -> DeviceDetail:
         """Assemble a normalized detail dict for display / transport.
@@ -232,7 +239,7 @@ class Device(ABC):
             if self._lifecycle is DeviceState.STARTING:
                 self._lifecycle = DeviceState.RUNNING
         self._ready.set()
-        self.emit("state", state=str(self._lifecycle))
+        self._publish_lifecycle()
 
     # ----- internals ---------------------------------------------------
 
@@ -244,8 +251,8 @@ class Device(ABC):
                 self._lifecycle = DeviceState.FAULTED
             self._ready.set()
             self.emit("error", message=str(exc))
-            self.emit("state", state=str(self._lifecycle))
+            self._publish_lifecycle()
             return
         with self._lifecycle_lock:
             self._lifecycle = DeviceState.STOPPED
-        self.emit("state", state=str(self._lifecycle))
+        self._publish_lifecycle()
