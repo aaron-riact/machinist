@@ -9,10 +9,11 @@ import pytest
 
 import machinist.devices  # noqa: F401  (import = device-kind registration)
 from machinist.core.config import DeviceConfig, IOLink, SystemConfig
+from machinist.core.events import Note
 from machinist.core.world import World, WorldBuilder
-from machinist.web.server import WebServer, event_to_dict
+from machinist.web.server import WebServer, changed_views, device_frame, event_to_dict
 
-from .conftest import wait_running
+from .conftest import free_port, wait_running
 
 
 def _world() -> World:
@@ -20,7 +21,8 @@ def _world() -> World:
         SystemConfig(
             devices=(
                 DeviceConfig(
-                    name="io1", kind="weidmuller_ur20", options={"inputs": 8, "outputs": 8}
+                    name="io1", kind="weidmuller_ur20", port=free_port(),
+                    options={"inputs": 8, "outputs": 8},
                 ),
                 DeviceConfig(
                     name="g1", kind="pneumatic_gripper", options={"settle_seconds": 0.01}
@@ -99,18 +101,57 @@ def test_unknown_static_path_is_404(server: WebServer) -> None:
     assert excinfo.value.code == 404
 
 
-def test_event_stream_pushes_live_events(server: WebServer) -> None:
+def _frames(stream, *, want: int = 0, until=None, budget: int = 200) -> list[dict]:
+    """Read SSE frames until *want* have arrived or *until* accepts one."""
+    frames: list[dict] = []
+    for _ in range(budget):
+        chunk = stream.readline()
+        if not chunk.startswith(b"data:"):
+            continue
+        frame = json.loads(chunk[len(b"data:") :].strip())
+        frames.append(frame)
+        if (want and len(frames) >= want) or (until is not None and until(frame)):
+            break
+    return frames
+
+
+def test_event_stream_opens_with_a_device_frame_per_device(server: WebServer) -> None:
     req = urllib.request.Request(f"{server.url}/api/events")
     with urllib.request.urlopen(req, timeout=5) as stream:
-        # Trigger an event by driving a signal through the command endpoint.
+        frames = _frames(stream, want=2)
+    assert [f["kind"] for f in frames] == ["device", "device"]
+    assert {f["device"]["name"] for f in frames} == {"io1", "g1"}
+
+
+def test_event_stream_pushes_a_signal_change_as_log_and_device_frames(server: WebServer) -> None:
+    req = urllib.request.Request(f"{server.url}/api/events")
+    with urllib.request.urlopen(req, timeout=5) as stream:
+        _frames(stream, want=2)  # the opening snapshot
         _post(f"{server.url}/api/command", {"command": "set io1.o5 1"})
-        line = b""
-        for _ in range(50):
-            chunk = stream.readline()
-            if chunk.startswith(b"data:"):
-                line = chunk
-                break
-        assert line.startswith(b"data:")
-        frame = json.loads(line[len(b"data:") :].strip())
-        assert "device" in frame
-        assert "kind" in frame
+        frames = _frames(
+            stream, until=lambda f: f["kind"] == "device" and f["device"]["name"] == "io1"
+        )
+    kinds = {f["kind"] for f in frames}
+    assert "signal" in kinds, "the log hears the signal"
+    io1 = [f["device"] for f in frames if f["kind"] == "device" and f["device"]["name"] == "io1"]
+    assert io1, "the projection re-sent the device that changed"
+    assert next(s for s in io1[-1]["signals"] if s["name"] == "o5")["value"] is True
+
+
+def test_changed_views_names_only_what_moved() -> None:
+    from machinist.projection import DeviceView, FleetState
+
+    a = DeviceView(name="a", kind="k", endpoint="e")
+    b = DeviceView(name="b", kind="k", endpoint="e")
+    before = FleetState.of([a, b])
+    after = before.with_device(DeviceView(name="b", kind="k", endpoint="e", fault="x"))
+    assert [v.name for v in changed_views(before, after)] == ["b"]
+    assert changed_views(FleetState(), before) == [a, b]
+
+
+def test_device_frame_is_json_able() -> None:
+    from machinist.projection import DeviceView
+
+    frame = device_frame(DeviceView(name="a", kind="k", endpoint="e"))
+    assert frame["kind"] == "device" and frame["device"]["name"] == "a"
+    json.dumps(frame)

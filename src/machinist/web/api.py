@@ -1,14 +1,13 @@
 """Pure, IO-free serialization and command dispatch for the web UI.
 
-Everything here operates on an in-memory :class:`~machinist.core.world.World`
-and returns plain JSON-able ``dict``/``list`` structures (or accepts a command
-string and mutates the world). There is deliberately **no** HTTP, sockets or
-threading in this module: that keeps it unit-testable in microseconds, mirroring
-how :mod:`machinist.tui.app`'s helpers are tested.
+Serialization turns the :class:`~machinist.projection.FleetState` (or one
+:class:`~machinist.projection.DeviceView`) into plain JSON-able dicts. It
+never touches a device: what the browser sees is exactly what the
+projection reduced from the event stream, the same facts the TUI paints.
 
-The serialization intentionally produces the same facts the TUI renders —
-lifecycle, IO grouped by direction, robot-arm snapshot, CNC machine state — so
-the browser and the terminal stay feature-equivalent.
+Command dispatch takes a command string and applies it to the
+:class:`~machinist.core.world.World`. There is deliberately **no** HTTP,
+sockets or threading in this module, so it is unit-testable in microseconds.
 """
 
 from __future__ import annotations
@@ -16,45 +15,45 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from ..core.capabilities import HasIO, HasPrograms
+from ..core.capabilities import HasPrograms
 from ..core.device import Device
 from ..core.world import World
-from ..devices.machines.state import HasMachineState, MachineView
-from ..devices.robots.arm import HasArm, RobotArm
+from ..devices.machines.state import MachineView
+from ..devices.robots.arm import ArmStateView, HasArm, RobotArm
 from ..devices.robots.dobot import PROTECTIVE_STOP_MODE_BY_NAME, DobotDashboard, EnableFailure
+from ..projection import DeviceView, FleetState
 
 
-def snapshot_world(world: World) -> dict[str, Any]:
+def snapshot_world(state: FleetState) -> dict[str, Any]:
     """Serialize the whole fleet into a JSON-able snapshot."""
-    return {"devices": [snapshot_device(d) for d in world.devices]}
+    return {"devices": [view_to_dict(view) for view in state.devices.values()]}
 
 
-def snapshot_device(device: Device) -> dict[str, Any]:
-    """Serialize a single device, including any arm/machine/IO it exposes."""
+def view_to_dict(view: DeviceView) -> dict[str, Any]:
+    """Serialize one device view, including any arm/machine/IO it carries."""
     snap: dict[str, Any] = {
-        "name": device.name,
-        "kind": device.kind,
-        "endpoint": str(device.endpoint),
-        "lifecycle": str(device.lifecycle),
-    }
-    if isinstance(device, HasIO):
-        snap["signals"] = [
+        "name": view.name,
+        "kind": view.kind,
+        "endpoint": view.endpoint,
+        "lifecycle": str(view.lifecycle),
+        "signals": [
             {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
-            for sig in device.io
-        ]
-    panel = device.build_detail()
-    snap["modbus" if panel.mode == "modbus" else "ethernetip"] = asdict(panel)
-    if isinstance(device, HasArm):
-        snap["arm"] = _arm_snapshot(device.arm)
-    if isinstance(device, HasMachineState):
-        snap["machine"] = _machine_snapshot(device.state.view)
-    if isinstance(device, HasPrograms):
-        snap["programs"] = device.programs.list()
+            for sig in view.signals.values()
+        ],
+    }
+    snap["modbus" if view.panel.mode == "modbus" else "ethernetip"] = asdict(view.panel)
+    if view.arm is not None:
+        snap["arm"] = _arm_snapshot(view.arm)
+    if view.machine is not None:
+        snap["machine"] = _machine_snapshot(view.machine)
+    if view.programs is not None:
+        snap["programs"] = list(view.programs)
+    if view.fault is not None:
+        snap["fault"] = view.fault
     return snap
 
 
-def _arm_snapshot(arm: RobotArm) -> dict[str, Any]:
-    s = arm.state.snapshot()
+def _arm_snapshot(s: ArmStateView) -> dict[str, Any]:
     return {
         "mode": str(s.mode),
         "servo_on": s.servo_on,

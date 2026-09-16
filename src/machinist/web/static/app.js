@@ -2,11 +2,16 @@
  * Machinist web UI — front-end controller.
  *
  * Plain ES modules + a handful of custom elements (light-DOM Web Components),
- * no framework, no build step. State arrives two ways:
+ * no framework, no build step. The page is a projection of the fleet:
  *
- *   • a 4 Hz poll of GET /api/state    → smooth live joints / signals / cycle
- *   • an EventSource on /api/events    → the scrolling event log + connection
- *     liveness (SSE is push, so it doubles as a heartbeat)
+ *   • GET /api/state once, at boot     → the fleet as the server's projection
+ *     holds it right now
+ *   • an EventSource on /api/events    → "device" frames replace one device's
+ *     view whenever it changed (coalesced server-side to ~10 Hz); every other
+ *     frame is a line for the scrolling event log. SSE is push, so it doubles
+ *     as a heartbeat for connection liveness.
+ *
+ * Nothing is polled. A command's effect arrives back as device frames.
  *
  * Commands (button clicks, signal toggles, the command bar) POST to
  * /api/command and reuse the exact verbs the Textual TUI accepts.
@@ -36,6 +41,11 @@ const store = {
   selected: null,
   byName(name) {
     return this.devices.find((d) => d.name === name) ?? null;
+  },
+  upsert(device) {
+    const i = this.devices.findIndex((d) => d.name === device.name);
+    if (i === -1) this.devices.push(device);
+    else this.devices[i] = device;
   },
 };
 
@@ -328,7 +338,6 @@ async function run(command) {
   } catch (err) {
     flashStatus(String(err));
   }
-  refresh();
 }
 
 function selectDevice(name) {
@@ -344,8 +353,6 @@ function selectDevice(name) {
 /* ---- state refresh + rendering --------------------------------------- */
 let lastListSig = "";
 let lastDetailSig = "";
-let refreshQueued = false;
-let refreshRunning = false;
 
 function renderList(force) {
   const sig =
@@ -372,33 +379,19 @@ async function refresh() {
     return;
   }
   store.devices = snap.devices;
-  if (!store.selected && snap.devices.length) store.selected = snap.devices[0].name;
-  fleetCountEl.textContent = `${snap.devices.length} devices`;
+  render();
+}
+
+function render() {
+  if (!store.selected && store.devices.length) store.selected = store.devices[0].name;
+  fleetCountEl.textContent = `${store.devices.length} devices`;
   renderList(false);
   renderDetail(false);
 }
 
-function shouldRefreshFromEvent(ev) {
-  if (ev.kind === "state" || ev.kind === "snapshot") return true;
-  return ev.device === store.selected && ev.kind !== "rx" && ev.kind !== "tx";
-}
-
-function requestRefresh() {
-  refreshQueued = true;
-  if (refreshRunning) return;
-  void drainRefreshQueue();
-}
-
-async function drainRefreshQueue() {
-  refreshRunning = true;
-  try {
-    while (refreshQueued) {
-      refreshQueued = false;
-      await refresh();
-    }
-  } finally {
-    refreshRunning = false;
-  }
+function applyDeviceFrame(frame) {
+  store.upsert(frame.device);
+  render();
 }
 
 function setConn(state) {
@@ -422,8 +415,8 @@ function connectStream() {
   source.onerror = () => setConn("lost");
   source.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    logEl.push(ev);
-    if (shouldRefreshFromEvent(ev)) requestRefresh();
+    if (ev.kind === "device") applyDeviceFrame(ev);
+    else logEl.push(ev);
   };
 }
 

@@ -11,9 +11,16 @@ Routes
 ------
 ``GET  /``               → ``static/index.html``
 ``GET  /<asset>``        → ``static/<asset>`` (js/css)
-``GET  /api/state``      → full :func:`~machinist.web.api.snapshot_world`
-``GET  /api/events``     → SSE stream of live :class:`Event` objects
+``GET  /api/state``      → the :class:`~machinist.projection.FleetState`, serialized
+``GET  /api/events``     → SSE stream: log events, plus a ``device`` frame carrying a
+                           device's full view whenever the projection changed it
 ``POST /api/command``    → ``{"command": "..."}`` → dispatch result
+
+The browser is a projection too: it takes ``/api/state`` once, then applies
+``device`` frames. Those are coalesced to at most one push per device every
+:data:`_DEVICE_PUSH_INTERVAL` seconds, so a 50 Hz arm tick becomes a 10 Hz
+stream. Log events (notes, lifecycle, faults, signals) pass through as they
+happen.
 
 The server runs each request on its own thread (``ThreadingHTTPServer``);
 the SSE handler simply blocks on a per-client queue fed by an ``EventBus``
@@ -26,15 +33,18 @@ import contextlib
 import json
 import queue
 import threading
+import time
 from dataclasses import asdict, is_dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from ..core.events import Event
+from ..core.events import DeviceFaulted, Event, LifecycleChanged, Note
+from ..core.io import SignalChanged
 from ..core.world import World
-from .api import CommandError, dispatch_command, snapshot_world
+from ..projection import DeviceView, FleetState, Projection
+from .api import CommandError, dispatch_command, snapshot_world, view_to_dict
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -50,6 +60,12 @@ _CONTENT_TYPES = {
 #: alive even when a fleet is momentarily idle.
 _SSE_HEARTBEAT = 15.0
 
+#: Minimum spacing between ``device`` frames for one client (seconds).
+_DEVICE_PUSH_INTERVAL = 0.1
+
+#: Event types the browser's log shows. State events are carried by ``device`` frames.
+_LOGGED = (Note, LifecycleChanged, DeviceFaulted, SignalChanged)
+
 
 def event_to_dict(event: Event) -> dict[str, Any]:
     """Serialize an :class:`Event` to a JSON-able dict for the SSE feed."""
@@ -61,12 +77,25 @@ def event_to_dict(event: Event) -> dict[str, Any]:
     }
 
 
+def device_frame(view: DeviceView) -> dict[str, Any]:
+    """The SSE frame that replaces one device in the browser's projection."""
+    return {"kind": "device", "device": view_to_dict(view), "timestamp": time.time()}
+
+
+def changed_views(before: FleetState, after: FleetState) -> list[DeviceView]:
+    """The device views *after* holds that *before* did not (by identity)."""
+    return [
+        view for name, view in after.devices.items() if before.devices.get(name) is not view
+    ]
+
+
 class WebServer:
     """Owns the HTTP server thread and the world it exposes."""
 
     def __init__(self, world: World, *, host: str = "127.0.0.1", port: int = 8080) -> None:
         self.world = world
-        self._httpd = ThreadingHTTPServer((host, port), _make_handler(world))
+        self.projection = Projection(world)
+        self._httpd = ThreadingHTTPServer((host, port), _make_handler(world, self.projection))
         self._httpd.daemon_threads = True
         self._thread: threading.Thread | None = None
 
@@ -93,6 +122,7 @@ class WebServer:
         self._httpd.server_close()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
+        self.projection.close()
 
     def serve_forever(self) -> None:
         """Block in the calling thread until interrupted."""
@@ -106,8 +136,8 @@ def serve(world: World, *, host: str = "127.0.0.1", port: int = 8080) -> WebServ
     return server
 
 
-def _make_handler(world: World) -> type[BaseHTTPRequestHandler]:
-    """Bind a request-handler class to a specific world."""
+def _make_handler(world: World, projection: Projection) -> type[BaseHTTPRequestHandler]:
+    """Bind a request-handler class to a specific world and its projection."""
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -120,7 +150,7 @@ def _make_handler(world: World) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
             if path == "/api/state":
-                self._send_json(snapshot_world(world))
+                self._send_json(snapshot_world(projection.state))
             elif path == "/api/events":
                 self._stream_events()
             else:
@@ -173,32 +203,56 @@ def _make_handler(world: World) -> type[BaseHTTPRequestHandler]:
 
         def _stream_events(self) -> None:
             inbox: queue.Queue[Event] = queue.Queue(maxsize=4096)
+            moved = threading.Event()
 
             def push(event: Event) -> None:
-                with contextlib.suppress(queue.Full):
-                    inbox.put_nowait(event)
+                if isinstance(event, _LOGGED):
+                    with contextlib.suppress(queue.Full):
+                        inbox.put_nowait(event)
 
-            unsubscribe = world.bus.subscribe(push)
+            unsubscribe_bus = world.bus.subscribe(push)
+            unsubscribe_projection = projection.subscribe(lambda _state: moved.set())
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
+            sent = FleetState()  # what this client has: nothing yet
+            last_push = last_write = time.monotonic()
             try:
+                # Open with the whole fleet, so the client's projection starts complete.
+                sent = self._push_changed(sent, projection.state)
                 while True:
+                    now = time.monotonic()
+                    if moved.is_set() and now - last_push >= _DEVICE_PUSH_INTERVAL:
+                        moved.clear()
+                        sent = self._push_changed(sent, projection.state)
+                        last_push = last_write = now
                     try:
-                        event = inbox.get(timeout=_SSE_HEARTBEAT)
+                        event = inbox.get(timeout=_DEVICE_PUSH_INTERVAL)
                     except queue.Empty:
-                        self.wfile.write(b": keep-alive\n\n")
-                        self.wfile.flush()
+                        if now - last_write >= _SSE_HEARTBEAT:
+                            self.wfile.write(b": keep-alive\n\n")
+                            self.wfile.flush()
+                            last_write = now
                         continue
-                    frame = json.dumps(event_to_dict(event), default=_json_default)
-                    self.wfile.write(f"data: {frame}\n\n".encode())
-                    self.wfile.flush()
+                    self._write_frame(event_to_dict(event))
+                    last_write = time.monotonic()
             except (BrokenPipeError, ConnectionResetError, ValueError):
                 pass  # client went away
             finally:
-                unsubscribe()
+                unsubscribe_bus()
+                unsubscribe_projection()
+
+        def _push_changed(self, sent: FleetState, state: FleetState) -> FleetState:
+            for view in changed_views(sent, state):
+                self._write_frame(device_frame(view))
+            return state
+
+        def _write_frame(self, frame: dict[str, Any]) -> None:
+            data = json.dumps(frame, default=_json_default)
+            self.wfile.write(f"data: {data}\n\n".encode())
+            self.wfile.flush()
 
     return Handler
 

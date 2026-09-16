@@ -9,14 +9,15 @@ from machinist.core.panel import Field, Panel
 from machinist.core.world import World, WorldBuilder
 from machinist.devices.machines.state import MachineState
 from machinist.devices.robots.arm import RobotArm
+from machinist.projection import DeviceView, seed
 from machinist.web.api import (
     CommandError,
     dispatch_command,
-    snapshot_device,
     snapshot_world,
+    view_to_dict,
 )
 
-from .fakes import FakeArmDevice, FakeDevice, FakeMachineDevice, RecordingDobot
+from .fakes import RecordingDobot
 
 
 def _gripper_world() -> World:
@@ -32,34 +33,37 @@ def _gripper_world() -> World:
 # --- serialization ------------------------------------------------------
 
 
-def test_snapshot_device_reports_core_identity() -> None:
-    device = FakeDevice("ur1", kind="ur_dashboard")
-    snap = snapshot_device(device)
+def _view(name: str = "ur1", kind: str = "ur_dashboard", **fields: object) -> DeviceView:
+    return DeviceView(name=name, kind=kind, endpoint="127.0.0.1:29999", **fields)  # type: ignore[arg-type]
+
+
+def test_view_to_dict_reports_core_identity() -> None:
+    snap = view_to_dict(_view())
     assert snap["name"] == "ur1"
     assert snap["kind"] == "ur_dashboard"
     assert snap["endpoint"] == "127.0.0.1:29999"
     assert snap["lifecycle"] == "created"
+    assert snap["signals"] == []
     assert snap["ethernetip"]["mode"] == "io"  # the plain panel of a device with nothing to add
+    assert "arm" not in snap and "machine" not in snap and "programs" not in snap
 
 
-def test_snapshot_device_includes_arm_snapshot() -> None:
+def test_view_to_dict_includes_arm_snapshot() -> None:
     arm = RobotArm(joint_count=6)
     arm.estop()
-    device = FakeArmDevice("arm1", arm=arm)
-    snap = snapshot_device(device)
+    snap = view_to_dict(_view("arm1", "robot", arm=arm.state.view))
     assert snap["arm"]["mode"] == "estopped"
     assert snap["arm"]["estopped"] is True
     assert len(snap["arm"]["joints"]) == 6
     assert len(snap["arm"]["pose"]) == 6
 
 
-def test_snapshot_device_includes_machine_state() -> None:
+def test_view_to_dict_includes_machine_state() -> None:
     state = MachineState()
     state.update(program="O0001\nG0 X0", spindle_rpm=1500.0, tool=3, parts=7)
     state.set_door("main", open=True)
     state.move_to(x=12.0)
-    device = FakeMachineDevice("mill", state=state)
-    machine = snapshot_device(device)["machine"]
+    machine = view_to_dict(_view("mill", "haas_ngc", machine=state.view))["machine"]
     assert machine["program"] == "O0001"
     assert machine["doors"] == {"main": True}
     assert machine["spindle_rpm"] == 1500.0
@@ -68,37 +72,32 @@ def test_snapshot_device_includes_machine_state() -> None:
     assert machine["position"]["x"] == 12.0
 
 
-def test_snapshot_device_includes_ethernetip_breakdown() -> None:
-    device = FakeDevice(
-        "smooth",
-        kind="mazak_smooth",
-        detail=Panel(
-            mode="adapter",
-            transport_ready=True,
-            peer_connected=False,
-            input_block_hex="00 00",
-            output_block_hex="01 00",
-            input_fields=(Field("DI100", "Target work number data"),),
-            output_fields=(Field("DO100", "Current work number"),),
-            derived_fields=(Field("STATE", "Alarm message"),),
-        ),
+def test_view_to_dict_includes_ethernetip_breakdown() -> None:
+    panel = Panel(
+        mode="adapter",
+        transport_ready=True,
+        peer_connected=False,
+        input_block_hex="00 00",
+        output_block_hex="01 00",
+        input_fields=(Field("DI100", "Target work number data"),),
+        output_fields=(Field("DO100", "Current work number"),),
+        derived_fields=(Field("STATE", "Alarm message"),),
     )
-    snap = snapshot_device(device)
+    snap = view_to_dict(_view("smooth", "mazak_smooth", panel=panel))
     assert snap["ethernetip"]["mode"] == "adapter"
     assert snap["ethernetip"]["input_fields"]
     assert snap["ethernetip"]["input_fields"][0]["signal"] == "DI100"
 
 
-def test_snapshot_device_files_a_modbus_panel_under_modbus() -> None:
-    device = FakeDevice("g1", kind="onrobot_rg", detail=Panel(mode="modbus", clients=1))
-    snap = snapshot_device(device)
+def test_view_to_dict_files_a_modbus_panel_under_modbus() -> None:
+    snap = view_to_dict(_view("g1", "onrobot_rg", panel=Panel(mode="modbus", clients=1)))
     assert snap["modbus"]["clients"] == 1
     assert "ethernetip" not in snap
 
 
 def test_snapshot_world_lists_signals_grouped_with_direction() -> None:
     world = _gripper_world()
-    snap = snapshot_world(world)
+    snap = snapshot_world(seed(world))
     names = {d["name"] for d in snap["devices"]}
     assert {"io1", "g1"} <= names
     io1 = next(d for d in snap["devices"] if d["name"] == "io1")
