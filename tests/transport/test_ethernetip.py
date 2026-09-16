@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 
 from machinist.transport.ethernetip import (
@@ -159,3 +160,21 @@ def test_scanner_reports_its_peer_and_counts_connections() -> None:
     scanner.close()
     scanner.open()
     assert scanner.connection_generation == 2
+
+
+def test_adapter_serves_as_a_service_until_shut_down() -> None:
+    adapter = EtherNetIPAdapter(
+        EtherNetIPAdapterConfig(
+            host="127.0.0.1", port=free_port(), udp_port=free_port(), output_length=4, input_length=4
+        )
+    )
+    ready = threading.Event()
+    thread = threading.Thread(target=adapter.serve_forever, args=(ready,), daemon=True)
+    thread.start()
+    assert ready.wait(timeout=2.0)
+    assert adapter.connected is True
+
+    adapter.shutdown()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert adapter.connected is False

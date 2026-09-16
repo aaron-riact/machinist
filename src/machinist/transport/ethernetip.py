@@ -14,6 +14,8 @@ from typing import Any, Union
 
 from eeip import ConnectionType, EEIPClient, RealTimeFormat
 
+from .service import Service
+
 _EnumValue = Union[RealTimeFormat, ConnectionType]
 
 
@@ -212,11 +214,17 @@ class EtherNetIPScanner(EtherNetIPTransport):
         return self._client
 
 
-class EtherNetIPAdapter(EtherNetIPTransport):
-    """Minimal EtherNet/IP adapter/server for Class 1 I/O."""
+class EtherNetIPAdapter(EtherNetIPTransport, Service):
+    """Minimal EtherNet/IP adapter/server for Class 1 I/O.
+
+    As a :class:`Service` it listens from :meth:`serve_forever` until
+    :meth:`shutdown`; :meth:`open` and :meth:`close` remain for callers that
+    drive the listener by hand.
+    """
 
     def __init__(self, config: EtherNetIPAdapterConfig) -> None:
         self._config = config
+        self._closed = threading.Event()
         self._lock = RLock()
         self._session_handle = 1
         self._listening = False
@@ -268,6 +276,17 @@ class EtherNetIPAdapter(EtherNetIPTransport):
     def last_received_at(self) -> datetime | None:
         with self._lock:
             return self._last_received_at
+
+    def serve_forever(self, ready: threading.Event | None = None) -> None:
+        self._closed.clear()
+        self.open()
+        if ready is not None:
+            ready.set()
+        self._closed.wait()
+
+    def shutdown(self) -> None:
+        self.close()
+        self._closed.set()
 
     def open(self) -> None:
         with self._lock:
