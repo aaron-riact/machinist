@@ -255,13 +255,7 @@ class OnRobot3FG25(Device, HasRegisters):
             return DetailField(signal=signal, name=name, offset=offset, type=type_, value=str(value))
 
         server = self._server
-        io = getattr(self, "io", None)
-        signals: list[DetailSignal] = []
-        if io is not None:
-            signals = [
-                DetailSignal(name=sig.name, direction=str(sig.direction), value=sig.value)
-                for sig in io
-            ]
+        signals: list[DetailSignal] = []  # a flange gripper has no discrete IO
 
         return DeviceDetail(
             mode="modbus",

@@ -241,13 +241,7 @@ class OnRobotRG(Device, HasRegisters):
     def build_detail(self) -> DeviceDetail:
         s = self._state
         server = self._server
-        io = getattr(self, "io", None)
-        signals: list[DetailSignal] = []
-        if io is not None:
-            signals = [
-                DetailSignal(name=sig.name, direction=str(sig.direction), value=sig.value)
-                for sig in io
-            ]
+        signals: list[DetailSignal] = []  # a flange gripper has no discrete IO
 
         return DeviceDetail(
             mode="modbus",
