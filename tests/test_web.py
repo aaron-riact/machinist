@@ -15,6 +15,8 @@ from machinist.web.api import (
     snapshot_world,
 )
 
+from .fakes import FakeArmDevice, FakeDevice, FakeMachineDevice, RecordingDobot
+
 
 def _gripper_world() -> World:
     config = SystemConfig(
@@ -30,29 +32,20 @@ def _gripper_world() -> World:
 
 
 def test_snapshot_device_reports_core_identity() -> None:
-    device = SimpleNamespace(
-        name="ur1",
-        kind="ur_dashboard",
-        endpoint="127.0.0.1:29999",
-        lifecycle="running",
-        build_detail=lambda: None,
-    )
+    device = FakeDevice("ur1", kind="ur_dashboard", detail=None)
     snap = snapshot_device(device)
     assert snap == {
         "name": "ur1",
         "kind": "ur_dashboard",
         "endpoint": "127.0.0.1:29999",
-        "lifecycle": "running",
+        "lifecycle": "created",
     }
 
 
 def test_snapshot_device_includes_arm_snapshot() -> None:
     arm = RobotArm(joint_count=6)
     arm.estop()
-    device = SimpleNamespace(
-        name="arm1", kind="robot", endpoint="127.0.0.1:15001", lifecycle="running", arm=arm,
-        build_detail=lambda: None,
-    )
+    device = FakeArmDevice("arm1", arm=arm)
     snap = snapshot_device(device)
     assert snap["arm"]["mode"] == "estopped"
     assert snap["arm"]["estopped"] is True
@@ -68,10 +61,7 @@ def test_snapshot_device_includes_machine_state() -> None:
     state.tool = 3
     state.parts = 7
     state.position.x = 12.0
-    device = SimpleNamespace(
-        name="mill", kind="haas_ngc", endpoint="127.0.0.1:5051", lifecycle="running", state=state,
-        build_detail=lambda: None,
-    )
+    device = FakeMachineDevice("mill", state=state)
     machine = snapshot_device(device)["machine"]
     assert machine["program"] == "O0001"
     assert machine["doors"] == {"main": True}
@@ -82,12 +72,10 @@ def test_snapshot_device_includes_machine_state() -> None:
 
 
 def test_snapshot_device_includes_ethernetip_breakdown() -> None:
-    device = SimpleNamespace(
-        name="smooth",
+    device = FakeDevice(
+        "smooth",
         kind="mazak_smooth",
-        endpoint="127.0.0.1:44818",
-        lifecycle="running",
-        build_detail=lambda: {
+        detail={
             "mode": "adapter",
             "transport_ready": True,
             "peer_connected": False,
@@ -106,13 +94,7 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
 
 
 def test_snapshot_device_omits_ethernetip_when_snapshot_is_disabled() -> None:
-    device = SimpleNamespace(
-        name="smooth",
-        kind="mazak_smooth",
-        endpoint="127.0.0.1:44818",
-        lifecycle="running",
-        build_detail=lambda: None,
-    )
+    device = FakeDevice("smooth", kind="mazak_smooth", detail=None)
     snap = snapshot_device(device)
     assert "ethernetip" not in snap
 
@@ -188,30 +170,8 @@ def test_dispatch_help_lists_verbs() -> None:
 # --- fault injection commands -------------------------------------------
 
 
-class _FakeDobot:
-    """Records what the dispatch layer asked for, without binding any port."""
-
-    name = "dobot1"
-
-    def __init__(self) -> None:
-        self.stops: list[dict] = []
-        self.cleared = 0
-        self.enable_failures: list[object] = []
-
-    def inject_protective_stop(self, *, robot_mode, controller_ids, sticky) -> None:
-        self.stops.append(
-            {"robot_mode": robot_mode, "controller_ids": tuple(controller_ids), "sticky": sticky}
-        )
-
-    def clear_protective_stop(self) -> None:
-        self.cleared += 1
-
-    def set_enable_failure(self, failure) -> None:
-        self.enable_failures.append(failure)
-
-
-def _dobot_world() -> tuple[World, _FakeDobot]:
-    dobot = _FakeDobot()
+def _dobot_world() -> tuple[World, RecordingDobot]:
+    dobot = RecordingDobot()
     return SimpleNamespace(devices=[dobot]), dobot
 
 

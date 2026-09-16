@@ -16,8 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.capabilities import HasPrograms
+from ..core.device import Device
 from ..core.world import World
-from ..devices.robots.dobot import PROTECTIVE_STOP_MODE_BY_NAME, EnableFailure
+from ..devices.machines.state import HasMachineState, MachineState
+from ..devices.robots.arm import HasArm, RobotArm
+from ..devices.robots.dobot import PROTECTIVE_STOP_MODE_BY_NAME, DobotDashboard, EnableFailure
 
 
 def snapshot_world(world: World) -> dict[str, Any]:
@@ -25,7 +29,7 @@ def snapshot_world(world: World) -> dict[str, Any]:
     return {"devices": [snapshot_device(d) for d in world.devices]}
 
 
-def snapshot_device(device: Any) -> dict[str, Any]:
+def snapshot_device(device: Device) -> dict[str, Any]:
     """Serialize a single device, including any arm/machine/IO it exposes."""
     snap: dict[str, Any] = {
         "name": device.name,
@@ -41,21 +45,16 @@ def snapshot_device(device: Any) -> dict[str, Any]:
             snap["modbus"] = detail
         else:
             snap["ethernetip"] = detail
-    arm = _arm(getattr(device, "arm", None))
-    if arm is not None:
-        snap["arm"] = arm
-    machine = _machine(getattr(device, "state", None))
-    if machine is not None:
-        snap["machine"] = machine
-    programs = getattr(device, "programs", None)
-    if programs is not None and hasattr(programs, "list"):
-        snap["programs"] = list(programs.list())
+    if isinstance(device, HasArm):
+        snap["arm"] = _arm_snapshot(device.arm)
+    if isinstance(device, HasMachineState):
+        snap["machine"] = _machine_snapshot(device.state)
+    if isinstance(device, HasPrograms):
+        snap["programs"] = device.programs.list()
     return snap
 
 
-def _arm(arm: Any) -> dict[str, Any] | None:
-    if arm is None:
-        return None
+def _arm_snapshot(arm: RobotArm) -> dict[str, Any]:
     s = arm.state.snapshot()
     return {
         "mode": str(s.mode),
@@ -70,9 +69,7 @@ def _arm(arm: Any) -> dict[str, Any] | None:
     }
 
 
-def _machine(state: Any) -> dict[str, Any] | None:
-    if state is None or not hasattr(state, "cycle"):
-        return None
+def _machine_snapshot(state: MachineState) -> dict[str, Any]:
     program = state.program.splitlines()[0] if state.program else ""
     return {
         "cycle": str(state.cycle),
@@ -116,18 +113,25 @@ def dispatch_command(world: World, line: str) -> dict[str, Any]:
     return handler(world, rest.strip())
 
 
-def _lookup(world: World, name: str) -> Any:
+def _lookup(world: World, name: str) -> Device:
     device = next((d for d in world.devices if d.name == name), None)
     if device is None:
         raise CommandError(f"unknown device: {name!r}")
     return device
 
 
-def _arm_of(world: World, name: str) -> Any:
-    arm = getattr(_lookup(world, name), "arm", None)
-    if arm is None:
+def _arm_of(world: World, name: str) -> RobotArm:
+    device = _lookup(world, name)
+    if not isinstance(device, HasArm):
         raise CommandError(f"{name!r} has no arm")
-    return arm
+    return device.arm
+
+
+def _programs_of(world: World, name: str) -> HasPrograms:
+    device = _lookup(world, name)
+    if not isinstance(device, HasPrograms):
+        raise CommandError(f"{name!r} has no program library")
+    return device
 
 
 def _cmd_estop(world: World, rest: str) -> dict[str, Any]:
@@ -158,21 +162,18 @@ def _cmd_set(world: World, rest: str) -> dict[str, Any]:
 
 
 def _cmd_ls(world: World, rest: str) -> dict[str, Any]:
-    programs = getattr(_lookup(world, rest), "programs", None)
-    if programs is None or not hasattr(programs, "list"):
-        raise CommandError(f"{rest!r} has no program library")
-    names = list(programs.list())
+    names = _programs_of(world, rest).programs.list()
     return {"ok": True, "message": f"{rest}: {', '.join(names) or '(empty)'}", "programs": names}
 
 
 def _cmd_run(world: World, rest: str) -> dict[str, Any]:
     target, _, program = rest.partition(" ")
     program = program.strip()
-    run_program = getattr(_lookup(world, target), "run_program", None)
-    if run_program is None:
+    device = _lookup(world, target)
+    if not isinstance(device, HasPrograms):
         raise CommandError(f"{target!r} cannot run programs")
     try:
-        run_program(program)
+        device.run_program(program)
     except (FileNotFoundError, RuntimeError) as exc:
         raise CommandError(str(exc)) from exc
     return _ok(f"started {program} on {target}")
@@ -215,9 +216,10 @@ def _parse_pstop(rest: str) -> _PstopArgs:
     return _PstopArgs(device, clear, robot_mode, controller_ids, sticky)
 
 
-def _faultable(world: World, name: str) -> Any:
+def _faultable(world: World, name: str) -> DobotDashboard:
+    """The fault-injection verbs speak Dobot's vocabulary (mode codes, alarm ids)."""
     device = _lookup(world, name)
-    if not hasattr(device, "inject_protective_stop"):
+    if not isinstance(device, DobotDashboard):
         raise CommandError(f"{name!r} cannot be put into a protective stop")
     return device
 
