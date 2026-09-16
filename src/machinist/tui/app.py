@@ -44,6 +44,7 @@ from ..core.events import Event
 
 from ..core.types import DeviceState
 from ..core.world import World
+from ..web.api import CommandError, dispatch_command
 
 
 class MachinistApp(App[None]):
@@ -437,6 +438,24 @@ def _format_event(event: Event) -> str:
     )
 
 
+def _cmd_fault(app: MachinistApp, verb: str, rest: str) -> None:
+    """Run a fault-injection verb through the shared web dispatcher.
+
+    Delegating rather than reimplementing keeps the two command surfaces
+    from drifting: there is one parser for ``pstop``/``failenable``, and the
+    TUI only has to render the result.
+    """
+    target, _, tail = rest.strip().partition(" ")
+    if not target:
+        target = app._selected or ""
+    try:
+        result = dispatch_command(app.world, f"{verb} {target} {tail}".strip())
+    except CommandError as exc:
+        app._log.write(f"[red]error[/]: {exc}")
+        return
+    app._log.write(result["message"])
+
+
 def _cmd_set(app: MachinistApp, rest: str) -> None:
     target, _, value = rest.partition(" ")
     app._set_signal(target, value.strip() in ("1", "true", "on"))
@@ -469,7 +488,9 @@ def _cmd_run(app: MachinistApp, rest: str) -> None:
 _COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
     "help": lambda app, _: app._log.write(
         "[bold]commands[/]  estop <device> | reset <device> | "
-        "set <device.signal> 0|1 | ls <device> | run <device> <program> | quit"
+        "set <device.signal> 0|1 | ls <device> | run <device> <program> | "
+        "pstop <device> [clear|collision|error|disabled] [ids=17,116] [sticky] | "
+        "failenable <device> stuck|error|off | quit"
     ),
     "quit": lambda app, _: app.exit(),
     "estop": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.estop()),
@@ -477,4 +498,6 @@ _COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
     "set": _cmd_set,
     "ls": _cmd_ls,
     "run": _cmd_run,
+    "pstop": lambda app, rest: _cmd_fault(app, "pstop", rest),
+    "failenable": lambda app, rest: _cmd_fault(app, "failenable", rest),
 }

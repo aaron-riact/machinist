@@ -12,6 +12,7 @@ from machinist.devices.robots.arm import RobotArm
 from machinist.tui.app import (
     MachinistApp,
     _arm_summary,
+    _cmd_fault,
     _cmd_ls,
     _cmd_run,
     _detail_header,
@@ -323,3 +324,73 @@ def test_refresh_detail_populates_then_increments_then_rebuilds_on_switch() -> N
     assert ("clear",) in outputs.log
     assert ("clear",) in derived.log
     assert app._last_selected is None
+
+
+# --- fault-injection verbs delegate to the shared dispatcher ------------
+
+
+class _FakeFaultApp:
+    """Enough of the app for _cmd_fault: a world, a selection and a log."""
+
+    def __init__(self, device) -> None:
+        self._selected = device.name
+        self.world = SimpleNamespace(devices=[device])
+        self.writes: list[str] = []
+        self._log = SimpleNamespace(write=self.writes.append)
+
+
+class _FakeDobot:
+    name = "dobot1"
+
+    def __init__(self) -> None:
+        self.stops: list[dict] = []
+        self.cleared = 0
+        self.enable_failures: list[object] = []
+
+    def inject_protective_stop(self, *, robot_mode, controller_ids, sticky) -> None:
+        self.stops.append(
+            {"robot_mode": robot_mode, "controller_ids": tuple(controller_ids), "sticky": sticky}
+        )
+
+    def clear_protective_stop(self) -> None:
+        self.cleared += 1
+
+    def set_enable_failure(self, failure) -> None:
+        self.enable_failures.append(failure)
+
+
+def test_cmd_fault_injects_a_protective_stop() -> None:
+    dobot = _FakeDobot()
+    app = _FakeFaultApp(dobot)
+
+    _cmd_fault(app, "pstop", "dobot1 error ids=17,116 sticky")
+
+    assert dobot.stops == [{"robot_mode": 9, "controller_ids": (17, 116), "sticky": True}]
+
+
+def test_cmd_fault_falls_back_to_the_selected_device() -> None:
+    dobot = _FakeDobot()
+    app = _FakeFaultApp(dobot)
+
+    _cmd_fault(app, "pstop", "")
+
+    assert len(dobot.stops) == 1
+
+
+def test_cmd_fault_sets_an_enable_failure() -> None:
+    from machinist.devices.robots.dobot import EnableFailure
+
+    dobot = _FakeDobot()
+    app = _FakeFaultApp(dobot)
+
+    _cmd_fault(app, "failenable", "dobot1 stuck")
+
+    assert dobot.enable_failures == [EnableFailure.STUCK]
+
+
+def test_cmd_fault_logs_the_error_instead_of_raising() -> None:
+    app = _FakeFaultApp(_FakeDobot())
+
+    _cmd_fault(app, "pstop", "dobot1 sideways")
+
+    assert any("unknown pstop option" in w for w in app.writes)
