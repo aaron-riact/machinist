@@ -47,11 +47,11 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass, replace
-from typing import Any
 
 from ...core.capabilities import HasRegisters
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.options import Options
 from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.state import StateCell
@@ -148,8 +148,7 @@ def _width_to_angle(
     return int(round(math.degrees(math.acos(cos_a)) * 10))
 
 
-@dataclass(slots=True)
-class OnRobot3FG25Options:
+class OnRobot3FG25Options(Options):
     initial_diameter_mm: float = 75.0
     travel_mm_per_sec: float = 60.0
     finger_length_tenths: int = FINGER_LENGTH_25_TENTHS
@@ -363,9 +362,8 @@ def _advanced(s: _State) -> _State:
     return replace(s, busy=True, actual_angle_tenths=s.actual_angle_tenths + (step if delta > 0 else -step))
 
 
-@register("onrobot_3fg25", default_port=502)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = OnRobot3FG25Options(**options)
+@register("onrobot_3fg25", default_port=502, options=OnRobot3FG25Options)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: OnRobot3FG25Options) -> Device:
     pos_offset = _POSITION_OFFSETS.get(opts.finger_position, 0)
     initial_angle = _width_to_angle(
         int(opts.initial_diameter_mm * 10),

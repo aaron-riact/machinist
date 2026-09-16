@@ -12,19 +12,17 @@ it transitions to "fully open" after a configurable settle time; same for
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
-from typing import Any
 
 from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
+from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
 
 
-@dataclass(frozen=True, slots=True)
-class PneumaticGripperOptions:
+class PneumaticGripperOptions(Options):
     settle_seconds: float = 0.3
 
 
@@ -75,7 +73,6 @@ class PneumaticGripper(Device, HasIO):
             self._timer.cancel()
 
 
-@register("pneumatic_gripper", default_port=0)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = PneumaticGripperOptions(**options)
+@register("pneumatic_gripper", default_port=0, options=PneumaticGripperOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: PneumaticGripperOptions) -> Device:
     return PneumaticGripper(name, endpoint, bus, opts, io=SignalBank(owner=name, publish=bus.publish))

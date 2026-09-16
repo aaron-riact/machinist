@@ -39,11 +39,11 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, replace
-from typing import Any
 
 from ...core.capabilities import HasRegisters
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.options import Options
 from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.state import StateCell
@@ -97,8 +97,7 @@ RG_MODELS: dict[str, _ModelLimits] = {
 }
 
 
-@dataclass(slots=True)
-class OnRobotRGOptions:
+class OnRobotRGOptions(Options):
     """Typed schema for the ``onrobot_rg`` YAML ``options`` section."""
 
     model: str = "rg2"
@@ -281,9 +280,8 @@ def _advanced(s: _State) -> _State:
     return replace(s, busy=True, actual_width_tenths=s.actual_width_tenths + (step if delta > 0 else -step))
 
 
-@register("onrobot_rg", default_port=502)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = OnRobotRGOptions(**options)
+@register("onrobot_rg", default_port=502, options=OnRobotRGOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: OnRobotRGOptions) -> Device:
     try:
         limits = RG_MODELS[opts.model.lower()]
     except KeyError:

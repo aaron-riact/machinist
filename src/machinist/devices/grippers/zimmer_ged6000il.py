@@ -10,17 +10,16 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any
 
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.iolink_http_master import IOLinkHttpMaster, IOLinkPort, ProcessData
 
 
-@dataclass(slots=True)
-class ZimmerGED6000ILOptions:
+class ZimmerGED6000ILOptions(Options):
     initial_diameter_mm: float = 75.0
 
 
@@ -73,9 +72,8 @@ class ZimmerGED6000IL(Device, IOLinkPort):
         self.emit("settled", diameter_mm=self._state.diameter_mm)
 
 
-@register("zimmer_ged6000il", default_port=80)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = ZimmerGED6000ILOptions(**options)
+@register("zimmer_ged6000il", default_port=80, options=ZimmerGED6000ILOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: ZimmerGED6000ILOptions) -> Device:
     device = ZimmerGED6000IL(name, endpoint, bus, opts)
     device.add_service(IOLinkHttpMaster(host=endpoint.host, port=endpoint.port, port_device=device))
     return device

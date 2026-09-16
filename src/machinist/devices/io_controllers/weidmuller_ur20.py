@@ -8,13 +8,11 @@ and ``o1..on`` so other devices can wire to them via ``io_links`` in YAML.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 from ...core.capabilities import HasIO, HasRegisters
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
+from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
@@ -24,8 +22,7 @@ REG_INPUTS = 0x0000
 REG_OUTPUTS = 0x0100
 
 
-@dataclass(slots=True)
-class WeidmullerUR20Options:
+class WeidmullerUR20Options(Options):
     inputs: int = 16
     outputs: int = 16
 
@@ -81,9 +78,8 @@ class WeidmullerUR20(Device, HasIO, HasRegisters):
         return word
 
 
-@register("weidmuller_ur20", default_port=502)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = WeidmullerUR20Options(**options)
+@register("weidmuller_ur20", default_port=502, options=WeidmullerUR20Options)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: WeidmullerUR20Options) -> Device:
     device = WeidmullerUR20(name, endpoint, bus, opts, io=SignalBank(owner=name, publish=bus.publish))
     device.add_service(
         HoldingRegisterServer(
