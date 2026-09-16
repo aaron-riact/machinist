@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -280,6 +280,80 @@ class MazakSmoothOptions(Options):
         return self.ethernetip.mode if self.ethernetip is not None else "adapter"
 
 
+@dataclass
+class _Door:
+    """One door's motion, driven each scan by the DI bits that command it.
+
+    A rising edge on *open_cmd* or *close_cmd* starts a timed move; the
+    matching "finished" DO bits drop while it travels and one of them comes
+    back when it lands. Releasing the command mid-travel abandons the move.
+    The side door of a SmoothAi (and the main door of a SmoothX) also needs
+    *close_gate* (DI109) held for a close and stops dead if the stop request
+    (DI002) drops; the optional front door has neither.
+    """
+
+    name: str
+    open_cmd: int
+    close_cmd: int
+    opened: int
+    closed: int
+    close_gate: int | None = None
+    needs_stop_request: bool = False
+    deadline: float | None = None
+    target_open: bool | None = None
+    _prev_open_cmd: bool = False
+    _prev_close_cmd: bool = False
+
+    def tick(
+        self,
+        now: float,
+        *,
+        read: Callable[[int], bool],
+        write: Callable[[int, bool], None],
+        open_seconds: float,
+        close_seconds: float,
+    ) -> bool | None:
+        """Advance one scan. Returns the door's new state when a move lands, else None."""
+        open_cmd = read(self.open_cmd)
+        close_cmd = read(self.close_cmd)
+        gate_ok = self.close_gate is None or read(self.close_gate)
+
+        if open_cmd and not self._prev_open_cmd and self.deadline is None:
+            self._start(True, now + open_seconds, write)
+        if close_cmd and not self._prev_close_cmd and gate_ok and self.deadline is None:
+            self._start(False, now + close_seconds, write)
+
+        if self.needs_stop_request and not read(2):
+            self._abandon()
+        elif self.deadline is not None:
+            released = (self.target_open and not open_cmd) or (
+                self.target_open is False and (not close_cmd or not gate_ok)
+            )
+            if released:
+                self._abandon()
+
+        landed: bool | None = None
+        if self.deadline is not None and now >= self.deadline:
+            landed = bool(self.target_open)
+            write(self.opened, landed)
+            write(self.closed, not landed)
+            self._abandon()
+
+        self._prev_open_cmd = open_cmd
+        self._prev_close_cmd = close_cmd
+        return landed
+
+    def _start(self, target_open: bool, deadline: float, write: Callable[[int, bool], None]) -> None:
+        self.target_open = target_open
+        self.deadline = deadline
+        write(self.opened, False)
+        write(self.closed, False)
+
+    def _abandon(self) -> None:
+        self.deadline = None
+        self.target_open = None
+
+
 class MazakSmoothEmulator(Device, HasMachineState, HasIO):
     kind = "mazak_smooth"
 
@@ -339,20 +413,19 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._alarm_message = ""
         self._connection_up = False
         self._last_panel: Panel | None = None
-        self._door_motion_deadline: float | None = None
-        self._door_target_open: bool | None = None
-        self._front_door_motion_deadline: float | None = None
-        self._front_door_target_open: bool | None = None
-        self._prev_di110 = False
-        self._prev_di111 = False
+        main_door = "side" if self._variant == "smoothai" else "main"
+        self._doors = [
+            _Door(main_door, open_cmd=107, close_cmd=108, opened=107, closed=108,
+                  close_gate=109, needs_stop_request=True),
+        ]
+        if self._front_door:
+            self._doors.append(_Door("front", open_cmd=110, close_cmd=111, opened=110, closed=111))
         self._cycle_complete_deadline: float | None = None
         self._work_search_deadline: float | None = None
         self._cycle_start_blocked_until: float | None = None
         self._pending_program = ""
         self._prev_di101 = False
         self._prev_di102 = False
-        self._prev_di107 = False
-        self._prev_di108 = False
         self._cycle_start_armed = False
         self._feed_hold = False
         self._machining_complete_latched = False
@@ -667,84 +740,17 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         return program in self._programs
 
     def _handle_door_motion(self, now: float) -> None:
-        stop_request = self._read_input_bit(2)
-        di107 = self._read_input_bit(107)
-        di108 = self._read_input_bit(108)
-        di109 = self._read_input_bit(109)
-
-        _door_name = "side" if self._variant == "smoothai" else "main"
-
-        if di107 and not self._prev_di107 and self._door_motion_deadline is None:
-            self._door_target_open = True
-            self._door_motion_deadline = now + self._door_open_seconds
-            self._write_output_bit(107, False)
-            self._write_output_bit(108, False)
-
-        if di108 and not self._prev_di108 and di109 and self._door_motion_deadline is None:
-            self._door_target_open = False
-            self._door_motion_deadline = now + self._door_close_seconds
-            self._write_output_bit(107, False)
-            self._write_output_bit(108, False)
-
-        if not stop_request:
-            self._door_motion_deadline = None
-            self._door_target_open = None
-        elif self._door_motion_deadline is not None:
-            if (self._door_target_open and not di107) or (
-                self._door_target_open is False and (not di108 or not di109)
-            ):
-                self._door_motion_deadline = None
-                self._door_target_open = None
-
-        if self._door_motion_deadline is not None and now >= self._door_motion_deadline:
-            target_open = bool(self._door_target_open)
-            self.state.set_door(_door_name, open=target_open)
-            self._write_output_bit(107, target_open)
-            self._write_output_bit(108, not target_open)
-            self._door_motion_deadline = None
-            self._door_target_open = None
-            self.emit("door", name=_door_name, open=target_open)
-
-        self._prev_di107 = di107
-        self._prev_di108 = di108
-
-        if self._front_door:
-            self._handle_front_door_motion(now)
-
-    def _handle_front_door_motion(self, now: float) -> None:
-        di110 = self._read_input_bit(110)
-        di111 = self._read_input_bit(111)
-
-        if di110 and not self._prev_di110 and self._front_door_motion_deadline is None:
-            self._front_door_target_open = True
-            self._front_door_motion_deadline = now + self._door_open_seconds
-            self._write_output_bit(110, False)
-            self._write_output_bit(111, False)
-
-        if di111 and not self._prev_di111 and self._front_door_motion_deadline is None:
-            self._front_door_target_open = False
-            self._front_door_motion_deadline = now + self._door_close_seconds
-            self._write_output_bit(110, False)
-            self._write_output_bit(111, False)
-
-        if self._front_door_motion_deadline is not None:
-            if (self._front_door_target_open and not di110) or (
-                self._front_door_target_open is False and not di111
-            ):
-                self._front_door_motion_deadline = None
-                self._front_door_target_open = None
-
-        if self._front_door_motion_deadline is not None and now >= self._front_door_motion_deadline:
-            target_open = bool(self._front_door_target_open)
-            self.state.set_door("front", open=target_open)
-            self._write_output_bit(110, target_open)
-            self._write_output_bit(111, not target_open)
-            self._front_door_motion_deadline = None
-            self._front_door_target_open = None
-            self.emit("door", name="front", open=target_open)
-
-        self._prev_di110 = di110
-        self._prev_di111 = di111
+        for door in self._doors:
+            landed = door.tick(
+                now,
+                read=self._read_input_bit,
+                write=self._write_output_bit,
+                open_seconds=self._door_open_seconds,
+                close_seconds=self._door_close_seconds,
+            )
+            if landed is not None:
+                self.state.set_door(door.name, open=landed)
+                self.emit("door", name=door.name, open=landed)
 
     def _handle_cycle(self, now: float) -> None:
         robot_ready = self._read_input_bit(1)
