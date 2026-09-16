@@ -1024,3 +1024,42 @@ def test_detail_panel_goes_back_to_clear_after_clear_faults(dobot: DobotDashboar
 
     assert _derived(dobot)["pstop"] == "clear"
     assert _derived(dobot)["enablefail"] == "-"
+
+
+# --- injecting a fault announces itself, so views repaint -------------
+
+
+def _fault_events(dobot: DobotDashboard) -> list[dict]:
+    seen: list[dict] = []
+    dobot._bus.subscribe(
+        lambda event: seen.append(event.payload) if event.kind == "fault" else None
+    )
+    return seen
+
+
+def test_injecting_a_stop_emits_a_fault_event(dobot: DobotDashboard) -> None:
+    events = _fault_events(dobot)
+
+    dobot.inject_protective_stop(controller_ids=[17, 116])
+
+    assert events == [
+        {"state": "engaged", "mode": "COLLISION", "alarms": "17,116", "sticky": False}
+    ]
+
+
+def test_clearing_a_stop_emits_a_fault_event(dobot: DobotDashboard) -> None:
+    dobot.inject_protective_stop(controller_ids=[17])
+    events = _fault_events(dobot)
+
+    dobot.clear_protective_stop()
+
+    assert events == [{"state": "clear"}]
+
+
+def test_setting_an_enable_failure_emits_a_fault_event(dobot: DobotDashboard) -> None:
+    events = _fault_events(dobot)
+
+    dobot.set_enable_failure(EnableFailure.STUCK)
+    dobot.set_enable_failure(None)
+
+    assert events == [{"enable_failure": "stuck"}, {"enable_failure": "none"}]

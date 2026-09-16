@@ -757,6 +757,13 @@ class DobotDashboard(LineServerDevice):
         self._fault.robot_mode = robot_mode
         self._fault.sticky = sticky
         self._fault.active = True
+        self.emit(
+            "fault",
+            state="engaged",
+            mode=_ROBOT_MODE_NAMES.get(robot_mode, str(robot_mode)),
+            alarms=self._alarm_ids_detail(),
+            sticky=sticky,
+        )
 
     def set_enable_failure(self, failure: EnableFailure | None) -> None:
         """Make ``EnableRobot`` fail, so an unlock attempt cannot succeed.
@@ -766,6 +773,7 @@ class DobotDashboard(LineServerDevice):
         let it enable normally again.
         """
         self._fault.enable_failure = failure
+        self.emit("fault", enable_failure=failure.value if failure else "none")
 
     def clear_protective_stop(self) -> None:
         """Release an injected protective stop, whether or not it is sticky."""
@@ -773,6 +781,7 @@ class DobotDashboard(LineServerDevice):
         self._fault.sticky = False
         self._error_ids.clear()
         self.arm.clear_fault()
+        self.emit("fault", state="clear")
 
     def clear_faults(self) -> None:
         """Release everything injected: the stop and any enable failure."""
