@@ -1288,3 +1288,25 @@ def test_detail_panel_drops_a_master_once_closed(dobot_with_rg) -> None:
     _send(dobot, "ModbusClose(0)")
 
     assert "master0" not in _derived(dobot)
+
+
+def test_fault_injection_and_masters_announce_the_panel() -> None:
+    from machinist.core.panel import PanelChanged
+
+    bus = EventBus()
+    panels: list[PanelChanged] = []
+    bus.subscribe(lambda e: panels.append(e) if isinstance(e, PanelChanged) else None)
+    d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(), feedback_enabled=False)
+
+    d.inject_protective_stop(controller_ids=(17,))
+    derived = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    assert derived["pstop"].startswith("ENGAGED")
+    assert derived["alarmids"] == "17"
+
+    d.handle_line("ModbusRTUCreate(1,115200)")
+    assert any(f.signal == "master0" for f in panels[-1].panel.derived_fields)
+
+    d.clear_protective_stop()
+    derived = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    assert derived["pstop"] == "clear" and derived["alarmids"] == "-"
+    d.arm.stop_ticker()

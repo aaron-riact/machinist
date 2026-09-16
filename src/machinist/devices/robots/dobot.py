@@ -38,8 +38,9 @@ from ...core.capabilities import HasFlange, HasIO
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
-from ...core.panel import Field, Panel
+from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
+from ...core.state import StateCell
 from ...core.types import Endpoint
 from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
 from ...kinematics.units import Meters, Radians
@@ -297,11 +298,11 @@ _ARM_MODE_TO_ROBOT_MODE: dict[ArmMode, int] = {
 }
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _FaultState:
     """An injected controller fault: what the robot reports while stopped.
 
-    Held by the dashboard and shared *by reference* with the feedback-writer
+    Held in the dashboard's StateCell and shared with the feedback-writer
     thread, so raising a fault is seen on both the dashboard port and the
     feedback stream without restarting anything.
 
@@ -314,6 +315,8 @@ class _FaultState:
     robot_mode: int = ROBOT_MODE_COLLISION
     sticky: bool = False
     enable_failure: EnableFailure | None = None
+    #: What ``GetErrorID`` answers while the stop is engaged.
+    alarm_ids: tuple[int, ...] = ()
 
     @property
     def robot_mode_override(self) -> int | None:
@@ -410,7 +413,7 @@ def _feedback_writer(
     tool_frames: dict[int, Pose] | None = None,
     active_tool: list[int] | None = None,
     payload: list[float] | None = None,
-    fault: _FaultState | None = None,
+    fault: StateCell[_FaultState] | None = None,
 ) -> None:
     pkt = DobotFeedbackPacket()
     tick = 0
@@ -419,7 +422,7 @@ def _feedback_writer(
         deadline = time.monotonic() + period
         s = arm.state.snapshot()
         active_tool_idx = active_tool[0] if active_tool else 0
-        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, tool=active_tool_idx, payload=payload, fault=fault)
+        _update_feedback_packet(pkt, s, now_us=time.monotonic_ns() // 1000, command_id=command_id[0], robot_type_code=robot_type_code, tool=active_tool_idx, payload=payload, fault=fault.view if fault is not None else None)
         pkt.DigitalInputs = sum(
             (1 << (i - 1)) for i in range(1, tool_di_count + 1) if io[f"tooldi{i}"].value
         )
@@ -485,8 +488,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._current_command_id: list[int] = [0]
         self._running = threading.Event()
         self._running.set()
-        self._error_ids: list[int] = []
-        self._fault = _FaultState()
+        self._fault = StateCell(_FaultState(), on_change=lambda _view: self.announce_panel())
         self.flange = FlangeBus()
         self._masters: dict[int, _ModbusMaster] = {}
         self._ai: list[float] = [0.0] * self._ai_count
@@ -538,13 +540,14 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             if log_level >= 2 or verb.lower() not in self._quiet_commands:
                 print(f"[dobot/{self.name}] {line}", file=sys.stderr, flush=True)
         s = self.arm.state.snapshot()
-        if verb.lower() in _MOTION_VERBS and self._fault.active:
+        fault = self._fault.view
+        if verb.lower() in _MOTION_VERBS and fault.active:
             return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
         match verb.lower():
             case "enablerobot":
-                if self._fault.enable_failure is EnableFailure.ERROR:
+                if fault.enable_failure is EnableFailure.ERROR:
                     return f"{ERR_ROBOT_IN_ERROR_STATE},{{}},{verb}({args})"
-                if self._fault.enable_failure is EnableFailure.STUCK:
+                if fault.enable_failure is EnableFailure.STUCK:
                     # Accepted, but the servos never come on -- RobotMode keeps
                     # reporting DISABLED, so a driver's enable loop times out.
                     return _ok(verb, args)
@@ -553,7 +556,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 self.arm.set_servo(False); return _ok(verb, args)
             case "emergencystop":
                 self.arm.estop()
-                self._error_ids = [1]
+                self._fault.update(alarm_ids=(1,))
                 return _ok(verb, args)
             case "modbusrtucreate":
                 try:
@@ -564,6 +567,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 if index is None:
                     return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
                 self._masters[index] = _ModbusMaster(slave_id=slave_id, baud=baud, serial=serial)
+                self.announce_panel()
                 return _ok(verb, args, value=str(index))
             case "modbusclose":
                 idx, err = _int_arg(args, verb, lo=0, hi=MAX_MODBUS_MASTERS - 1)
@@ -571,6 +575,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                     return err
                 if self._masters.pop(idx, None) is None:
                     return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
+                self.announce_panel()
                 return _ok(verb, args)
             case "getholdregs":
                 try:
@@ -606,7 +611,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 return _ok(verb, args)
             case "clearerror":
                 self.arm.reset()
-                if self._fault.active and self._fault.sticky:
+                if fault.active and fault.sticky:
                     # The alarm cause is still present, so the controller
                     # reports the same alarm straight back. ClearError itself
                     # still succeeds -- the guide says to re-read RobotMode to
@@ -618,7 +623,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 self.arm.stop()
                 return _ok(verb, args)
             case "geterrorid":
-                return _ok(verb, args, value="[" + ",".join(str(e) for e in self._error_ids) + "]")
+                return _ok(verb, args, value="[" + ",".join(str(e) for e in fault.alarm_ids) + "]")
             case "getpose":
                 tool_idx = None
                 if args.strip():
@@ -663,7 +668,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             case "getangle":
                 return _ok(verb, args, value=",".join(f"{math.degrees(j):.4f}" for j in s.joints))
             case "robotmode":
-                return _ok(verb, args, value=str(_robot_mode(s, self._fault)))
+                return _ok(verb, args, value=str(_robot_mode(s, fault)))
             case "tooldi":
                 idx, err = _int_arg(args, verb, hi=self._tool_di_count)
                 if err:
@@ -694,6 +699,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 if err:
                     return err
                 self.arm.set_speed_factor(ratio / 100)
+                self.announce_panel()  # the panel shows the speed factor
                 return _ok(verb, args)
             case "settool":
                 try:
@@ -845,10 +851,12 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 f"expected one of {PROTECTIVE_STOP_MODES}"
             )
         self.arm.fault()
-        self._error_ids = [int(code) for code in controller_ids]
-        self._fault.robot_mode = robot_mode
-        self._fault.sticky = sticky
-        self._fault.active = True
+        self._fault.update(
+            active=True,
+            robot_mode=robot_mode,
+            sticky=sticky,
+            alarm_ids=tuple(int(code) for code in controller_ids),
+        )
         self.emit(
             "fault",
             state="engaged",
@@ -864,14 +872,12 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         refuse to enable without being in a protective stop. Pass ``None`` to
         let it enable normally again.
         """
-        self._fault.enable_failure = failure
+        self._fault.update(enable_failure=failure)
         self.emit("fault", enable_failure=failure.value if failure else "none")
 
     def clear_protective_stop(self) -> None:
         """Release an injected protective stop, whether or not it is sticky."""
-        self._fault.active = False
-        self._fault.sticky = False
-        self._error_ids.clear()
+        self._fault.update(active=False, sticky=False, alarm_ids=())
         self.arm.clear_fault()
         self.emit("fault", state="clear")
 
@@ -882,18 +888,23 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
 
     # ----- detail panel -------------------------------------------------
 
+    def announce_panel(self) -> None:
+        """Publish the detail panel; called whenever something it shows has changed."""
+        self.publish(PanelChanged(device=self.name, panel=self.build_detail()))
+
     def _protective_stop_detail(self) -> str:
-        if not self._fault.active:
+        fault = self._fault.view
+        if not fault.active:
             return "clear"
-        name = _ROBOT_MODE_NAMES.get(self._fault.robot_mode, "?")
-        sticky = ", sticky" if self._fault.sticky else ""
-        return f"ENGAGED: {name} ({self._fault.robot_mode}){sticky}"
+        name = _ROBOT_MODE_NAMES.get(fault.robot_mode, "?")
+        sticky = ", sticky" if fault.sticky else ""
+        return f"ENGAGED: {name} ({fault.robot_mode}){sticky}"
 
     def _alarm_ids_detail(self) -> str:
-        return ",".join(str(code) for code in self._error_ids) or "-"
+        return ",".join(str(code) for code in self._fault.view.alarm_ids) or "-"
 
     def _enable_failure_detail(self) -> str:
-        failure = self._fault.enable_failure
+        failure = self._fault.view.enable_failure
         if failure is None:
             return "-"
         if failure is EnableFailure.STUCK:
