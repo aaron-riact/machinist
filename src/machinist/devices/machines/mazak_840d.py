@@ -46,9 +46,6 @@ class _Mappings:
     extra: tuple[_DBMapping, ...] = field(default_factory=tuple)
 
 
-from .state import MachineState
-
-
 def _default_mappings() -> _Mappings:
     return _build_mappings({})
 
