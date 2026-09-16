@@ -259,9 +259,8 @@ def test_dobot_robot_type_defaults_to_cr5() -> None:
 
 
 def test_dobot_robot_type_configured_via_factory() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
     assert d._robot_type_code == 10
     assert d._tool_di_count == 2
     assert d._tool_do_count == 2
@@ -269,9 +268,8 @@ def test_dobot_robot_type_configured_via_factory() -> None:
 
 
 def test_dobot_robot_type_cr5_via_factory_uses_dh_kinematics() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
     s = d.arm.state.snapshot()
     assert any(abs(v) > 1e-9 for v in s.pose), "expected non-zero pose from CR5 DH kinematics"
     assert d._tool_di_count == 2
@@ -280,27 +278,24 @@ def test_dobot_robot_type_cr5_via_factory_uses_dh_kinematics() -> None:
 
 
 def test_dobot_robot_type_cr20_uses_max_io() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
     assert d._tool_di_count == 4
     assert d._tool_do_count == 4
     d.stop()
 
 
 def test_dobot_unknown_robot_type_defaults_to_max_io() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "nonexistent", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "nonexistent", "feedback_ports": False})
     assert d._tool_di_count == 4
     assert d._tool_do_count == 4
     d.stop()
 
 
 def test_dobot_cr5_rejects_tool_di_outside_bounds() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr5", "feedback_ports": False})
     d.start()
     try:
         wait_running(d)
@@ -311,9 +306,8 @@ def test_dobot_cr5_rejects_tool_di_outside_bounds() -> None:
 
 
 def test_dobot_cr20_accepts_tool_di_inside_bounds() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
     d.start()
     try:
         wait_running(d)
@@ -457,72 +451,64 @@ def test_update_feedback_packet_populates_fields() -> None:
 
 
 def test_dobot_robot_type_cr10a_via_factory_uses_dh_kinematics() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10a", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10a", "feedback_ports": False})
     s = d.arm.state.snapshot()
     assert any(abs(v) > 1e-9 for v in s.pose), "expected non-zero pose from CR10A DH kinematics"
     d.stop()
 
 
 def test_dobot_robot_type_cr20a_via_factory_uses_dh_kinematics() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20a", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20a", "feedback_ports": False})
     s = d.arm.state.snapshot()
     assert any(abs(v) > 1e-9 for v in s.pose), "expected non-zero pose from CR20A DH kinematics"
     d.stop()
 
 
 def test_dobot_robot_type_cr10a_io_bounds() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10a", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10a", "feedback_ports": False})
     assert d._tool_di_count == 2
     assert d._tool_do_count == 2
     d.stop()
 
 
 def test_dobot_robot_type_cr20a_io_bounds() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20a", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20a", "feedback_ports": False})
     assert d._tool_di_count == 4
     assert d._tool_do_count == 4
     d.stop()
 
 
 def test_dobot_robot_type_cr10_via_factory_uses_dh_kinematics() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
     s = d.arm.state.snapshot()
     assert any(abs(v) > 1e-9 for v in s.pose), "expected non-zero pose from CR10 (CR10A) DH kinematics"
     d.stop()
 
 
 def test_dobot_robot_type_cr20_via_factory_uses_dh_kinematics() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
     s = d.arm.state.snapshot()
     assert any(abs(v) > 1e-9 for v in s.pose), "expected non-zero pose from CR20 (CR20A) DH kinematics"
     d.stop()
 
 
 def test_dobot_robot_type_cr10_io_bounds() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr10", "feedback_ports": False})
     assert d._tool_di_count == 2
     assert d._tool_do_count == 2
     d.stop()
 
 
 def test_dobot_robot_type_cr20_io_bounds() -> None:
-    from machinist.devices.robots.dobot import _factory
     bus = EventBus()
-    d = _factory("d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
+    d = default_registry.create("dobot_dashboard", "d", Endpoint("127.0.0.1", free_port()), bus, {"robot_type": "cr20", "feedback_ports": False})
     assert d._tool_di_count == 4
     assert d._tool_do_count == 4
     d.stop()
