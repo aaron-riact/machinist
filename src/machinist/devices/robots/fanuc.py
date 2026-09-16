@@ -12,9 +12,8 @@ wire to it through ``io_links``.
 from __future__ import annotations
 
 import struct
-import threading
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from ...core.capabilities import HasIO
@@ -24,7 +23,7 @@ from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
+from ...kinematics.api import DHParams, KinematicsOptions
 from ...kinematics.units import Meters, Radians
 from ...transport.focas import FocasSubpacket
 from ...transport.focas_server import FocasServer
@@ -157,16 +156,21 @@ class FanucFocasRobot(Device, HasArm, HasIO):
         for i in range(1, options.digital_inputs + 1):
             self.io.declare(f"di{i}", Direction.INPUT)
         self._options = options
-        self._server_focas = FocasServer(
-            host=endpoint.host,
-            port=options.focas_port,
-            on_request=self._focas_handler,
+        self.arm.start_ticker()
+        self.add_service(
+            FocasServer(
+                host=endpoint.host,
+                port=options.focas_port,
+                on_request=self._focas_handler,
+            )
         )
-        self._server_karel = LineServer(
-            endpoint.host,
-            options.karel_port,
-            session_factory=stateless(self._karel_handler),
-            framer=NEWLINE,
+        self.add_service(
+            LineServer(
+                endpoint.host,
+                options.karel_port,
+                session_factory=stateless(self._karel_handler),
+                framer=NEWLINE,
+            )
         )
 
     def _karel_handler(self, line: str) -> Iterable[str] | str | None:
@@ -289,31 +293,7 @@ class FanucFocasRobot(Device, HasArm, HasIO):
             self.emit("io", section="Y", address=address, data=sp.payload.hex())
         return sp.encode_response_ok()
 
-    def _run(self, stop: threading.Event) -> None:
-        self.arm.start_ticker()
-        threads: list[threading.Thread] = []
-
-        for server in (self._server_focas, self._server_karel):
-            ready = threading.Event()
-            t = threading.Thread(
-                target=server.serve_forever, args=(ready,), daemon=True,
-            )
-            t.start()
-            if not ready.wait(timeout=2.0):
-                raise RuntimeError(f"{self.name} server failed to bind")
-            threads.append(t)
-
-        self._mark_running()
-        stop.wait()
-
-        for server in (self._server_focas, self._server_karel):
-            server.shutdown()
-        for t in threads:
-            t.join(timeout=2.0)
-
     def _shutdown(self) -> None:
-        self._server_focas.shutdown()
-        self._server_karel.shutdown()
         self.arm.stop_ticker()
 
 
