@@ -44,17 +44,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
-from ..core.capabilities import HasPrograms
-from ..core.device import Device
+from ..commands import CommandError, Commands
 from ..core.events import DeviceFaulted, Event, LifecycleChanged, Note
 from ..core.io import Direction, SignalChanged
 from ..core.panel import Field, Panel
 from ..core.types import DeviceState
 from ..core.world import World
 from ..devices.machines.state import MachineView
-from ..devices.robots.arm import ArmStateView, HasArm, RobotArm
+from ..devices.robots.arm import ArmStateView
 from ..projection import DeviceView, FleetState, Projection
-from ..web.api import CommandError, dispatch_command
 
 #: Event types worth a line in the log. Continuous state (arm ticks, panel
 #: and machine views) is painted, not logged.
@@ -93,6 +91,7 @@ class MachinistApp(App[None]):
         super().__init__()
         self.world = world
         self.projection = Projection(world)
+        self.commands = Commands(world)
         self._events: queue.Queue[Event] = queue.Queue(maxsize=4096)
         self._selected: str | None = (
             world.devices[0].name if world.devices else None
@@ -192,7 +191,7 @@ class MachinistApp(App[None]):
             return
         if event.control is self.files:
             program = str(self.files.get_row_at(event.cursor_row)[0])
-            _cmd_run(self, f"{self._selected or ''} {program}")
+            self._dispatch_command(f"run {self._selected or ''} {program}")
             return
 
     def _refresh_devices_table(self, state: FleetState) -> None:
@@ -258,11 +257,6 @@ class MachinistApp(App[None]):
         for name in view.programs or ():
             self.files.add_row(name)
 
-    def _lookup(self, name: str | None) -> Device | None:
-        if name is None:
-            return None
-        return next((d for d in self.world.devices if d.name == name), None)
-
     # ----- command bar -------------------------------------------------
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -270,39 +264,32 @@ class MachinistApp(App[None]):
         self.cmd.value = ""
 
     def _dispatch_command(self, line: str) -> None:
+        """Run one command line through the shared dispatcher and log the outcome.
+
+        ``quit`` is the one verb the TUI owns; everything else is the same
+        :class:`~machinist.commands.Commands` the web endpoint uses, with the
+        selected device filling in for a name left out.
+        """
+        line = line.strip()
         if not line:
             return
-        verb, _, rest = line.partition(" ")
-        handler = _COMMANDS.get(verb)
-        if handler is None:
-            self._log.write(f"[red]unknown command[/]: {verb}")
+        if line == "quit":
+            self.exit()
             return
-        handler(self, rest)
-
-    def _set_signal(self, target: str, value: bool) -> None:
         try:
-            self.world.io_map.signal(target).set(value)
-            self._log.write(f"set [cyan]{target}[/] = {value}")
-        except (KeyError, ValueError) as exc:
+            result = self.commands.dispatch(line, selected=self._selected)
+        except CommandError as exc:
             self._log.write(f"[red]error[/]: {exc}")
-
-    def _with_arm(self, name: str, fn: Callable[[RobotArm], None]) -> None:
-        device = self._lookup(name)
-        if not isinstance(device, HasArm):
-            self._log.write(f"[red]{name}[/] has no arm")
             return
-        fn(device.arm)
-        self._log.write(f"applied to [cyan]{name}[/]")
+        self._log.write(result.message + ("  [dim]| quit[/]" if line == "help" else ""))
 
     # ----- keybindings --------------------------------------------------
 
     def action_estop(self) -> None:
-        if self._selected is not None:
-            self._with_arm(self._selected, lambda arm: arm.estop())
+        self._dispatch_command("estop")
 
     def action_reset(self) -> None:
-        if self._selected is not None:
-            self._with_arm(self._selected, lambda arm: arm.reset())
+        self._dispatch_command("reset")
 
     def action_toggle_files(self) -> None:
         self.query_one("#detail-lower").toggle_class("hidden")
@@ -435,66 +422,3 @@ def _format_event(event: Event) -> str:
         f"[cyan]{event.device:<12}[/] "
         f"[magenta]{event.kind:<6}[/] {payload}"
     )
-
-
-def _cmd_fault(app: MachinistApp, verb: str, rest: str) -> None:
-    """Run a fault-injection verb through the shared web dispatcher.
-
-    Delegating rather than reimplementing keeps the two command surfaces
-    from drifting: there is one parser for ``pstop``/``failenable``, and the
-    TUI only has to render the result.
-    """
-    target, _, tail = rest.strip().partition(" ")
-    if not target:
-        target = app._selected or ""
-    try:
-        result = dispatch_command(app.world, f"{verb} {target} {tail}".strip())
-    except CommandError as exc:
-        app._log.write(f"[red]error[/]: {exc}")
-        return
-    app._log.write(result["message"])
-
-
-def _cmd_set(app: MachinistApp, rest: str) -> None:
-    target, _, value = rest.partition(" ")
-    app._set_signal(target, value.strip() in ("1", "true", "on"))
-
-
-def _cmd_ls(app: MachinistApp, rest: str) -> None:
-    device = app._lookup(rest.strip() or app._selected)
-    if not isinstance(device, HasPrograms):
-        app._log.write(f"[red]{rest or 'selected'}[/] has no program library")
-        return
-    names = device.programs.list() or ["(empty)"]
-    app._log.write(f"[cyan]{device.name}[/] programs: {', '.join(names)}")
-
-
-def _cmd_run(app: MachinistApp, rest: str) -> None:
-    target, _, program = rest.partition(" ")
-    device = app._lookup(target.strip() or app._selected)
-    if not isinstance(device, HasPrograms):
-        app._log.write(f"[red]{target or 'selected'}[/] cannot run programs")
-        return
-    try:
-        device.run_program(program.strip())
-        app._log.write(f"started [cyan]{program.strip()}[/] on {device.name}")
-    except (FileNotFoundError, RuntimeError) as exc:
-        app._log.write(f"[red]error[/]: {exc}")
-
-
-_COMMANDS: dict[str, Callable[[MachinistApp, str], None]] = {
-    "help": lambda app, _: app._log.write(
-        "[bold]commands[/]  estop <device> | reset <device> | "
-        "set <device.signal> 0|1 | ls <device> | run <device> <program> | "
-        "pstop <device> [clear|collision|error|disabled] [ids=17,116] [sticky] | "
-        "failenable <device> stuck|error|off | quit"
-    ),
-    "quit": lambda app, _: app.exit(),
-    "estop": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.estop()),
-    "reset": lambda app, rest: app._with_arm(rest.strip(), lambda arm: arm.reset()),
-    "set": _cmd_set,
-    "ls": _cmd_ls,
-    "run": _cmd_run,
-    "pstop": lambda app, rest: _cmd_fault(app, "pstop", rest),
-    "failenable": lambda app, rest: _cmd_fault(app, "failenable", rest),
-}

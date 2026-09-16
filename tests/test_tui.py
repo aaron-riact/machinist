@@ -5,6 +5,7 @@ from types import MappingProxyType, SimpleNamespace
 
 from textual.widgets._data_table import ColumnKey, RowKey
 
+from machinist.commands import Commands
 from machinist.core.events import Event, LifecycleChanged, Note
 from machinist.core.io import Direction
 from machinist.core.panel import Field, Panel
@@ -15,9 +16,6 @@ from machinist.projection import DeviceView, FleetState, SignalView
 from machinist.tui.app import (
     MachinistApp,
     _arm_summary,
-    _cmd_fault,
-    _cmd_ls,
-    _cmd_run,
     _detail_header,
     _format_event,
     _io_rows,
@@ -26,7 +24,7 @@ from machinist.tui.app import (
     _panel_summary,
 )
 
-from .fakes import FakeDevice, FakeLibrary, FakeProgramDevice, RecordingDobot
+from .fakes import RecordingDobot
 
 
 def _view(name: str = "dev1", kind: str = "fake", **fields: object) -> DeviceView:
@@ -248,82 +246,52 @@ def test_refresh_files_lists_the_programs_of_the_view() -> None:
     assert app.files.log[-1] == ("clear",)
 
 
-# --- commands still go down to the devices through the World ------------
+# --- the command bar delegates to the shared dispatcher --------------------
 
 
-class _FakeApp:
-    def __init__(self, device) -> None:
-        self._selected = device.name
-        self._device = device
-        self.writes: list[str] = []
-        self._log = SimpleNamespace(write=self.writes.append)
-
-    def _lookup(self, name):
-        return self._device if (name in (None, self._device.name)) else None
-
-
-def test_cmd_ls_lists_programs() -> None:
-    device = FakeProgramDevice("haas1", programs=FakeLibrary(["O0001.nc", "O0002.nc"]))
-    app = _FakeApp(device)
-    _cmd_ls(app, "")
-    assert any("O0001.nc" in w for w in app.writes)
+def _command_app(device) -> SimpleNamespace:
+    writes: list[str] = []
+    exits: list[bool] = []
+    app = SimpleNamespace(
+        commands=Commands(SimpleNamespace(devices=[device])),
+        _selected=device.name,
+        _log=SimpleNamespace(write=writes.append),
+        writes=writes,
+        exit=lambda: exits.append(True),
+        exits=exits,
+    )
+    app._dispatch_command = lambda line: MachinistApp._dispatch_command(app, line)
+    return app
 
 
-def test_cmd_ls_complains_when_no_library() -> None:
-    app = _FakeApp(FakeDevice("haas1"))
-    _cmd_ls(app, "")
-    assert any("no program library" in w for w in app.writes)
-
-
-def test_cmd_run_dispatches_program_name() -> None:
-    device = FakeProgramDevice("haas1", programs=FakeLibrary())
-    app = _FakeApp(device)
-    _cmd_run(app, "haas1 O0001.nc")
-    assert device.ran == ["O0001.nc"]
-
-
-def test_cmd_run_reports_errors() -> None:
-    def boom(_name: str) -> None:
-        raise RuntimeError("already running")
-    app = _FakeApp(FakeProgramDevice("haas1", programs=FakeLibrary(), run=boom))
-    _cmd_run(app, "haas1 X.nc")
-    assert any("already running" in w for w in app.writes)
-
-
-class _FakeFaultApp:
-    """Enough of the app for _cmd_fault: a world, a selection and a log."""
-
-    def __init__(self, device) -> None:
-        self._selected = device.name
-        self.world = SimpleNamespace(devices=[device])
-        self.writes: list[str] = []
-        self._log = SimpleNamespace(write=self.writes.append)
-
-
-def test_cmd_fault_injects_a_protective_stop() -> None:
+def test_dispatch_command_runs_the_shared_verbs_with_the_selection() -> None:
     dobot = RecordingDobot()
-    app = _FakeFaultApp(dobot)
-    _cmd_fault(app, "pstop", "dobot1 error ids=17,116 sticky")
+    app = _command_app(dobot)
+    MachinistApp._dispatch_command(app, "pstop error ids=17,116 sticky")
     assert dobot.stops == [{"robot_mode": 9, "controller_ids": (17, 116), "sticky": True}]
+    assert any("protective stop error" in w for w in app.writes)
 
 
-def test_cmd_fault_falls_back_to_the_selected_device() -> None:
-    dobot = RecordingDobot()
-    app = _FakeFaultApp(dobot)
-    _cmd_fault(app, "pstop", "")
-    assert len(dobot.stops) == 1
-
-
-def test_cmd_fault_sets_an_enable_failure() -> None:
-    from machinist.devices.robots.dobot import EnableFailure
-
-    dobot = RecordingDobot()
-    app = _FakeFaultApp(dobot)
-    _cmd_fault(app, "failenable", "dobot1 stuck")
-    assert dobot.enable_failures == [EnableFailure.STUCK]
-
-
-def test_cmd_fault_logs_the_error_instead_of_raising() -> None:
-    app = _FakeFaultApp(RecordingDobot())
-    _cmd_fault(app, "pstop", "dobot1 sideways")
+def test_dispatch_command_logs_errors_instead_of_raising() -> None:
+    app = _command_app(RecordingDobot())
+    MachinistApp._dispatch_command(app, "pstop dobot1 sideways")
     assert any("unknown pstop option" in w for w in app.writes)
+    MachinistApp._dispatch_command(app, "frobnicate")
+    assert any("unknown command" in w for w in app.writes)
+
+
+def test_dispatch_command_owns_quit_and_ignores_blank_lines() -> None:
+    app = _command_app(RecordingDobot())
+    MachinistApp._dispatch_command(app, "   ")
+    assert app.writes == []
+    MachinistApp._dispatch_command(app, "quit")
+    assert app.exits == [True]
+
+
+def test_keybindings_go_through_the_same_dispatcher() -> None:
+    dobot = RecordingDobot()
+    app = _command_app(dobot)
+    MachinistApp.action_estop(app)
+    assert dobot.arm.state.view.estopped
+    MachinistApp.action_reset(app)
+    assert not dobot.arm.state.view.estopped

@@ -14,7 +14,7 @@ Routes
 ``GET  /api/state``      → the :class:`~machinist.projection.FleetState`, serialized
 ``GET  /api/events``     → SSE stream: log events, plus a ``device`` frame carrying a
                            device's full view whenever the projection changed it
-``POST /api/command``    → ``{"command": "..."}`` → dispatch result
+``POST /api/command``    → ``{"command": "..."}`` → :class:`~machinist.commands.Commands` result
 
 The browser is a projection too: it takes ``/api/state`` once, then applies
 ``device`` frames. Those are coalesced to at most one push per device every
@@ -40,11 +40,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from ..commands import CommandError, Commands
 from ..core.events import DeviceFaulted, Event, LifecycleChanged, Note
 from ..core.io import SignalChanged
 from ..core.world import World
 from ..projection import DeviceView, FleetState, Projection
-from .api import CommandError, dispatch_command, snapshot_world, view_to_dict
+from .api import snapshot_world, view_to_dict
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -138,6 +139,7 @@ def serve(world: World, *, host: str = "127.0.0.1", port: int = 8080) -> WebServ
 
 def _make_handler(world: World, projection: Projection) -> type[BaseHTTPRequestHandler]:
     """Bind a request-handler class to a specific world and its projection."""
+    commands = Commands(world)
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -164,11 +166,14 @@ def _make_handler(world: World, projection: Projection) -> type[BaseHTTPRequestH
             body = self._read_json()
             command = str(body.get("command", "")) if isinstance(body, dict) else ""
             try:
-                result = dispatch_command(world, command)
+                result = commands.dispatch(command)
             except CommandError as exc:
                 self._send_json({"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
-            self._send_json(result)
+            body_out: dict[str, Any] = {"ok": True, "message": result.message}
+            if result.programs is not None:
+                body_out["programs"] = list(result.programs)
+            self._send_json(body_out)
 
         # ----- helpers ------------------------------------------------
         def _read_json(self) -> Any:
