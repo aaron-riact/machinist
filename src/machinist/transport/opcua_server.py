@@ -58,6 +58,9 @@ def _ensure_loop() -> None:
 class OpcUaServer(Service):
     """Publish a device's state as OPC-UA variables on a background loop."""
 
+    #: ``asyncua.Server.init()`` alone can take seconds on first use.
+    BIND_TIMEOUT = 10.0
+
     def __init__(
         self,
         host: str,

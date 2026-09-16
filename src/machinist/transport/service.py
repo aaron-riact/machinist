@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 
 class Service(ABC):
     """Something that serves on a thread until told to stop."""
+
+    #: Seconds a device waits for :meth:`serve_forever` to signal *ready*
+    #: before it gives up and faults. Slow stacks raise this.
+    BIND_TIMEOUT: ClassVar[float] = 2.0
 
     @abstractmethod
     def serve_forever(self, ready: threading.Event | None = None) -> None:

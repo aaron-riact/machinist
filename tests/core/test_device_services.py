@@ -93,9 +93,7 @@ def test_serve_hook_runs_between_startup_and_shutdown() -> None:
 
 @pytest.mark.timeout(5)
 def test_a_service_that_never_binds_faults_the_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    import machinist.core.device as device_module
-
-    monkeypatch.setattr(device_module, "SERVICE_BIND_TIMEOUT", 0.05)
+    monkeypatch.setattr(_RecordingService, "BIND_TIMEOUT", 0.05)
     events: list[Event] = []
     bus = EventBus()
     bus.subscribe(events.append)
@@ -120,5 +118,24 @@ def test_services_cannot_be_added_after_start() -> None:
     try:
         with pytest.raises(RuntimeError, match="before start"):
             device.add_service(_RecordingService())
+    finally:
+        device.stop()
+
+
+@pytest.mark.timeout(5)
+def test_a_slow_service_may_declare_a_longer_bind_timeout() -> None:
+    class Slow(_RecordingService):
+        BIND_TIMEOUT = 1.0
+
+        def serve_forever(self, ready: threading.Event | None = None) -> None:
+            self._stop.wait(0.2)  # slower than the default would allow
+            super().serve_forever(ready)
+
+    device = _device()
+    device.add_service(Slow())
+    device.start()
+    try:
+        assert device.wait_ready(timeout=2.0)
+        assert device.lifecycle is DeviceState.RUNNING
     finally:
         device.stop()

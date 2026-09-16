@@ -32,8 +32,8 @@ from .events import Event, EventBus
 from .io import Direction, SignalBank
 from .types import DeviceState, Endpoint
 
-#: How long a service gets to bind its listener before the device faults.
-SERVICE_BIND_TIMEOUT = 2.0
+#: How long a device waits for a service thread to exit after shutdown.
+SERVICE_JOIN_TIMEOUT = 2.0
 
 
 class DetailSignal(TypedDict):
@@ -207,7 +207,7 @@ class Device(ABC):
             for service in self._services:
                 service.shutdown()
             for thread in threads:
-                thread.join(timeout=SERVICE_BIND_TIMEOUT)
+                thread.join(timeout=SERVICE_JOIN_TIMEOUT)
 
     def _start_service(self, service: Service) -> threading.Thread:
         """Serve *service* on its own thread and wait until it has bound."""
@@ -220,7 +220,7 @@ class Device(ABC):
             daemon=True,
         )
         thread.start()
-        if not ready.wait(timeout=SERVICE_BIND_TIMEOUT):
+        if not ready.wait(timeout=service.BIND_TIMEOUT):
             raise RuntimeError(f"{self.name}: {label} failed to bind")
         return thread
 
