@@ -8,7 +8,6 @@ and ``o1..on`` so other devices can wire to them via ``io_links`` in YAML.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,7 +46,6 @@ class WeidmullerUR20(Device, HasIO, HasRegisters):
         for i in range(1, self._cfg.outputs + 1):
             sig = self.io.declare(f"o{i}", Direction.OUTPUT)
             sig.subscribe(lambda v, idx=i: self.emit("output", index=idx, value=v))
-        self._server: HoldingRegisterServer | None = None
 
     def _on_read(self, address: int) -> int:
         if REG_INPUTS <= address < REG_INPUTS + 16:
@@ -82,25 +80,16 @@ class WeidmullerUR20(Device, HasIO, HasRegisters):
                 word |= 1 << bit
         return word
 
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(target=self._server.serve_forever, args=(ready,), daemon=True)
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
-
 
 @register("weidmuller_ur20", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = WeidmullerUR20Options(**options)
     device = WeidmullerUR20(name, endpoint, bus, opts, io=SignalBank(owner=name))
-    device._server = HoldingRegisterServer(
-        host=endpoint.host,
-        port=endpoint.port,
-        registers=device.register_port,
+    device.add_service(
+        HoldingRegisterServer(
+            host=endpoint.host,
+            port=endpoint.port,
+            registers=device.register_port,
+        )
     )
     return device

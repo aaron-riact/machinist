@@ -62,6 +62,11 @@ class HoldingRegisterServer(Service):
     def client_count(self) -> int:
         return self._client_count
 
+    @property
+    def listening(self) -> bool:
+        """True once :meth:`serve_forever` has bound its socket."""
+        return self._sock is not None
+
     def serve_forever(self, ready: threading.Event | None = None) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

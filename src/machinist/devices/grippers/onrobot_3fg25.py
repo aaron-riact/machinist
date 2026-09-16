@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.capabilities import HasRegisters
-from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
+from ...core.device import DetailField, DetailSignal, Device, DeviceDetail
 from ...core.events import EventBus
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -259,7 +259,7 @@ class OnRobot3FG25(Device, HasRegisters):
 
         return DeviceDetail(
             mode="modbus",
-            transport_ready=server is not None and server._sock is not None,
+            transport_ready=server is not None and server.listening,
             peer_connected=server is not None and server.client_count > 0,
             clients=server.client_count if server is not None else 0,
             input_block_hex="",
@@ -353,19 +353,6 @@ class OnRobot3FG25(Device, HasRegisters):
             self.emit("moving", diameter_mm=width / 10)
             self._stop_event.wait(0.02)
 
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._server.serve_forever, args=(ready,), daemon=True
-        )
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
-
 
 @register("onrobot_3fg25", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
@@ -385,10 +372,12 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     )
     state.target_angle_tenths = state.actual_angle_tenths
     device = OnRobot3FG25(name, endpoint, bus, opts, state=state)
-    device._server = HoldingRegisterServer(
+    server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,
         registers=device.register_port,
         on_connect_change=lambda count: device.emit("snapshot", clients=count),
     )
+    device._server = server  # the detail panel reports its listener and clients
+    device.add_service(server)
     return device

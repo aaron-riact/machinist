@@ -40,13 +40,11 @@ class ZimmerGED6000IL(Device, IOLinkPort):
 
     def __init__(
         self, name: str, endpoint: Endpoint, bus: EventBus, options: ZimmerGED6000ILOptions,
-        *, master: IOLinkHttpMaster | None = None,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self._state = _State(diameter_mm=options.initial_diameter_mm)
         self._state.target_mm = self._state.diameter_mm
         self._state_lock = threading.Lock()
-        self._master: IOLinkHttpMaster | None = None
 
     # ----- IOLinkPort protocol ---------------------------------------
 
@@ -74,23 +72,10 @@ class ZimmerGED6000IL(Device, IOLinkPort):
             self._state.moving = False
         self.emit("settled", diameter_mm=self._state.diameter_mm)
 
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._master.serve_forever, args=(ready,), daemon=True
-        )
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._master.shutdown()
-        thread.join(timeout=2.0)
-
 
 @register("zimmer_ged6000il", default_port=80)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = ZimmerGED6000ILOptions(**options)
     device = ZimmerGED6000IL(name, endpoint, bus, opts)
-    device._master = IOLinkHttpMaster(host=endpoint.host, port=endpoint.port, port_device=device)
+    device.add_service(IOLinkHttpMaster(host=endpoint.host, port=endpoint.port, port_device=device))
     return device

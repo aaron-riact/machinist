@@ -17,7 +17,7 @@ from ..conftest import free_port, wait_running
 def test_iolink_http_round_trip() -> None:
     port = free_port()
     device = ZimmerGED6000IL("z1", Endpoint("127.0.0.1", port), EventBus(), ZimmerGED6000ILOptions())
-    device._master = IOLinkHttpMaster(host="127.0.0.1", port=port, port_device=device)
+    device.add_service(IOLinkHttpMaster(host="127.0.0.1", port=port, port_device=device))
     device.start()
     try:
         wait_running(device)

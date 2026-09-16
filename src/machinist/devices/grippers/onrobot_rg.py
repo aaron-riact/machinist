@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.capabilities import HasRegisters
-from ...core.device import Device, DetailField, DetailSignal, DeviceDetail
+from ...core.device import DetailField, DetailSignal, Device, DeviceDetail
 from ...core.events import EventBus
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -245,7 +245,7 @@ class OnRobotRG(Device, HasRegisters):
 
         return DeviceDetail(
             mode="modbus",
-            transport_ready=server is not None and server._sock is not None,
+            transport_ready=server is not None and server.listening,
             peer_connected=server is not None and server.client_count > 0,
             clients=server.client_count if server is not None else 0,
             input_block_hex="",
@@ -272,19 +272,6 @@ class OnRobotRG(Device, HasRegisters):
             ],
             signals=signals,
         )
-
-    def _run(self, stop: threading.Event) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(
-            target=self._server.serve_forever, args=(ready,), daemon=True
-        )
-        thread.start()
-        if not ready.wait(timeout=2.0):
-            raise RuntimeError(f"{self.name} server failed to bind")
-        self._mark_running()
-        stop.wait()
-        self._server.shutdown()
-        thread.join(timeout=2.0)
 
 
 def _reg(signal: str, name: str, offset: str, type_: str, value: str) -> DetailField:
@@ -314,10 +301,12 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         limits=limits,
     )
     device = OnRobotRG(name, endpoint, bus, opts, state=state)
-    device._server = HoldingRegisterServer(
+    server = HoldingRegisterServer(
         host=endpoint.host,
         port=endpoint.port,
         registers=device.register_port,
         on_connect_change=lambda count: device.emit("snapshot", clients=count),
     )
+    device._server = server  # the detail panel reports its listener and clients
+    device.add_service(server)
     return device

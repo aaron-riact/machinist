@@ -25,8 +25,8 @@ def test_write_then_read_outputs() -> None:
         "io1", Endpoint("127.0.0.1", port), EventBus(), WeidmullerUR20Options(inputs=8, outputs=8),
         io=SignalBank(owner="io1"),
     )
-    device._server = HoldingRegisterServer(
-        host="127.0.0.1", port=port, registers=device.register_port,
+    device.add_service(
+        HoldingRegisterServer(host="127.0.0.1", port=port, registers=device.register_port)
     )
     device.start()
     try:
