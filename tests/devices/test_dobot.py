@@ -13,7 +13,9 @@ from machinist.devices.robots.arm import ArmMode, ArmStateView
 from machinist.devices.robots.dobot import (
     DOBOT_FEEDBACK_FAST_PORT,
     DOBOT_ROBOT_MODELS,
+    ERR_COMMAND_FAILED,
     ERR_ROBOT_IN_ERROR_STATE,
+    MAX_MODBUS_MASTERS,
     PROTECTIVE_STOP_MODES,
     ROBOT_MODE_COLLISION,
     ROBOT_MODE_DISABLED,
@@ -1063,3 +1065,80 @@ def test_setting_an_enable_failure_emits_a_fault_event(dobot: DobotDashboard) ->
     dobot.set_enable_failure(None)
 
     assert events == [{"enable_failure": "stuck"}, {"enable_failure": "none"}]
+
+
+# --- Modbus masters on the tool flange --------------------------------
+
+
+def test_modbusrtucreate_returns_the_first_master_index(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "ModbusRTUCreate(65,115200,E,1)") == "0,{0},ModbusRTUCreate(65,115200,E,1)"
+
+
+def test_modbusrtucreate_records_the_slave_id_and_baud(dobot: DobotDashboard) -> None:
+    _send(dobot, "ModbusRTUCreate(65,115200,E,1)")
+
+    master = dobot._masters[0]
+    assert (master.slave_id, master.baud) == (65, 115200)
+
+
+def test_modbusrtucreate_keeps_the_ambiguous_serial_args_verbatim(dobot: DobotDashboard) -> None:
+    """E,1 is parity then stop bit -- the client drops data_bit when it is 8."""
+    _send(dobot, "ModbusRTUCreate(65,115200,E,1)")
+
+    assert dobot._masters[0].serial == "E,1"
+
+
+def test_modbusrtucreate_works_without_the_optional_serial_args(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "ModbusRTUCreate(65,115200)") == "0,{0},ModbusRTUCreate(65,115200)"
+
+
+def test_each_master_gets_its_own_index(dobot: DobotDashboard) -> None:
+    """A Dual Quick Changer's two grippers are two sessions, two indices."""
+    first = _send(dobot, "ModbusRTUCreate(65,115200,E,1)")
+    second = _send(dobot, "ModbusRTUCreate(66,115200,E,1)")
+
+    assert first.startswith("0,{0}")
+    assert second.startswith("0,{1}")
+    assert dobot._masters[1].slave_id == 66
+
+
+def test_a_sixth_master_is_refused(dobot: DobotDashboard) -> None:
+    for slave in range(MAX_MODBUS_MASTERS):
+        _send(dobot, f"ModbusRTUCreate({65 + slave},115200)")
+
+    reply = _send(dobot, "ModbusRTUCreate(70,115200)")
+    assert reply == f"{ERR_COMMAND_FAILED},{{}},ModbusRTUCreate(70,115200)"
+
+
+def test_modbusrtucreate_rejects_non_numeric_arguments(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "ModbusRTUCreate(x,115200)").startswith("-30001,")
+
+
+def test_modbusrtucreate_rejects_a_missing_baud(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "ModbusRTUCreate(65)").startswith("-30001,")
+
+
+def test_modbusclose_releases_the_master(dobot: DobotDashboard) -> None:
+    _send(dobot, "ModbusRTUCreate(65,115200)")
+
+    assert _send(dobot, "ModbusClose(0)") == "0,{},ModbusClose(0)"
+    assert dobot._masters == {}
+
+
+def test_a_released_index_is_handed_out_again(dobot: DobotDashboard) -> None:
+    _send(dobot, "ModbusRTUCreate(65,115200)")
+    _send(dobot, "ModbusClose(0)")
+
+    assert _send(dobot, "ModbusRTUCreate(66,115200)").startswith("0,{0}")
+
+
+def test_closing_a_master_that_was_never_created_fails(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "ModbusClose(0)") == f"{ERR_COMMAND_FAILED},{{}},ModbusClose(0)"
+
+
+def test_closing_an_out_of_range_index_fails(dobot: DobotDashboard) -> None:
+    assert _send(dobot, "ModbusClose(9)").startswith("-40001,")
+
+
+def test_a_dobot_starts_with_an_empty_flange(dobot: DobotDashboard) -> None:
+    assert dobot.flange.slave_ids == ()

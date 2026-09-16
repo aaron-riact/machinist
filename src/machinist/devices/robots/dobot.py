@@ -43,6 +43,7 @@ from ...core.registry import register
 from ...core.types import Endpoint
 from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
 from ...kinematics.units import Meters, Radians
+from ...transport.flange_bus import FlangeBus
 from ...transport.framing import PAREN
 from .arm import ArmMode, ArmOptions, ArmStateView, RobotArm, arm_from_options
 
@@ -226,6 +227,9 @@ PROTECTIVE_STOP_MODES = (ROBOT_MODE_COLLISION, ROBOT_MODE_ERROR, ROBOT_MODE_DISA
 #: decoded by the vendor client ("The robot is in an error state").
 ERR_ROBOT_IN_ERROR_STATE = -2
 
+#: Reply ErrorID for a command the controller could not carry out.
+ERR_COMMAND_FAILED = -1
+
 class EnableFailure(StrEnum):
     """How an injected ``EnableRobot`` failure presents itself.
 
@@ -236,6 +240,29 @@ class EnableFailure(StrEnum):
 
     STUCK = "stuck"
     ERROR = "error"
+
+
+#: How many Modbus masters a controller will hold open at once, per the
+#: interface guide ("A maximum of 5 devices can be connected at the same time").
+MAX_MODBUS_MASTERS = 5
+
+
+@dataclass(slots=True)
+class _ModbusMaster:
+    """One Modbus master session, bound to a slave id on the flange line.
+
+    ``ModbusRTUCreate`` binds a session to a single slave id, so two grippers
+    on a Dual Quick Changer mean two sessions and two indices.
+    """
+
+    slave_id: int
+    baud: int
+    #: The serial arguments exactly as they arrived. The vendor client omits
+    #: optional ones it considers default, which shifts the remaining
+    #: positions -- there is no reliable way to tell a trailing data_bit from
+    #: a trailing stop_bit. Nothing here drives a real UART, so they are kept
+    #: verbatim for display rather than guessed at.
+    serial: str = ""
 
 
 #: Verbs that start motion. A robot in a protective stop refuses them all,
@@ -453,6 +480,8 @@ class DobotDashboard(LineServerDevice):
         self._running.set()
         self._error_ids: list[int] = []
         self._fault = _FaultState()
+        self.flange = FlangeBus()
+        self._masters: dict[int, _ModbusMaster] = {}
         self._ai: list[float] = [0.0] * self._ai_count
         self._tool_ai: list[float] = [0.0] * self._tool_ai_count
         self._ao: list[float] = [0.0] * self._ao_count
@@ -518,6 +547,23 @@ class DobotDashboard(LineServerDevice):
             case "emergencystop":
                 self.arm.estop()
                 self._error_ids = [1]
+                return _ok(verb, args)
+            case "modbusrtucreate":
+                try:
+                    slave_id, baud, serial = _parse_modbus_rtu_create(args)
+                except ValueError:
+                    return f"-30001,{{}},{verb}({args})"
+                index = self._next_master_index()
+                if index is None:
+                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
+                self._masters[index] = _ModbusMaster(slave_id=slave_id, baud=baud, serial=serial)
+                return _ok(verb, args, value=str(index))
+            case "modbusclose":
+                idx, err = _int_arg(args, verb, lo=0, hi=MAX_MODBUS_MASTERS - 1)
+                if err:
+                    return err
+                if self._masters.pop(idx, None) is None:
+                    return f"{ERR_COMMAND_FAILED},{{}},{verb}({args})"
                 return _ok(verb, args)
             case "clearerror":
                 self.arm.reset()
@@ -730,6 +776,13 @@ class DobotDashboard(LineServerDevice):
             case _:
                 return f"-10000,{{}},{verb}({args})"
 
+    # ----- modbus masters ------------------------------------------------
+
+    def _next_master_index(self) -> int | None:
+        return next(
+            (i for i in range(MAX_MODBUS_MASTERS) if i not in self._masters), None
+        )
+
     # ----- fault injection ---------------------------------------------
 
     def inject_protective_stop(
@@ -847,6 +900,20 @@ def _parse(line: str) -> tuple[str, str]:
         return line, ""
     verb, rest = line.split("(", 1)
     return verb.strip(), rest[:-1]
+
+
+def _parse_modbus_rtu_create(args: str) -> tuple[int, int, str]:
+    """Split ``ModbusRTUCreate`` into (slave_id, baud, remaining serial args).
+
+    Only the first two are positionally reliable. The vendor client drops any
+    optional argument whose value matches its default, so what follows is
+    ambiguous -- ``ModbusRTUCreate(1,115200,E,1)`` carries a stop bit in the
+    position the documented signature gives to a data bit.
+    """
+    parts = [p.strip() for p in args.split(",") if p.strip()]
+    if len(parts) < 2:
+        raise ValueError(f"expected at least slave_id and baud, got {args!r}")
+    return int(parts[0]), int(parts[1]), ",".join(parts[2:])
 
 
 def _parse_floats(text: str, *, count: int) -> list[float]:
