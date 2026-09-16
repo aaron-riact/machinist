@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -35,10 +35,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...core.capabilities import HasFlange, HasIO
-from ...core.device import DetailField, DeviceDetail
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
 from ...core.line_device import LineServerDevice
+from ...core.panel import Field, Panel
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...kinematics.api import DHParams, Joints, KinematicsOptions, Pose
@@ -915,30 +915,29 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             )
         return rows
 
-    def build_detail(self) -> DeviceDetail:
-        detail = super().build_detail()
+    def build_detail(self) -> Panel:
         s = self.arm.state.snapshot()
-        detail["derived_fields"] = [
-            DetailField(signal="robottype", name="Robot type", offset="0", type="int", value=str(self._robot_type_code)),
-            DetailField(signal="speedfactor", name="Speed factor", offset="0", type="int", value=f"{int(s.speed_fraction * 100)}%"),
-            DetailField(signal="pstop", name="Protective stop", offset="0", type="str", value=self._protective_stop_detail()),
-            DetailField(signal="alarmids", name="Alarm IDs", offset="0", type="str", value=self._alarm_ids_detail()),
-            DetailField(signal="enablefail", name="Enable failure", offset="0", type="str", value=self._enable_failure_detail()),
-            DetailField(signal="flange", name="Flange slaves", offset="0", type="str", value=self._flange_detail()),
+        derived = [
+            Field(signal="robottype", name="Robot type", offset="0", type="int", value=str(self._robot_type_code)),
+            Field(signal="speedfactor", name="Speed factor", offset="0", type="int", value=f"{int(s.speed_fraction * 100)}%"),
+            Field(signal="pstop", name="Protective stop", offset="0", type="str", value=self._protective_stop_detail()),
+            Field(signal="alarmids", name="Alarm IDs", offset="0", type="str", value=self._alarm_ids_detail()),
+            Field(signal="enablefail", name="Enable failure", offset="0", type="str", value=self._enable_failure_detail()),
+            Field(signal="flange", name="Flange slaves", offset="0", type="str", value=self._flange_detail()),
         ] + [
-            DetailField(signal=f"master{index}", name=f"Modbus master {index}", offset=str(index), type="str", value=value)
+            Field(signal=f"master{index}", name=f"Modbus master {index}", offset=str(index), type="str", value=value)
             for index, value in self._master_details()
         ] + [
-            DetailField(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
+            Field(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._ai)
         ] + [
-            DetailField(signal=f"ao{i+1}", name=f"AO-{i+1}", offset=str(i), type="float", value=str(v))
+            Field(signal=f"ao{i+1}", name=f"AO-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._ao)
         ] + [
-            DetailField(signal=f"toolai{i+1}", name=f"ToolAI-{i+1}", offset=str(i), type="float", value=str(v))
+            Field(signal=f"toolai{i+1}", name=f"ToolAI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._tool_ai)
         ]
-        return detail
+        return replace(super().build_detail(), derived_fields=tuple(derived))
 
     def _shutdown(self) -> None:
         self._running.clear()

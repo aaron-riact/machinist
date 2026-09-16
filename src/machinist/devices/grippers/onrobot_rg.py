@@ -42,8 +42,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.capabilities import HasRegisters
-from ...core.device import DetailField, DetailSignal, Device, DeviceDetail
+from ...core.device import Device
 from ...core.events import EventBus
+from ...core.panel import Field, Panel
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
@@ -238,44 +239,42 @@ class OnRobotRG(Device, HasRegisters):
 
     # ----- device --------------------------------------------------------
 
-    def build_detail(self) -> DeviceDetail:
+    def build_detail(self) -> Panel:
         s = self._state
         server = self._server
-        signals: list[DetailSignal] = []  # a flange gripper has no discrete IO
 
-        return DeviceDetail(
+        return Panel(
             mode="modbus",
             transport_ready=server is not None and server.listening,
             peer_connected=server is not None and server.client_count > 0,
             clients=server.client_count if server is not None else 0,
             input_block_hex="",
             output_block_hex="",
-            input_fields=[
+            input_fields=(
                 _reg("T_FORCE", "Target force", "0x0000", "int", f"{s.target_force_tenths} (.1 N)"),
                 _reg("T_WIDTH", "Target width", "0x0001", "int", f"{s.target_width_tenths} (.1 mm)"),
                 _reg("CMD", "Command", "0x0002", "int", str(s.command)),
                 _reg("SET_FTOF", "Set fingertip offset", "0x0407", "int", f"{s.fingertip_offset_tenths} (.1 mm)"),
-            ],
-            output_fields=[
+            ),
+            output_fields=(
                 _reg("WIDTH", "Actual width", "0x010B", "int", f"{s.actual_width_tenths} (.1 mm)"),
                 _reg("STATUS", "Status flags", "0x010C", "hex", f"0x{self._status_word():04X}"),
                 _reg("W_OFF", "Width w/ offset", "0x0113", "int", f"{max(0, s.actual_width_tenths - 2 * s.fingertip_offset_tenths)} (.1 mm)"),
                 _reg("FTOFFSET", "Fingertip offset", "0x0102", "int", f"{s.fingertip_offset_tenths} (.1 mm)"),
-            ],
-            derived_fields=[
+            ),
+            derived_fields=(
                 _reg("MODEL", "Model", "", "str", self._settings.model.upper()),
                 _reg("WIDTH_MM", "Actual width", "", "mm", f"{s.actual_width_tenths / 10:.1f}"),
                 _reg("BUSY", "Moving", "", "bit", "1" if s.busy else "0"),
                 _reg("GRIPPED", "Object gripped", "", "bit", "1" if s.grip_detected else "0"),
                 _reg("OBJECT", "Object width", "", "mm",
                      "-" if s.held_object_tenths is None else f"{s.held_object_tenths / 10:.1f}"),
-            ],
-            signals=signals,
+            ),
         )
 
 
-def _reg(signal: str, name: str, offset: str, type_: str, value: str) -> DetailField:
-    return DetailField(signal=signal, name=name, offset=offset, type=type_, value=value)
+def _reg(signal: str, name: str, offset: str, type_: str, value: str) -> Field:
+    return Field(signal=signal, name=name, offset=offset, type=type_, value=value)
 
 
 @register("onrobot_rg", default_port=502)

@@ -10,9 +10,10 @@ from __future__ import annotations
 import threading
 
 from machinist.core.capabilities import HasIO, HasPrograms
-from machinist.core.device import Device, DeviceDetail
+from machinist.core.device import Device
 from machinist.core.events import EventBus
 from machinist.core.io import SignalBank
+from machinist.core.panel import Panel
 from machinist.core.types import Endpoint
 from machinist.devices.machines.state import HasMachineState, MachineState
 from machinist.devices.robots.arm import ArmOptions, HasArm, RobotArm
@@ -32,15 +33,15 @@ class FakeDevice(Device):
         *,
         kind: str | None = None,
         endpoint: Endpoint = _LOOPBACK,
-        detail: DeviceDetail | None = None,
+        detail: Panel | None = None,
     ) -> None:
         super().__init__(name, endpoint, EventBus())
         if kind is not None:
             self.kind = kind
         self._detail = detail
 
-    def build_detail(self) -> DeviceDetail:  # type: ignore[override]
-        return self._detail  # tests also cover the "no detail" case
+    def build_detail(self) -> Panel:
+        return self._detail if self._detail is not None else super().build_detail()
 
     def _run(self, stop: threading.Event) -> None:  # pragma: no cover - never started
         stop.wait()
@@ -48,18 +49,18 @@ class FakeDevice(Device):
 
 class FakeArmDevice(FakeDevice, HasArm):
     def __init__(self, name: str, *, arm: RobotArm) -> None:
-        super().__init__(name, kind="robot", detail=None)
+        super().__init__(name, kind="robot")
         self.arm = arm
 
 
 class FakeMachineDevice(FakeDevice, HasMachineState):
     def __init__(self, name: str, *, state: MachineState) -> None:
-        super().__init__(name, kind="haas_ngc", detail=None)
+        super().__init__(name, kind="haas_ngc")
         self.state = state
 
 
 class FakeIODevice(FakeDevice, HasIO):
-    def __init__(self, name: str, *, io: SignalBank, detail: DeviceDetail | None = None) -> None:
+    def __init__(self, name: str, *, io: SignalBank, detail: Panel | None = None) -> None:
         super().__init__(name, detail=detail)
         self.io = io
 
@@ -77,7 +78,7 @@ class FakeLibrary:
 
 class FakeProgramDevice(FakeDevice, HasPrograms):
     def __init__(self, name: str, *, programs: FakeLibrary, run=None) -> None:
-        super().__init__(name, kind="haas_ngc", detail=None)
+        super().__init__(name, kind="haas_ngc")
         self.programs = programs  # type: ignore[assignment]
         self._run_hook = run
         self.ran: list[str] = []

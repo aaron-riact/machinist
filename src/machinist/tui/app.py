@@ -40,8 +40,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ..core.capabilities import HasIO, HasPrograms
-from ..core.device import DetailField, DetailSignal, Device
+from ..core.device import Device
 from ..core.events import Event
+from ..core.panel import Field
 from ..core.types import DeviceState
 from ..core.world import World
 from ..devices.machines.state import HasMachineState
@@ -208,15 +209,10 @@ class MachinistApp(App[None]):
             self._last_files = None
             return
         self._refresh_detail_header(device)
-        snapshot = device.build_detail()
-
-        if snapshot is None:
-            return
-
-        input_fields: list[DetailField] = snapshot.get("input_fields", [])
-        output_fields: list[DetailField] = snapshot.get("output_fields", [])
-        derived_fields: list[DetailField] = snapshot.get("derived_fields", [])
-        signals: list[DetailSignal] = snapshot.get("signals", [])
+        panel = device.build_detail()
+        input_fields = panel.input_fields
+        output_fields = panel.output_fields
+        derived_fields = panel.derived_fields
 
         # Case-insensitive lookup of raw signal values for the green/red dot.
         signal_values: dict[str, bool] = {}
@@ -224,9 +220,9 @@ class MachinistApp(App[None]):
             for sig in device.io:
                 signal_values[sig.name.lower()] = bool(sig.value)
 
-        def _dot(field: DetailField) -> Text:
-            if field["type"] in ("bit", "bool"):
-                on = signal_values.get(field["signal"].lower())
+        def _dot(field: Field) -> Text:
+            if field.type in ("bit", "bool"):
+                on = signal_values.get(field.signal.lower())
                 t = Text("●")
                 t.stylize(Style(color="green" if on else "red"))
                 return t
@@ -237,44 +233,26 @@ class MachinistApp(App[None]):
             self.outputs.clear()
             self.derived.clear()
 
-            if input_fields or output_fields:
-                for field in input_fields:
-                    self.inputs.add_row(_dot(field) + " " + field["signal"] + " " + field["name"], field["offset"], field["value"])
-                for field in output_fields:
-                    self.outputs.add_row(_dot(field) + " " + field["signal"] + " " + field["name"], field["offset"], field["value"])
-            else:
-                for sig in signals:
-                    dot = Text("●", style="green" if sig["value"] else "red")
-                    table = self.outputs if sig["direction"] == "OUTPUT" else self.inputs
-                    table.add_row(dot + " " + sig["name"], "", str(sig["value"]))
-
+            for field in input_fields:
+                self.inputs.add_row(_dot(field) + " " + field.signal + " " + field.name, field.offset, field.value)
+            for field in output_fields:
+                self.outputs.add_row(_dot(field) + " " + field.signal + " " + field.name, field.offset, field.value)
             for field in derived_fields:
-                self.derived.add_row(f"{field['signal']} {field['name']}", field["value"])
+                self.derived.add_row(f"{field.signal} {field.name}", field.value)
 
         else:
             input_keys = list(self.inputs.rows.keys())
             output_keys = list(self.outputs.rows.keys())
             derived_keys = list(self.derived.rows.keys())
 
-            if input_fields or output_fields:
-                for i, field in enumerate(input_fields):
-                    self.inputs.update_cell(input_keys[i], self._inputs_col_label, _dot(field) + " " + field["signal"] + " " + field["name"])
-                    self.inputs.update_cell(input_keys[i], self._inputs_col_value, field["value"])
-                for i, field in enumerate(output_fields):
-                    self.outputs.update_cell(output_keys[i], self._outputs_col_label, _dot(field) + " " + field["signal"] + " " + field["name"])
-                    self.outputs.update_cell(output_keys[i], self._outputs_col_value, field["value"])
-            else:
-                for i, sig in enumerate(signals):
-                    dot = Text("●", style="green" if sig["value"] else "red")
-                    row_key = output_keys[i] if sig["direction"] == "OUTPUT" else input_keys[i]
-                    col_label = self._outputs_col_label if sig["direction"] == "OUTPUT" else self._inputs_col_label
-                    col_value = self._outputs_col_value if sig["direction"] == "OUTPUT" else self._inputs_col_value
-                    table = self.outputs if sig["direction"] == "OUTPUT" else self.inputs
-                    table.update_cell(row_key, col_label, dot + " " + sig["name"])
-                    table.update_cell(row_key, col_value, str(sig["value"]))
-
+            for i, field in enumerate(input_fields):
+                self.inputs.update_cell(input_keys[i], self._inputs_col_label, _dot(field) + " " + field.signal + " " + field.name)
+                self.inputs.update_cell(input_keys[i], self._inputs_col_value, field.value)
+            for i, field in enumerate(output_fields):
+                self.outputs.update_cell(output_keys[i], self._outputs_col_label, _dot(field) + " " + field.signal + " " + field.name)
+                self.outputs.update_cell(output_keys[i], self._outputs_col_value, field.value)
             for i, field in enumerate(derived_fields):
-                self.derived.update_cell(derived_keys[i], self._derived_col_value, field["value"])
+                self.derived.update_cell(derived_keys[i], self._derived_col_value, field.value)
 
         self._last_selected = device
         self._refresh_files(device)
@@ -433,15 +411,12 @@ def _machine_summary(device: Device) -> str:
 
 
 def _snapshot_summary(device: Device) -> str:
-    snapshot = device.build_detail()
-    if snapshot is None:
-        return ""
-    clients = snapshot.get("clients")
-    if clients is not None:
-        return f"\n{snapshot['mode']}   {clients} client(s)"
-    peer = "peer up" if snapshot["peer_connected"] else "waiting"
-    ready = "ready" if snapshot["transport_ready"] else "offline"
-    return f"\n{snapshot['mode']}   transport {ready}   link {peer}"
+    panel = device.build_detail()
+    if panel.clients is not None:
+        return f"\n{panel.mode}   {panel.clients} client(s)"
+    peer = "peer up" if panel.peer_connected else "waiting"
+    ready = "ready" if panel.transport_ready else "offline"
+    return f"\n{panel.mode}   transport {ready}   link {peer}"
 
 
 def _format_event(event: Event) -> str:

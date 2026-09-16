@@ -247,9 +247,9 @@ def test_dobot_speedfactor_sets_global_speed_ratio(dobot: DobotDashboard) -> Non
 def test_dobot_speedfactor_appears_in_build_detail(dobot: DobotDashboard) -> None:
     _send(dobot, "SpeedFactor(75)")
     detail = dobot.build_detail()
-    fields = detail["derived_fields"]
-    sf = next(f for f in fields if f["signal"] == "speedfactor")
-    assert sf["value"] == "75%"
+    fields = detail.derived_fields
+    sf = next(f for f in fields if f.signal == "speedfactor")
+    assert sf.value == "75%"
 
 
 def test_dobot_robot_type_defaults_to_cr5() -> None:
@@ -986,7 +986,7 @@ def test_a_sticky_error_stop_keeps_a_driver_enable_loop_failing(
 
 
 def _derived(dobot: DobotDashboard) -> dict[str, str]:
-    return {f["signal"]: f["value"] for f in dobot.build_detail()["derived_fields"]}
+    return {f.signal: f.value for f in dobot.build_detail().derived_fields}
 
 
 def test_detail_panel_reads_clear_when_nothing_is_injected(dobot: DobotDashboard) -> None:

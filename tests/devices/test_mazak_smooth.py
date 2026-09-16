@@ -249,9 +249,9 @@ def test_heartbeat_timeout_raises_alarm_when_echo_does_not_follow() -> None:
 def test_io_only_device_returns_bare_detail() -> None:
     device = _make(interfaces=["io"])
     detail = device.build_detail()
-    assert detail["mode"] == "io"
-    assert detail["transport_ready"] is False
-    assert detail["input_fields"] == []
+    assert detail.mode == "io"
+    assert detail.transport_ready is False
+    assert detail.input_fields == ()
 
 
 def test_world_builds_mazak_smooth_device() -> None:

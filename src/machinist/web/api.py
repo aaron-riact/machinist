@@ -13,10 +13,10 @@ the browser and the terminal stay feature-equivalent.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
-from ..core.capabilities import HasPrograms
+from ..core.capabilities import HasIO, HasPrograms
 from ..core.device import Device
 from ..core.world import World
 from ..devices.machines.state import HasMachineState, MachineView
@@ -37,14 +37,13 @@ def snapshot_device(device: Device) -> dict[str, Any]:
         "endpoint": str(device.endpoint),
         "lifecycle": str(device.lifecycle),
     }
-    detail = device.build_detail()
-    if detail is not None:
-        snap["signals"] = detail.get("signals", [])
-        mode = detail.get("mode", "")
-        if mode == "modbus":
-            snap["modbus"] = detail
-        else:
-            snap["ethernetip"] = detail
+    if isinstance(device, HasIO):
+        snap["signals"] = [
+            {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
+            for sig in device.io
+        ]
+    panel = device.build_detail()
+    snap["modbus" if panel.mode == "modbus" else "ethernetip"] = asdict(panel)
     if isinstance(device, HasArm):
         snap["arm"] = _arm_snapshot(device.arm)
     if isinstance(device, HasMachineState):

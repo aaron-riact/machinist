@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from machinist.core.config import DeviceConfig, IOLink, SystemConfig
+from machinist.core.panel import Field, Panel
 from machinist.core.world import World, WorldBuilder
 from machinist.devices.machines.state import MachineState
 from machinist.devices.robots.arm import RobotArm
@@ -32,14 +33,13 @@ def _gripper_world() -> World:
 
 
 def test_snapshot_device_reports_core_identity() -> None:
-    device = FakeDevice("ur1", kind="ur_dashboard", detail=None)
+    device = FakeDevice("ur1", kind="ur_dashboard")
     snap = snapshot_device(device)
-    assert snap == {
-        "name": "ur1",
-        "kind": "ur_dashboard",
-        "endpoint": "127.0.0.1:29999",
-        "lifecycle": "created",
-    }
+    assert snap["name"] == "ur1"
+    assert snap["kind"] == "ur_dashboard"
+    assert snap["endpoint"] == "127.0.0.1:29999"
+    assert snap["lifecycle"] == "created"
+    assert snap["ethernetip"]["mode"] == "io"  # the plain panel of a device with nothing to add
 
 
 def test_snapshot_device_includes_arm_snapshot() -> None:
@@ -72,17 +72,16 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
     device = FakeDevice(
         "smooth",
         kind="mazak_smooth",
-        detail={
-            "mode": "adapter",
-            "transport_ready": True,
-            "peer_connected": False,
-            "input_block_hex": "00 00",
-            "output_block_hex": "01 00",
-            "input_fields": [{"signal": "DI100", "name": "Target work number data"}],
-            "output_fields": [{"signal": "DO100", "name": "Current work number"}],
-            "derived_fields": [{"signal": "STATE", "name": "Alarm message"}],
-            "signals": [],
-        },
+        detail=Panel(
+            mode="adapter",
+            transport_ready=True,
+            peer_connected=False,
+            input_block_hex="00 00",
+            output_block_hex="01 00",
+            input_fields=(Field("DI100", "Target work number data"),),
+            output_fields=(Field("DO100", "Current work number"),),
+            derived_fields=(Field("STATE", "Alarm message"),),
+        ),
     )
     snap = snapshot_device(device)
     assert snap["ethernetip"]["mode"] == "adapter"
@@ -90,9 +89,10 @@ def test_snapshot_device_includes_ethernetip_breakdown() -> None:
     assert snap["ethernetip"]["input_fields"][0]["signal"] == "DI100"
 
 
-def test_snapshot_device_omits_ethernetip_when_snapshot_is_disabled() -> None:
-    device = FakeDevice("smooth", kind="mazak_smooth", detail=None)
+def test_snapshot_device_files_a_modbus_panel_under_modbus() -> None:
+    device = FakeDevice("g1", kind="onrobot_rg", detail=Panel(mode="modbus", clients=1))
     snap = snapshot_device(device)
+    assert snap["modbus"]["clients"] == 1
     assert "ethernetip" not in snap
 
 

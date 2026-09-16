@@ -24,43 +24,17 @@ from __future__ import annotations
 
 import threading
 from abc import ABC
-from typing import Any, TypedDict
+from typing import Any
 
 from ..transport.service import Service
 from .capabilities import HasIO
 from .events import Event, EventBus, LifecycleChanged, Note
 from .io import Direction, SignalBank
+from .panel import Field, Panel
 from .types import DeviceState, Endpoint
 
 #: How long a device waits for a service thread to exit after shutdown.
 SERVICE_JOIN_TIMEOUT = 2.0
-
-
-class DetailSignal(TypedDict):
-    name: str
-    direction: str
-    value: bool
-
-
-class DetailField(TypedDict):
-    signal: str
-    name: str
-    offset: str
-    type: str
-    value: str
-
-
-class DeviceDetail(TypedDict):
-    mode: str
-    transport_ready: bool
-    peer_connected: bool
-    clients: int | None
-    input_block_hex: str
-    output_block_hex: str
-    input_fields: list[DetailField]
-    output_fields: list[DetailField]
-    derived_fields: list[DetailField]
-    signals: list[DetailSignal]
 
 
 class Device(ABC):
@@ -137,50 +111,32 @@ class Device(ABC):
     def _publish_lifecycle(self) -> None:
         self.publish(LifecycleChanged(device=self.name, state=self.lifecycle))
 
-    def build_detail(self) -> DeviceDetail:
-        """Assemble a normalized detail dict for display / transport.
+    def build_detail(self) -> Panel:
+        """The device's detail :class:`Panel`.
 
-        Subclasses override to add transport status, text/bit fields,
-        and derived state.  The dict format is the single source for
-        both the TUI and the web API.
+        The default lists the device's discrete IO as bit fields. Devices
+        with a register map or an I/O block override it.
         """
         bank = self._signal_bank()
-        signals: list[DetailSignal] = []
-        if bank is not None:
-            signals = [
-                {"name": sig.name, "direction": str(sig.direction), "value": sig.value}
-                for sig in bank
-            ]
-
-        input_fields: list[DetailField] = []
-        output_fields: list[DetailField] = []
-        if bank is not None:
-            for sig in bank:
-                val = "ON" if sig.value else "OFF"
-                field: DetailField = {
-                    "signal": sig.name.upper(),
-                    "name": sig.name,
-                    "offset": "",
-                    "type": "bit",
-                    "value": val,
-                }
-                if sig.direction is Direction.INPUT:
-                    input_fields.append(field)
-                else:
-                    output_fields.append(field)
-
-        return {
-            "mode": "io",
-            "transport_ready": True,
-            "peer_connected": True,
-            "clients": None,
-            "input_block_hex": "",
-            "output_block_hex": "",
-            "input_fields": input_fields,
-            "output_fields": output_fields,
-            "derived_fields": [],
-            "signals": signals,
+        if bank is None:
+            return Panel()
+        rows = {
+            Direction.INPUT: [],
+            Direction.OUTPUT: [],
         }
+        for sig in bank:
+            rows[sig.direction].append(
+                Field(
+                    signal=sig.name.upper(),
+                    name=sig.name,
+                    type="bit",
+                    value="ON" if sig.value else "OFF",
+                )
+            )
+        return Panel(
+            input_fields=tuple(rows[Direction.INPUT]),
+            output_fields=tuple(rows[Direction.OUTPUT]),
+        )
 
     def _signal_bank(self) -> SignalBank | None:
         """The device's IO bank if it declares :class:`HasIO`, else ``None``."""

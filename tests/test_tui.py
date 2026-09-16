@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from textual.widgets._data_table import ColumnKey, RowKey
 
 from machinist.core.events import Event, LifecycleChanged, Note
+from machinist.core.panel import Field, Panel
 from machinist.core.types import DeviceState
 from machinist.devices.machines.state import MachineState
 from machinist.devices.robots.arm import RobotArm
@@ -91,8 +92,7 @@ def test_detail_header_combines_static_and_dynamic_sections() -> None:
 
 def test_snapshot_summary_reports_mode_and_link_state() -> None:
     device = FakeDevice(
-        "smooth",
-        detail={"mode": "adapter", "transport_ready": True, "peer_connected": False},
+        "smooth", detail=Panel(mode="adapter", transport_ready=True, peer_connected=False)
     )
     out = _snapshot_summary(device)
     assert "adapter" in out
@@ -228,18 +228,11 @@ def test_refresh_detail_populates_then_increments_then_rebuilds_on_switch() -> N
         SimpleNamespace(name="i1", value=True, direction=Direction.INPUT),
         SimpleNamespace(name="o1", value=False, direction=Direction.OUTPUT),
     ]
-    _detail = {
-        "mode": "test",
-        "transport_ready": True,
-        "peer_connected": True,
-        "clients": None,
-        "input_block_hex": "",
-        "output_block_hex": "",
-        "input_fields": [{"signal": "i1", "name": "Input 1", "offset": "byte 0", "type": "bit", "value": "ON"}],
-        "output_fields": [{"signal": "o1", "name": "Output 1", "offset": "byte 0", "type": "bit", "value": "OFF"}],
-        "derived_fields": [],
-        "signals": [],
-    }
+    _detail = Panel(
+        mode="test",
+        input_fields=(Field("i1", "Input 1", "byte 0", "bit", "ON"),),
+        output_fields=(Field("o1", "Output 1", "byte 0", "bit", "OFF"),),
+    )
     device1 = FakeIODevice("dev1", io=sigs, detail=_detail)  # type: ignore[arg-type]
     device2 = FakeIODevice("dev2", io=sigs, detail=_detail)  # type: ignore[arg-type]
 

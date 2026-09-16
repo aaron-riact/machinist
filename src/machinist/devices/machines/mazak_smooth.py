@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...core.capabilities import HasIO
-from ...core.device import DetailField, DetailSignal, Device, DeviceDetail
+from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
+from ...core.panel import Field, Panel
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.ethernetip import (
@@ -338,21 +339,10 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         with self._lock:
             return dict(self._state_snapshot)
 
-    def build_detail(self) -> DeviceDetail:
+    def build_detail(self) -> Panel:
         """Assemble the normalized detail dict for this Smooth device."""
         if "ethernetip" not in self._interfaces:
-            return DeviceDetail(
-                mode="io",
-                transport_ready=False,
-                peer_connected=False,
-                clients=None,
-                input_block_hex="",
-                output_block_hex="",
-                input_fields=[],
-                output_fields=[],
-                derived_fields=[],
-                signals=[],
-            )
+            return Panel(mode="io", transport_ready=False, peer_connected=False)
 
         with self._lock:
             input_block = bytes(self._input_block)
@@ -365,11 +355,6 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
 
         transport_ready = transport is not None and transport.connected
         peer_connected = transport is not None and transport.peer_connected
-
-        signals = [
-            DetailSignal(name=sig.name, direction=str(sig.direction), value=sig.value)
-            for sig in self.io
-        ]
 
         input_fields = _field_rows(
             prefix="DI",
@@ -385,38 +370,14 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             text_fields=OUTPUT_TEXT_FIELDS,
             bit_fields=OUTPUT_BIT_FIELDS,
         )
-        derived_fields: list[DetailField] = [
-            {
-                "signal": "STATE",
-                "name": "Active program",
-                "offset": "-",
-                "type": "string",
-                "value": active_program or "",
-            },
-            {
-                "signal": "STATE",
-                "name": "Connection up",
-                "offset": "-",
-                "type": "bool",
-                "value": "ON" if connection_up else "OFF",
-            },
-            {
-                "signal": "STATE",
-                "name": "Alarm code",
-                "offset": "-",
-                "type": "int",
-                "value": "" if alarm_code is None else str(alarm_code),
-            },
-            {
-                "signal": "STATE",
-                "name": "Alarm message",
-                "offset": "-",
-                "type": "string",
-                "value": alarm_message,
-            },
-        ]
+        derived_fields = (
+            Field("STATE", "Active program", "-", "string", active_program or ""),
+            Field("STATE", "Connection up", "-", "bool", "ON" if connection_up else "OFF"),
+            Field("STATE", "Alarm code", "-", "int", "" if alarm_code is None else str(alarm_code)),
+            Field("STATE", "Alarm message", "-", "string", alarm_message),
+        )
 
-        return DeviceDetail(
+        return Panel(
             mode=self._ethernetip_mode,
             transport_ready=transport_ready,
             peer_connected=peer_connected,
@@ -426,7 +387,6 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             input_fields=input_fields,
             output_fields=output_fields,
             derived_fields=derived_fields,
-            signals=signals,
         )
 
     def write_input_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:
@@ -956,50 +916,45 @@ def _field_rows(
     bit_points: dict[int, BitPoint],
     text_fields: dict[int, TextField],
     bit_fields: dict[int, BitField],
-) -> list[DetailField]:
-    rows: list[DetailField] = []
+) -> tuple[Field, ...]:
+    rows: list[Field] = []
     numbers = sorted(set(bit_points) | set(text_fields) | set(bit_fields))
     for number in numbers:
         if number in text_fields:
             field = text_fields[number]
             value = _read_text_from_bytes(block, field)
             rows.append(
-                {
-                    "signal": f"{prefix}{number:03d}",
-                    "name": field.description,
-                    "offset": (
-                        f"bytes {field.offset}-{field.offset + field.length - 1}"
-                    ),
-                    "type": f"ascii[{field.length}]",
-                    "value": value,
-                }
+                Field(
+                    signal=f"{prefix}{number:03d}",
+                    name=field.description,
+                    offset=f"bytes {field.offset}-{field.offset + field.length - 1}",
+                    type=f"ascii[{field.length}]",
+                    value=value,
+                )
             )
         if number in bit_points:
             point = bit_points[number]
             rows.append(
-                {
-                    "signal": f"{prefix}{number:03d}",
-                    "name": point.description,
-                    "offset": f"byte {point.byte} bit {point.bit}",
-                    "type": "bit",
-                    "value": "ON" if _get_bit(block, point) else "OFF",
-                }
+                Field(
+                    signal=f"{prefix}{number:03d}",
+                    name=point.description,
+                    offset=f"byte {point.byte} bit {point.bit}",
+                    type="bit",
+                    value="ON" if _get_bit(block, point) else "OFF",
+                )
             )
         if number in bit_fields:
             field = bit_fields[number]
             rows.append(
-                {
-                    "signal": f"{prefix}{number:03d}",
-                    "name": field.description,
-                    "offset": (
-                        f"byte {field.byte} bits "
-                        f"{field.bit}-{field.bit + field.width - 1}"
-                    ),
-                    "type": f"u{field.width}",
-                    "value": str(_get_field(block, field)),
-                }
+                Field(
+                    signal=f"{prefix}{number:03d}",
+                    name=field.description,
+                    offset=f"byte {field.byte} bits {field.bit}-{field.bit + field.width - 1}",
+                    type=f"u{field.width}",
+                    value=str(_get_field(block, field)),
+                )
             )
-    return rows
+    return tuple(rows)
 
 
 def _get_field(block: bytes | bytearray, field: BitField) -> int:
