@@ -16,13 +16,13 @@ The TUI file navigator lists and runs programs from this library.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
 from ...core.capabilities import HasPrograms
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.options import Options
 from ...core.programs import ProgramLibrary
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -36,21 +36,18 @@ from .gcode import Interpreter
 from .state import HasMachineState, MachineState, machine_readers
 
 
-@dataclass(frozen=True, slots=True)
-class SmbDeviceOptions:
+class SmbDeviceOptions(Options):
     backend: str = "impacket"
     port: int = 445
     share_name: str = "PROGRAMS"
     smb1: bool = True
 
 
-@dataclass(frozen=True, slots=True)
-class OpcUaDeviceOptions:
+class OpcUaDeviceOptions(Options):
     port: int = 4840
 
 
-@dataclass(frozen=True, slots=True)
-class HaasNGCOptions:
+class HaasNGCOptions(Options):
     doors: tuple[str, ...] = ("main",)
     program_folder: str | None = None
     dprint_port: int | None = None
@@ -179,15 +176,7 @@ def make_device(
     return device
 
 
-@register("haas_ngc", default_port=5051)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = dict(options)
-    if "doors" in opts:
-        opts["doors"] = tuple(opts["doors"])
-    if "smb" in opts:
-        opts["smb"] = SmbDeviceOptions(**opts["smb"]) if opts["smb"] else None
-    if "opcua" in opts:
-        opts["opcua"] = OpcUaDeviceOptions(**opts["opcua"]) if opts["opcua"] else None
-    opt = HaasNGCOptions(**opts)
+@register("haas_ngc", default_port=5051, options=HaasNGCOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opt: HaasNGCOptions) -> Device:
     dprint = BroadcastServer(endpoint.host, opt.dprint_port) if opt.dprint_port is not None else None
     return make_device(name, endpoint, bus, opt, dprint=dprint)

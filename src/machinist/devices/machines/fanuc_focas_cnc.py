@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import struct
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.device import Device
 from ...core.events import EventBus
+from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.focas import (
@@ -26,15 +26,14 @@ _EMPTY_BLOCK = object()
 _WORD_FORMAT = struct.Struct(">H")
 
 
-@dataclass(frozen=True, slots=True)
-class FanucFocasCncOptions:
+class FanucFocasCncOptions(Options):
     model: str = "0i-TF"
     series: str = "3000"
     version: str = "1.00"
     max_axes: int = 8
     axis_names: tuple[str, ...] = ("X", "Y", "Z", "A", "B", "C", "U", "V")
     door_count: int = 1
-    initial_diagnostics: dict[int, int] = field(default_factory=dict)
+    initial_diagnostics: dict[int, int] = {}
 
 
 class FanucFocasCnc(Device):
@@ -225,14 +224,8 @@ _REQUEST_HANDLERS: dict[tuple[int, int, int], Any] = {
 }
 
 
-@register("fanuc_focas_cnc", default_port=8193)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = dict(options)
-    if "axis_names" in opts:
-        opts["axis_names"] = tuple(opts["axis_names"])
-    if "initial_diagnostics" in opts:
-        opts["initial_diagnostics"] = dict(opts["initial_diagnostics"])
-    opt = FanucFocasCncOptions(**opts)
+@register("fanuc_focas_cnc", default_port=8193, options=FanucFocasCncOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opt: FanucFocasCncOptions) -> Device:
     state = MachineState(
         owner=name, publish=bus.publish, doors=[str(i) for i in range(1, opt.door_count + 1)]
     )

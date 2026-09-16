@@ -16,9 +16,9 @@ from machinist.devices.machines.mazak_smooth import (
     HEARTBEAT_ALARM,
     INPUT_SIGNAL_POINTS,
     INPUT_TEXT_FIELDS,
-    MTConnectOptions,
     OUTPUT_SIGNAL_POINTS,
     WORK_SEARCH_ALARM,
+    EtherNetIPOptions,
     MazakSmoothEmulator,
     MazakSmoothOptions,
     _build_ethernetip_transport,
@@ -26,58 +26,25 @@ from machinist.devices.machines.mazak_smooth import (
 )
 from machinist.devices.machines.state import CycleState
 from machinist.transport.ethernetip import (
-    EtherNetIPAdapterConfig,
     EtherNetIPScanner,
     EtherNetIPScannerConfig,
 )
+
 from ..conftest import free_port, wait_running
 
 
 def _make(**kw: object) -> MazakSmoothEmulator:
-    raw_mtconnect_port = kw.pop("mtconnect_port", None)
-    mtconnect_opts = MTConnectOptions(port=int(raw_mtconnect_port)) if raw_mtconnect_port is not None else None
-    raw_ethernetip = kw.get("ethernetip")
-    if isinstance(raw_ethernetip, dict):
-        mode = str(raw_ethernetip.get("mode", "adapter")).strip().lower()
-        kw["ethernetip_mode"] = mode
-        if mode == "adapter":
-            kw["ethernetip_adapter_config"] = EtherNetIPAdapterConfig(
-                host="127.0.0.1",
-                port=0,
-                udp_port=int(raw_ethernetip.get("udp_port", 2222)),
-                output_length=BLOCK_SIZE,
-                input_length=BLOCK_SIZE,
-                requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
-                o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "modeless")),
-            )
-        elif mode == "scanner":
-            kw["ethernetip_scanner_config"] = EtherNetIPScannerConfig(
-                host=str(raw_ethernetip["host"]).strip(),
-                port=int(raw_ethernetip.get("port", 44818)),
-                originator_udp_port=int(raw_ethernetip.get("originator_udp_port", 2222)),
-                target_udp_port=int(raw_ethernetip.get("target_udp_port", 2222)),
-                assembly_object_class=int(raw_ethernetip.get("assembly_object_class", 0x04)),
-                configuration_assembly_instance_id=int(
-                    raw_ethernetip.get("configuration_assembly_instance_id", 0x01)
-                ),
-                output_assembly_instance_id=int(raw_ethernetip.get("output_assembly_instance_id", 0x64)),
-                input_assembly_instance_id=int(raw_ethernetip.get("input_assembly_instance_id", 0x65)),
-                output_length=BLOCK_SIZE,
-                input_length=BLOCK_SIZE,
-                requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
-                o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "modeless")),
-                o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
-                t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
-            )
-    opts = MazakSmoothOptions(
-        interfaces=kw.pop("interfaces", ["io"]),
-        heartbeat_timeout_seconds=kw.pop("heartbeat_timeout_seconds", 10.0),
-        heartbeat_interval_seconds=kw.pop("heartbeat_interval_seconds", 0.05),
-        door_move_seconds=kw.pop("door_move_seconds", 0.05),
-        cycle_duration_seconds=kw.pop("cycle_duration_seconds", 0.05),
-        work_search_seconds=kw.pop("work_search_seconds", 0.01),
-        mtconnect=mtconnect_opts,
-        **kw,
+    """A fast emulator: the block as YAML would give it, with test-speed timings."""
+    opts = MazakSmoothOptions.model_validate(
+        {
+            "interfaces": ["io"],
+            "heartbeat_timeout_seconds": 10.0,
+            "heartbeat_interval_seconds": 0.05,
+            "door_move_seconds": 0.05,
+            "cycle_duration_seconds": 0.05,
+            "work_search_seconds": 0.01,
+            **kw,
+        }
     )
     return make_device("mazak1", Endpoint("127.0.0.1", 0), EventBus(), opts)
 
@@ -266,11 +233,8 @@ def test_default_ethernetip_mode_accepts_incoming_scanner_connection() -> None:
     tcp_port = free_port()
     udp_port = free_port()
     opts = MazakSmoothOptions(
-        ethernetip={"udp_port": udp_port},
-        ethernetip_adapter_config=EtherNetIPAdapterConfig(
-            host="127.0.0.1", port=tcp_port, udp_port=udp_port,
-            output_length=BLOCK_SIZE, input_length=BLOCK_SIZE,
-        ),
+        # the test's scanner speaks the plain modeless format, so the adapter must too
+        ethernetip=EtherNetIPOptions(udp_port=udp_port, o_t_realtime_format="modeless"),
         heartbeat_timeout_seconds=1.0,
         heartbeat_interval_seconds=0.05,
     )
@@ -318,11 +282,7 @@ def test_adapter_mode_keeps_listener_bound_while_idle() -> None:
     udp_port = free_port()
     opts = MazakSmoothOptions(
         interfaces=["ethernetip"],
-        ethernetip={"udp_port": udp_port},
-        ethernetip_adapter_config=EtherNetIPAdapterConfig(
-            host="127.0.0.1", port=tcp_port, udp_port=udp_port,
-            output_length=BLOCK_SIZE, input_length=BLOCK_SIZE,
-        ),
+        ethernetip=EtherNetIPOptions(udp_port=udp_port),
         heartbeat_timeout_seconds=0.15,
         heartbeat_interval_seconds=0.05,
     )

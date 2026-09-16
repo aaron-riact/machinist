@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Literal
+
+from pydantic import field_validator, model_validator
 
 from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
+from ...core.options import Options
 from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.types import Endpoint
@@ -164,13 +168,37 @@ SMOOTH_AI_OUTPUT_OVERRIDES: dict[int, BitPoint] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class MTConnectOptions:
+class MTConnectOptions(Options):
     port: int
 
 
-@dataclass(frozen=True, slots=True)
-class MazakSmoothOptions:
+class EtherNetIPOptions(Options):
+    """The ``ethernetip`` block: which end of the link this machine is, and how it is set up.
+
+    In ``adapter`` mode the machine listens on the device endpoint. In ``scanner``
+    mode it dials out to the robot at *host*:*port*.
+    """
+
+    mode: Literal["adapter", "scanner"] = "adapter"
+    udp_port: int = 2222
+    requested_packet_rate_ms: int = 20
+    o_t_realtime_format: str = "header32bit"
+    # adapter only
+    behaviour: str = "mazak"
+    # scanner only
+    host: str | None = None
+    port: int = 44818
+    originator_udp_port: int = 2222
+    target_udp_port: int = 2222
+    assembly_object_class: int = 0x04
+    configuration_assembly_instance_id: int = 0x01
+    output_assembly_instance_id: int = 0x64
+    input_assembly_instance_id: int = 0x65
+    o_t_connection_type: str = "point_to_point"
+    t_o_connection_type: str = "point_to_point"
+
+
+class MazakSmoothOptions(Options):
     variant: str = "smoothx"
     scan_interval_seconds: float = 0.02
     # Door travel. `door_move_seconds` is the symmetric default; the per-direction
@@ -189,7 +217,7 @@ class MazakSmoothOptions:
     work_search_seconds: float = 0.5
     # Work numbers the NC holds. None (the default) accepts any search; give a
     # list and a search for anything outside it fails the way mazak3.pcap does.
-    programs: Any = None
+    programs: tuple[str | int, ...] | None = None
     # How long DO102 (cycle-start permission) stays OFF after a work-number
     # search *loads a different program*. The machine withholds permission while
     # the NC actually swaps programs; a search that resolves to the already-
@@ -210,15 +238,46 @@ class MazakSmoothOptions:
     # false-tripped 5 times in that 4.6h session -- kept short on purpose so the
     # emulator surfaces a stalled scanner quickly.
     heartbeat_timeout_seconds: float = 6.0
-    interfaces: Any = None
-    main_interface: Any = None
-    ethernetip: dict[str, Any] | None = None
-    ethernetip_mode: str = "adapter"
-    ethernetip_adapter_config: EtherNetIPAdapterConfig | None = None
-    ethernetip_scanner_config: EtherNetIPScannerConfig | None = None
+    #: Interfaces to serve: ``io`` (signals) and/or ``ethernetip``. A bare string,
+    #: a list, or a ``{name: flag}`` map are all accepted; ``ethernetip`` is
+    #: implied by an ``ethernetip`` block.
+    interfaces: frozenset[str] = frozenset({"io"})
+    ethernetip: EtherNetIPOptions | None = None
     mtconnect: MTConnectOptions | None = None
-    _transport_factory: Any = None
-    _eeip_client_factory: Any = None
+
+    @field_validator("interfaces", mode="before")
+    @classmethod
+    def _interfaces_as_names(cls, raw: object) -> object:
+        if raw is None:
+            return frozenset({"io"})
+        if isinstance(raw, str):
+            return {raw.strip().lower()}
+        if isinstance(raw, Mapping):
+            return {str(name).strip().lower() for name, flag in raw.items() if flag}
+        if isinstance(raw, Iterable):
+            return {str(item).strip().lower() for item in raw}
+        return raw
+
+    @model_validator(mode="before")
+    @classmethod
+    def _mtconnect_port_shorthand(cls, data: object) -> object:
+        """``mtconnect_port: 5000`` is the short spelling of ``mtconnect: {port: 5000}``."""
+        if isinstance(data, dict) and "mtconnect_port" in data:
+            data = dict(data)
+            port = data.pop("mtconnect_port")
+            if port is not None:
+                data["mtconnect"] = {"port": int(port)}
+        return data
+
+    def enabled_interfaces(self) -> frozenset[str]:
+        enabled = set(self.interfaces)
+        if self.ethernetip is not None:
+            enabled.add("ethernetip")
+        return frozenset(enabled)
+
+    @property
+    def ethernetip_mode(self) -> str:
+        return self.ethernetip.mode if self.ethernetip is not None else "adapter"
 
 
 class MazakSmoothEmulator(Device, HasMachineState, HasIO):
@@ -273,7 +332,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         self._work_search_failed = False
         self._heartbeat_interval = options.heartbeat_interval_seconds
         self._heartbeat_timeout = options.heartbeat_timeout_seconds
-        self._interfaces = _enabled_interfaces(options)
+        self._interfaces = options.enabled_interfaces()
         self._ethernetip_mode = options.ethernetip_mode
         self._io_writable = "io" in self._interfaces
         self._alarm_code: int | None = None
@@ -993,38 +1052,52 @@ def _build_output_points(variant: str) -> dict[int, BitPoint]:
     return points
 
 
-def _enabled_interfaces(options: MazakSmoothOptions) -> set[str]:
-    enabled = {"io"}
-    raw = options.interfaces
-    if isinstance(raw, str):
-        enabled = {raw.strip().lower()}
-    elif isinstance(raw, dict):
-        enabled = {name.strip().lower() for name, flag in raw.items() if flag}
-    elif raw is not None:
-        enabled = {str(item).strip().lower() for item in raw}
-    main_interface = options.main_interface
-    if isinstance(main_interface, str):
-        enabled.add(main_interface.strip().lower())
-    elif isinstance(main_interface, (list, tuple, set)):
-        enabled.update(str(item).strip().lower() for item in main_interface)
-    if options.ethernetip is not None or options.ethernetip_adapter_config is not None or options.ethernetip_scanner_config is not None:
-        enabled.add("ethernetip")
-    return enabled
-
-
 def _build_ethernetip_transport(
     endpoint: Endpoint, options: MazakSmoothOptions
 ) -> EtherNetIPTransport:
-    mode = options.ethernetip_mode
-    if mode == "scanner":
-        config = options.ethernetip_scanner_config
-        assert config is not None, "ethernetip_scanner_config must be set for scanner mode"
-        return _build_scanner(config, options)
-    if mode == "adapter":
-        config = options.ethernetip_adapter_config
-        assert config is not None, "ethernetip_adapter_config must be set for adapter mode"
-        return _build_adapter(config)
-    raise ValueError("ethernetip.mode must be either 'adapter' or 'scanner'")
+    """The machine's end of the EtherNet/IP link, from its typed ``ethernetip`` block."""
+    eip = options.ethernetip if options.ethernetip is not None else EtherNetIPOptions()
+    if eip.mode == "scanner":
+        return _build_scanner(_scanner_config(eip))
+    return _build_adapter(_adapter_config(endpoint, eip))
+
+
+def _adapter_config(endpoint: Endpoint, eip: EtherNetIPOptions) -> EtherNetIPAdapterConfig:
+    return EtherNetIPAdapterConfig(
+        host=endpoint.host,
+        port=endpoint.port,
+        udp_port=eip.udp_port,
+        output_length=BLOCK_SIZE,
+        input_length=BLOCK_SIZE,
+        requested_packet_rate_ms=eip.requested_packet_rate_ms,
+        o_t_realtime_format=eip.o_t_realtime_format,
+        behaviour=eip.behaviour,
+    )
+
+
+def _scanner_config(eip: EtherNetIPOptions) -> EtherNetIPScannerConfig:
+    if not eip.host or eip.host.strip() in {"0.0.0.0", "::"}:
+        raise ValueError(
+            "ethernetip.host must be the remote robot adapter address; "
+            "mazak_smooth acts as an outbound scanner and does not listen for inbound "
+            "EtherNet/IP connections"
+        )
+    return EtherNetIPScannerConfig(
+        host=eip.host.strip(),
+        port=eip.port,
+        originator_udp_port=eip.originator_udp_port,
+        target_udp_port=eip.target_udp_port,
+        assembly_object_class=eip.assembly_object_class,
+        configuration_assembly_instance_id=eip.configuration_assembly_instance_id,
+        output_assembly_instance_id=eip.output_assembly_instance_id,
+        input_assembly_instance_id=eip.input_assembly_instance_id,
+        output_length=BLOCK_SIZE,
+        input_length=BLOCK_SIZE,
+        requested_packet_rate_ms=eip.requested_packet_rate_ms,
+        o_t_realtime_format=eip.o_t_realtime_format,
+        o_t_connection_type=eip.o_t_connection_type,
+        t_o_connection_type=eip.t_o_connection_type,
+    )
 
 
 def _build_adapter(config: EtherNetIPAdapterConfig) -> EtherNetIPAdapter:
@@ -1033,22 +1106,8 @@ def _build_adapter(config: EtherNetIPAdapterConfig) -> EtherNetIPAdapter:
     return EtherNetIPAdapter(config)
 
 
-def _build_scanner(
-    config: EtherNetIPScannerConfig,
-    options: MazakSmoothOptions,
-) -> EtherNetIPScanner:
-    host = config.host
-    if host in {"", "0.0.0.0", "::"}:
-        raise ValueError(
-            "ethernetip.host must be the remote robot adapter address; "
-            "mazak_smooth acts as an outbound scanner and does not listen for inbound "
-            "EtherNet/IP connections"
-        )
-    transport_factory = options._transport_factory or EtherNetIPScanner
-    client_factory = options._eeip_client_factory
-    if client_factory is None:
-        return transport_factory(config)
-    return transport_factory(config, client_factory=client_factory)
+def _build_scanner(config: EtherNetIPScannerConfig) -> EtherNetIPScanner:
+    return EtherNetIPScanner(config)
 
 
 def make_device(
@@ -1069,48 +1128,6 @@ def make_device(
     return device
 
 
-@register("mazak_smooth", default_port=44818)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = dict(options)
-    raw_mtconnect_port = opts.pop("mtconnect_port", None)
-    raw_mtconnect = opts.pop("mtconnect", None)
-    if raw_mtconnect_port is not None:
-        opts["mtconnect"] = MTConnectOptions(port=int(raw_mtconnect_port))
-    elif raw_mtconnect is not None:
-        opts["mtconnect"] = MTConnectOptions(**raw_mtconnect) if isinstance(raw_mtconnect, dict) else raw_mtconnect
-    raw_ethernetip = opts.get("ethernetip")
-    if isinstance(raw_ethernetip, dict):
-        mode = str(raw_ethernetip.get("mode", "adapter")).strip().lower()
-        opts["ethernetip_mode"] = mode
-        if mode == "adapter":
-            opts["ethernetip_adapter_config"] = EtherNetIPAdapterConfig(
-                host=endpoint.host,
-                port=endpoint.port,
-                udp_port=int(raw_ethernetip.get("udp_port", 2222)),
-                output_length=BLOCK_SIZE,
-                input_length=BLOCK_SIZE,
-                requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
-                o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "header32bit")),
-                behaviour=str(raw_ethernetip.get("behaviour", "mazak")),
-            )
-        elif mode == "scanner":
-            opts["ethernetip_scanner_config"] = EtherNetIPScannerConfig(
-                host=str(raw_ethernetip["host"]).strip(),
-                port=int(raw_ethernetip.get("port", 44818)),
-                originator_udp_port=int(raw_ethernetip.get("originator_udp_port", 2222)),
-                target_udp_port=int(raw_ethernetip.get("target_udp_port", 2222)),
-                assembly_object_class=int(raw_ethernetip.get("assembly_object_class", 0x04)),
-                configuration_assembly_instance_id=int(
-                    raw_ethernetip.get("configuration_assembly_instance_id", 0x01)
-                ),
-                output_assembly_instance_id=int(raw_ethernetip.get("output_assembly_instance_id", 0x64)),
-                input_assembly_instance_id=int(raw_ethernetip.get("input_assembly_instance_id", 0x65)),
-                output_length=BLOCK_SIZE,
-                input_length=BLOCK_SIZE,
-                requested_packet_rate_ms=int(raw_ethernetip.get("requested_packet_rate_ms", 20)),
-                o_t_realtime_format=str(raw_ethernetip.get("o_t_realtime_format", "header32bit")),
-                o_t_connection_type=str(raw_ethernetip.get("o_t_connection_type", "point_to_point")),
-                t_o_connection_type=str(raw_ethernetip.get("t_o_connection_type", "point_to_point")),
-            )
-    options_obj = MazakSmoothOptions(**opts)
-    return make_device(name, endpoint, bus, options_obj)
+@register("mazak_smooth", default_port=44818, options=MazakSmoothOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: MazakSmoothOptions) -> Device:
+    return make_device(name, endpoint, bus, options)

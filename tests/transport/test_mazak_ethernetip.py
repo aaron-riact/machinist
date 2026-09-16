@@ -86,13 +86,15 @@ def test_build_adapter_selects_class_by_behaviour() -> None:
 
 def test_mazak_factory_defaults_adapter_behaviour_to_mazak() -> None:
     from machinist.core.events import EventBus
-    from machinist.devices.machines.mazak_smooth import _factory
     from machinist.core.types import Endpoint
+    from machinist.devices.machines.mazak_smooth import MazakSmoothOptions, _factory
 
     endpoint = Endpoint(host="127.0.0.1", port=44818)
     device = _factory(
         "smooth_eip_adapter", endpoint, EventBus(),
-        options={"interfaces": ["ethernetip"], "ethernetip": {"mode": "adapter"}},
+        MazakSmoothOptions.model_validate(
+            {"interfaces": ["ethernetip"], "ethernetip": {"mode": "adapter"}}
+        ),
     )
     assert device._ethernetip is not None
     # The Mazak device's adapter uses the lenient Mazak behaviour by default.

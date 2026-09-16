@@ -12,47 +12,38 @@ only what's needed for emulation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
-
 from ...core.capabilities import HasIO
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.io import Direction, SignalBank
+from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.s7_server import S7Server, S7Store
 from .state import HasMachineState, MachineState
 
 
-@dataclass(slots=True)
-class _DBMapping:
-    """Maps a machine *function* to an S7 (DB, byte, bit) address."""
+class DBMapping(Options):
+    """An S7 (DB, byte, bit) address a machine function lives at."""
 
-    function: str
     db: int
     byte: int
     bit: int
 
 
-@dataclass(slots=True)
-class _Mappings:
-    door_open_cmd: _DBMapping
-    door_close_cmd: _DBMapping
-    cycle_start_cmd: _DBMapping
-    door_is_open: _DBMapping
-    door_is_closed: _DBMapping
-    cycle_running: _DBMapping
-    extra: tuple[_DBMapping, ...] = field(default_factory=tuple)
+class Mappings(Options):
+    """Where each machine function sits in the S7 data blocks."""
+
+    door_open_cmd: DBMapping = DBMapping(db=1, byte=0, bit=0)
+    door_close_cmd: DBMapping = DBMapping(db=1, byte=0, bit=1)
+    cycle_start_cmd: DBMapping = DBMapping(db=1, byte=0, bit=2)
+    door_is_open: DBMapping = DBMapping(db=1, byte=1, bit=0)
+    door_is_closed: DBMapping = DBMapping(db=1, byte=1, bit=1)
+    cycle_running: DBMapping = DBMapping(db=1, byte=1, bit=2)
 
 
-def _default_mappings() -> _Mappings:
-    return _build_mappings({})
-
-
-@dataclass(frozen=True, slots=True)
-class MazakSinumerik840DOptions:
-    mappings: _Mappings = field(default_factory=_default_mappings)
+class MazakSinumerik840DOptions(Options):
+    mappings: Mappings = Mappings()
     s7_backend: str = "stub"
 
 
@@ -119,31 +110,8 @@ class MazakSinumerik840D(Device, HasMachineState, HasIO):
 # -----------------------------------------------------------------------
 
 
-def _build_mappings(raw: dict[str, Any]) -> _Mappings:
-    def _entry(name: str, *, default: tuple[int, int, int]) -> _DBMapping:
-        spec = raw.get(name) or {}
-        return _DBMapping(
-            function=name,
-            db=int(spec.get("db", default[0])),
-            byte=int(spec.get("byte", default[1])),
-            bit=int(spec.get("bit", default[2])),
-        )
-
-    return _Mappings(
-        door_open_cmd=_entry("door_open_cmd", default=(1, 0, 0)),
-        door_close_cmd=_entry("door_close_cmd", default=(1, 0, 1)),
-        cycle_start_cmd=_entry("cycle_start_cmd", default=(1, 0, 2)),
-        door_is_open=_entry("door_is_open", default=(1, 1, 0)),
-        door_is_closed=_entry("door_is_closed", default=(1, 1, 1)),
-        cycle_running=_entry("cycle_running", default=(1, 1, 2)),
-    )
-
-
-@register("mazak_840d", default_port=102)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
-    opts = dict(options)
-    raw_maps = opts.pop("mappings", {}) or {}
-    opt = MazakSinumerik840DOptions(mappings=_build_mappings(raw_maps), **opts)
+@register("mazak_840d", default_port=102, options=MazakSinumerik840DOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, opt: MazakSinumerik840DOptions) -> Device:
     store = S7Store()
     io = SignalBank(owner=name, publish=bus.publish)
     server = S7Server(host=endpoint.host, port=endpoint.port, store=store, backend=opt.s7_backend)
