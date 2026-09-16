@@ -84,7 +84,7 @@ class WeidmullerUR20(Device, HasIO, HasRegisters):
 @register("weidmuller_ur20", default_port=502)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = WeidmullerUR20Options(**options)
-    device = WeidmullerUR20(name, endpoint, bus, opts, io=SignalBank(owner=name))
+    device = WeidmullerUR20(name, endpoint, bus, opts, io=SignalBank(owner=name, publish=bus.publish))
     device.add_service(
         HoldingRegisterServer(
             host=endpoint.host,

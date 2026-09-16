@@ -145,6 +145,6 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
     raw_maps = opts.pop("mappings", {}) or {}
     opt = MazakSinumerik840DOptions(mappings=_build_mappings(raw_maps), **opts)
     store = S7Store()
-    io = SignalBank(owner=name)
+    io = SignalBank(owner=name, publish=bus.publish)
     server = S7Server(host=endpoint.host, port=endpoint.port, store=store, backend=opt.s7_backend)
     return MazakSinumerik840D(name, endpoint, bus, opt, io=io, store=store, server=server)

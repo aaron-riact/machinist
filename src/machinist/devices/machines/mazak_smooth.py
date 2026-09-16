@@ -1088,7 +1088,7 @@ def make_device(
     name: str, endpoint: Endpoint, bus: EventBus, options_obj: MazakSmoothOptions,
 ) -> MazakSmoothEmulator:
     """Build a :class:`MazakSmoothEmulator` with full service wiring. Does NOT start services."""
-    device = MazakSmoothEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name))
+    device = MazakSmoothEmulator(name, endpoint, bus, options_obj, io=SignalBank(owner=name, publish=bus.publish))
     if options_obj.mtconnect is not None:
         device.add_service(
             MTConnectAgent(

@@ -117,7 +117,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, An
         dh_params=dh,
         urdf=opts.urdf,
     ), name=name, publish=bus.publish)
-    return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name))
+    return FanucKarelServer(name, endpoint, bus, opts, arm=arm, io=SignalBank(owner=name, publish=bus.publish))
 
 
 # ----- Dual-protocol robot (FOCAS + Karel) -----------------------------------
@@ -314,4 +314,4 @@ def _robot_factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[s
         dh_params=dh,
         urdf=opt.urdf,
     ), name=name, publish=bus.publish)
-    return FanucFocasRobot(name, endpoint, bus, opt, arm=arm, io=SignalBank(owner=name))
+    return FanucFocasRobot(name, endpoint, bus, opt, arm=arm, io=SignalBank(owner=name, publish=bus.publish))

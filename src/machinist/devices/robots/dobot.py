@@ -497,7 +497,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._active_tool: list[int] = [0]
         self._payload: list[float] = [0.0, 0.0, 0.0, 0.0]  # load, cx, cy, cz
 
-        self.io = SignalBank(name)
+        self.io = SignalBank(name, publish=self.publish)
         for i in range(1, self._tool_di_count + 1):
             self.io.declare(f"tooldi{i}", direction=Direction.INPUT)
         for i in range(1, self._tool_do_count + 1):

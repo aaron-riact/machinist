@@ -78,4 +78,4 @@ class PneumaticGripper(Device, HasIO):
 @register("pneumatic_gripper", default_port=0)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: dict[str, Any]) -> Device:
     opts = PneumaticGripperOptions(**options)
-    return PneumaticGripper(name, endpoint, bus, opts, io=SignalBank(owner=name))
+    return PneumaticGripper(name, endpoint, bus, opts, io=SignalBank(owner=name, publish=bus.publish))

@@ -13,8 +13,12 @@ import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from typing import ClassVar
+
+from .events import Event
 
 SignalListener = Callable[[bool], None]
+Publish = Callable[[Event], None]
 
 
 class Direction(StrEnum):
@@ -64,17 +68,48 @@ class Signal:
             self._listeners.append(listener)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SignalChanged(Event):
+    """One discrete IO point of a device took a new value."""
+
+    KIND: ClassVar[str] = "signal"
+
+    signal: str
+    direction: Direction
+    value: bool
+
+
 @dataclass(slots=True)
 class SignalBank:
-    """A namespaced collection of signals owned by one device."""
+    """A namespaced collection of signals owned by one device.
+
+    Give it ``publish`` and every value change of every signal it declares
+    is announced as a :class:`SignalChanged`; the writer of a signal has
+    nothing extra to do.
+    """
 
     owner: str
+    publish: Publish | None = field(default=None, kw_only=True)
     _signals: dict[str, Signal] = field(default_factory=dict)
 
     def declare(self, name: str, direction: Direction = Direction.INPUT) -> Signal:
         if name not in self._signals:
-            self._signals[name] = Signal(name=name, direction=direction)
+            signal = Signal(name=name, direction=direction)
+            if self.publish is not None:
+                signal.subscribe(self._announcer(signal))
+            self._signals[name] = signal
         return self._signals[name]
+
+    def _announcer(self, signal: Signal) -> SignalListener:
+        def announce(value: bool) -> None:
+            assert self.publish is not None
+            self.publish(
+                SignalChanged(
+                    device=self.owner, signal=signal.name, direction=signal.direction, value=value
+                )
+            )
+
+        return announce
 
     def __getitem__(self, name: str) -> Signal:
         return self._signals[name]

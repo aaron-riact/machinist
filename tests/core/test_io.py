@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from machinist.core.io import Direction, IOMap
+from machinist.core.events import Event
+from machinist.core.io import Direction, IOMap, SignalBank, SignalChanged
 
 
 def test_link_propagates_value() -> None:
@@ -33,3 +34,25 @@ def test_invalid_path() -> None:
     io = IOMap()
     with pytest.raises(ValueError, match="must be"):
         io.link("ctrl", "machine.door")
+
+
+def test_a_bank_with_a_publisher_announces_every_signal_change() -> None:
+    events: list[Event] = []
+    bank = SignalBank(owner="io1", publish=events.append)
+    out = bank.declare("o1", Direction.OUTPUT)
+
+    out.set(True)
+    out.set(True)  # no change, no event
+    out.set(False)
+
+    assert [(e.signal, e.direction, e.value) for e in events if isinstance(e, SignalChanged)] == [
+        ("o1", Direction.OUTPUT, True),
+        ("o1", Direction.OUTPUT, False),
+    ]
+    assert all(e.device == "io1" for e in events)
+
+
+def test_a_bank_without_a_publisher_stays_silent() -> None:
+    bank = SignalBank(owner="io1")
+    bank.declare("i1").set(True)  # nothing to assert but that it does not blow up
+    assert bank["i1"].value is True
