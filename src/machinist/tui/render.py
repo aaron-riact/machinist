@@ -86,7 +86,7 @@ def machine_summary(state: MachineView | None) -> str:
 
 
 def panel_summary(panel: Panel) -> str:
-    if panel.mode == "io":
+    if panel.mode in ("io", "dashboard"):
         return ""
     if panel.clients is not None:
         return f"\n{panel.mode}   {panel.clients} client(s)"

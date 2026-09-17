@@ -1296,3 +1296,16 @@ def test_fault_injection_and_masters_announce_the_panel() -> None:
     derived = {f.signal: f.value for f in panels[-1].panel.status_fields}
     assert derived["pstop"] == "clear" and derived["alarmids"] == "-"
     d.arm.stop_ticker()
+
+
+def test_panel_lists_tool_bits_and_analogue_channels_as_io_and_faults_as_status(dobot: DobotDashboard) -> None:
+    dobot.io["tooldi1"].set(True)
+    panel = dobot.build_detail()
+    inputs = {f.signal: f for f in panel.input_fields}
+    outputs = {f.signal: f for f in panel.output_fields}
+    assert inputs["TOOLDI1"].on is True and inputs["TOOLDI2"].on is False
+    assert "AI1" in inputs and "TOOLAI1" in inputs
+    assert "TOOLDO1" in outputs and "AO1" in outputs
+    status = {f.signal for f in panel.status_fields}
+    assert {"robottype", "speedfactor", "pstop", "alarmids", "enablefail", "flange"} <= status
+    assert not status & {"AI1", "AO1"}, "channels are IO, not status"

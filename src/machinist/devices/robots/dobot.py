@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -37,7 +37,7 @@ from numpy.typing import NDArray
 from ...core.capabilities import HasFlange, HasIO
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.io import Direction, SignalBank
+from ...core.io import Direction, Signal, SignalBank
 from ...core.line_device import LineServerDevice
 from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
@@ -976,28 +976,40 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         return rows
 
     def build_detail(self) -> Panel:
+        """The controller's IO, digital and analogue, with its standing state as status rows.
+
+        A panel that lists inputs and outputs replaces the plain signal rows, so
+        the tool DI/DO bits are listed here too, next to the analogue channels.
+        """
         s = self.arm.state.snapshot()
-        derived = [
-            Field(signal="robottype", name="Robot type", offset="0", type="int", value=str(self._robot_type_code)),
-            Field(signal="speedfactor", name="Speed factor", offset="0", type="int", value=f"{int(s.speed_fraction * 100)}%"),
-            Field(signal="pstop", name="Protective stop", offset="0", type="str", value=self._protective_stop_detail()),
-            Field(signal="alarmids", name="Alarm IDs", offset="0", type="str", value=self._alarm_ids_detail()),
-            Field(signal="enablefail", name="Enable failure", offset="0", type="str", value=self._enable_failure_detail()),
-            Field(signal="flange", name="Flange slaves", offset="0", type="str", value=self._flange_detail()),
+        status = [
+            Field(signal="robottype", name="Robot type", type="int", value=str(self._robot_type_code)),
+            Field(signal="speedfactor", name="Speed factor", type="int", value=f"{int(s.speed_fraction * 100)}%"),
+            Field(signal="pstop", name="Protective stop", type="str", value=self._protective_stop_detail()),
+            Field(signal="alarmids", name="Alarm IDs", type="str", value=self._alarm_ids_detail()),
+            Field(signal="enablefail", name="Enable failure", type="str", value=self._enable_failure_detail()),
+            Field(signal="flange", name="Flange slaves", type="str", value=self._flange_detail()),
         ] + [
-            Field(signal=f"master{index}", name=f"Modbus master {index}", offset=str(index), type="str", value=value)
+            Field(signal=f"master{index}", name=f"Modbus master {index}", type="str", value=value)
             for index, value in self._master_details()
-        ] + [
-            Field(signal=f"ai{i+1}", name=f"AI-{i+1}", offset=str(i), type="float", value=str(v))
+        ]
+        inputs = [_bit_row(sig) for sig in self.io if sig.direction is Direction.INPUT] + [
+            Field(signal=f"AI{i + 1}", name=f"AI-{i + 1}", type="float", value=str(v))
             for i, v in enumerate(self._ai)
         ] + [
-            Field(signal=f"ao{i+1}", name=f"AO-{i+1}", offset=str(i), type="float", value=str(v))
-            for i, v in enumerate(self._ao)
-        ] + [
-            Field(signal=f"toolai{i+1}", name=f"ToolAI-{i+1}", offset=str(i), type="float", value=str(v))
+            Field(signal=f"TOOLAI{i + 1}", name=f"ToolAI-{i + 1}", type="float", value=str(v))
             for i, v in enumerate(self._tool_ai)
         ]
-        return replace(super().build_detail(), status_fields=tuple(derived))
+        outputs = [_bit_row(sig) for sig in self.io if sig.direction is Direction.OUTPUT] + [
+            Field(signal=f"AO{i + 1}", name=f"AO-{i + 1}", type="float", value=str(v))
+            for i, v in enumerate(self._ao)
+        ]
+        return Panel(
+            mode="dashboard",
+            input_fields=tuple(inputs),
+            output_fields=tuple(outputs),
+            status_fields=tuple(status),
+        )
 
 
 #: Dashboard verb (lower case) -> the method that answers it.
@@ -1029,6 +1041,10 @@ _VERBS: dict[str, Callable[[DobotDashboard, _Request], Reply]] = {
     "movj": DobotDashboard._verb_movj,
     "movl": DobotDashboard._verb_movl,
 }
+
+
+def _bit_row(sig: Signal) -> Field:
+    return Field(signal=sig.name.upper(), name=sig.name, type="bit", value="ON" if sig.value else "OFF", on=sig.value)
 
 
 # --- helpers ---------------------------------------------------------

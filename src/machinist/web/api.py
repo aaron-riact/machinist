@@ -37,7 +37,7 @@ def view_to_dict(view: DeviceView) -> dict[str, Any]:
             for sig in view.signals.values()
         ],
     }
-    snap["modbus" if view.panel.mode == "modbus" else "ethernetip"] = asdict(view.panel)
+    snap[_panel_slot(view.panel.mode)] = asdict(view.panel)
     if view.arm is not None:
         snap["arm"] = _arm_snapshot(view.arm)
     if view.machine is not None:
@@ -47,6 +47,11 @@ def view_to_dict(view: DeviceView) -> dict[str, Any]:
     if view.fault is not None:
         snap["fault"] = view.fault
     return snap
+
+
+def _panel_slot(mode: str) -> str:
+    """Where the browser expects a panel: its Modbus tile or its generic (EtherNet/IP-shaped) tile."""
+    return "modbus" if mode == "modbus" else "ethernetip"
 
 
 def _arm_snapshot(s: ArmStateView) -> dict[str, Any]:
