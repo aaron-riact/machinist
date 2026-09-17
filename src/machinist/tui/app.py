@@ -33,6 +33,7 @@ Design decisions worth knowing:
 from __future__ import annotations
 
 import queue
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from typing import ClassVar
@@ -426,7 +427,13 @@ def _dot_painter(view: DeviceView) -> Callable[[Field], Text]:
 def _format_event(event: Event) -> str:
     payload = " ".join(f"{k}={v}" for k, v in event.payload.items())
     return (
-        f"[dim]{event.timestamp:12.3f}[/] "
+        f"[dim]{_clock(event.timestamp)}[/] "
         f"[cyan]{event.device:<12}[/] "
         f"[magenta]{event.kind:<6}[/] {payload}"
     )
+
+
+def _clock(timestamp: float) -> str:
+    """Local wall-clock time with milliseconds, e.g. ``14:05:32.123``."""
+    local = time.localtime(timestamp)
+    return time.strftime("%H:%M:%S", local) + f".{int(timestamp * 1000) % 1000:03d}"

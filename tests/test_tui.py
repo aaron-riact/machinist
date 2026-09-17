@@ -43,13 +43,18 @@ def _signals(**values: bool) -> MappingProxyType:
 # --- pure renderers -------------------------------------------------------
 
 
-def test_format_event_is_compact_and_deterministic() -> None:
-    ev = Note(device="ur1", name="rx", data={"line": "power on"}, timestamp=1234.567)
+def test_format_event_is_compact_and_readable() -> None:
+    import re
+    import time
+
+    at = time.mktime((2026, 9, 17, 14, 5, 32, 0, 0, -1)) + 0.123
+    ev = Note(device="ur1", name="rx", data={"line": "power on"}, timestamp=at)
     out = _format_event(ev)
+    assert "14:05:32.123" in out, "wall-clock time, not epoch seconds"
+    assert not re.search(r"\d{9,}\.\d", out)
     assert "ur1" in out
     assert "rx" in out
     assert "power on" in out
-    assert "         rx" not in out
 
 
 def test_paint_lifecycle_uses_expected_colours() -> None:
