@@ -177,6 +177,39 @@ async def test_moving_the_cursor_selects_the_device() -> None:
 
 
 @pytest.mark.timeout(10)
+async def test_the_program_list_appears_only_for_devices_that_have_programs(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    world = WorldBuilder().build(
+        SystemConfig(
+            devices=(
+                DeviceConfig(name="g1", kind="pneumatic_gripper", options={"settle_seconds": 0.01}),
+                DeviceConfig(
+                    name="mill", kind="haas_ngc", port=0,
+                    options={"program_folder": str(tmp_path)},
+                ),
+            ),
+        )
+    )
+    app = MachinistApp(world)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        detail = app.query_one(DetailPane)
+        assert detail.files.display is False, "a gripper has no programs, so no list"
+
+        app.query_one(DeviceList).focus()
+        await pilot.press("down")
+        await pilot.pause()
+        assert detail.view is not None and detail.view.name == "mill"
+        assert detail.files.display is True
+
+        await pilot.press("f")
+        await pilot.pause()
+        assert detail.files.display is False, "F hides the list"
+        await pilot.press("f")
+        await pilot.pause()
+        assert detail.files.display is True
+
+
+@pytest.mark.timeout(10)
 async def test_colon_focuses_the_command_bar_and_escape_leaves_it() -> None:
     app = MachinistApp(_world())
     async with app.run_test(size=(140, 45)) as pilot:

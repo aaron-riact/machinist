@@ -138,6 +138,9 @@ class DetailPane(Vertical):
     """Everything about the selected device: header, IO, derived rows, programs."""
 
     view: reactive[DeviceView | None] = reactive(None)
+    #: The user's wish (the F key). The list is only ever shown for a device
+    #: that has programs, whatever this says.
+    show_programs: reactive[bool] = reactive(True)
 
     def compose(self) -> ComposeResult:
         self.header = Static(id="detail-header")
@@ -168,6 +171,15 @@ class DetailPane(Vertical):
         self.outputs.show(outputs)
         self.derived.show(view.panel.derived_fields)
         self.files.show(view.programs)
+        self._place_programs()
+
+    def watch_show_programs(self, _show: bool) -> None:
+        if hasattr(self, "files"):
+            self._place_programs()
+
+    def _place_programs(self) -> None:
+        has_programs = self.view is not None and self.view.programs is not None
+        self.files.display = has_programs and self.show_programs
 
     def on_mount(self) -> None:
         self.watch_view(self.view)

@@ -76,7 +76,6 @@ class MachinistApp(App[None]):
     #inputs, #outputs { width: 1fr; }
     #detail-lower { height: 40%; }
     #files, #derived { width: 1fr; border-top: dashed #6e6cd1; }
-    #detail-lower.hidden { display: none; }
     EventLogPanel#log { height: 1fr; border: round #6e6cd1; padding: 0 1; }
     EventLogPanel#log.log-small { height: 3; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }
@@ -86,7 +85,7 @@ class MachinistApp(App[None]):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("e", "estop", "E-Stop selected"),
         Binding("r", "reset", "Reset selected"),
-        Binding("f", "toggle_files", "Files panel"),
+        Binding("f", "toggle_programs", "Programs"),
         Binding("l", "toggle_log", "Log size"),
         Binding("colon,slash", "focus_command", "Command", key_display=":"),
         Binding("escape", "focus_devices", "Devices", show=False),
@@ -219,8 +218,8 @@ class MachinistApp(App[None]):
     def action_focus_devices(self) -> None:
         self.devices.focus()
 
-    def action_toggle_files(self) -> None:
-        self.query_one("#detail-lower").toggle_class("hidden")
+    def action_toggle_programs(self) -> None:
+        self.detail.show_programs = not self.detail.show_programs
 
     def action_toggle_log(self) -> None:
         top = self.query_one("#top")
