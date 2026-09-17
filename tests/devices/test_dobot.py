@@ -247,7 +247,7 @@ def test_dobot_speedfactor_sets_global_speed_ratio(dobot: DobotDashboard) -> Non
 def test_dobot_speedfactor_appears_in_build_detail(dobot: DobotDashboard) -> None:
     _send(dobot, "SpeedFactor(75)")
     detail = dobot.build_detail()
-    fields = detail.derived_fields
+    fields = detail.status_fields
     sf = next(f for f in fields if f.signal == "speedfactor")
     assert sf.value == "75%"
 
@@ -972,7 +972,7 @@ def test_a_sticky_error_stop_keeps_a_driver_enable_loop_failing(
 
 
 def _derived(dobot: DobotDashboard) -> dict[str, str]:
-    return {f.signal: f.value for f in dobot.build_detail().derived_fields}
+    return {f.signal: f.value for f in dobot.build_detail().status_fields}
 
 
 def test_detail_panel_reads_clear_when_nothing_is_injected(dobot: DobotDashboard) -> None:
@@ -1285,14 +1285,14 @@ def test_fault_injection_and_masters_announce_the_panel() -> None:
     d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(), feedback_enabled=False)
 
     d.inject_protective_stop(controller_ids=(17,))
-    derived = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    derived = {f.signal: f.value for f in panels[-1].panel.status_fields}
     assert derived["pstop"].startswith("ENGAGED")
     assert derived["alarmids"] == "17"
 
     d.handle_line("ModbusRTUCreate(1,115200)")
-    assert any(f.signal == "master0" for f in panels[-1].panel.derived_fields)
+    assert any(f.signal == "master0" for f in panels[-1].panel.status_fields)
 
     d.clear_protective_stop()
-    derived = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    derived = {f.signal: f.value for f in panels[-1].panel.status_fields}
     assert derived["pstop"] == "clear" and derived["alarmids"] == "-"
     d.arm.stop_ticker()

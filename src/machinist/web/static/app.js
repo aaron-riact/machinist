@@ -183,7 +183,7 @@ class DeviceDetail extends HTMLElement {
       tile("Input packet fields", fieldTable(e.input_fields)),
       tile("Output packet fields", fieldTable(e.output_fields)),
     );
-    return frag(summary, tables, tile("Derived state", fieldTable(e.derived_fields)));
+    return frag(summary, tables, tile("Status", fieldTable(e.status_fields)));
   }
 
   _modbus(e) {
@@ -197,7 +197,7 @@ class DeviceDetail extends HTMLElement {
       tile("Inputs (writable)", fieldTable(e.input_fields)),
       tile("Outputs (read-only)", fieldTable(e.output_fields)),
     );
-    return frag(summary, tables, tile("Derived state", fieldTable(e.derived_fields)));
+    return frag(summary, tables, tile("Status", fieldTable(e.status_fields)));
   }
 
   _sigTile(title, device, signals, clickable) {

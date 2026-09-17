@@ -997,7 +997,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             Field(signal=f"toolai{i+1}", name=f"ToolAI-{i+1}", offset=str(i), type="float", value=str(v))
             for i, v in enumerate(self._tool_ai)
         ]
-        return replace(super().build_detail(), derived_fields=tuple(derived))
+        return replace(super().build_detail(), status_fields=tuple(derived))
 
 
 #: Dashboard verb (lower case) -> the method that answers it.

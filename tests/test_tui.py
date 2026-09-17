@@ -93,6 +93,16 @@ def test_panel_summary_reports_mode_and_link_state() -> None:
     assert panel_summary(Panel()) == ""
 
 
+def test_detail_header_shows_the_panels_status_rows() -> None:
+    panel = Panel(
+        mode="modbus",
+        status_fields=(Field("MODEL", "Model", value="RG2"), Field("BUSY", "Moving", type="bit", value="1", on=True)),
+    )
+    out = detail_header(_view("rg1", kind="onrobot_rg", panel=panel))
+    assert "Model [cyan]RG2[/]" in out
+    assert "Moving [green]on[/]" in out
+
+
 def test_io_rows_fall_back_to_signals_when_the_panel_has_none() -> None:
     inputs, outputs = io_rows(_view(signals=_signals(i1=True, o1=False)))
     assert [(f.signal, f.value, f.on) for f in inputs] == [("I1", "ON", True)]

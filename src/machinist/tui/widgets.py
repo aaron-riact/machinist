@@ -135,7 +135,7 @@ class ProgramList(DataTable):
 
 
 class DetailPane(Vertical):
-    """Everything about the selected device: header, IO, derived rows, programs."""
+    """Everything about the selected device: header (with status), IO tables, programs."""
 
     view: reactive[DeviceView | None] = reactive(None)
     #: The user's wish (the F key). The list is only ever shown for a device
@@ -150,26 +150,23 @@ class DetailPane(Vertical):
             yield self.inputs
             self.outputs = FieldTable("output", id="outputs")
             yield self.outputs
-        with Horizontal(id="detail-lower"):
-            self.files = ProgramList(id="files")
-            yield self.files
-            self.derived = FieldTable("field", with_offset=False, id="derived")
-            yield self.derived
+        self.files = ProgramList(id="files")
+        yield self.files
 
     def watch_view(self, view: DeviceView | None) -> None:
         if not hasattr(self, "header"):
             return  # compose has not run yet; on_mount paints the first view
         if view is None:
             self.header.update("[dim]no device selected[/]")
-            for table in (self.inputs, self.outputs, self.derived):
-                table.show(())
+            self.inputs.show(())
+            self.outputs.show(())
             self.files.show(None)
+            self._place_programs()
             return
         self.header.update(detail_header(view))
         inputs, outputs = io_rows(view)
         self.inputs.show(inputs)
         self.outputs.show(outputs)
-        self.derived.show(view.panel.derived_fields)
         self.files.show(view.programs)
         self._place_programs()
 

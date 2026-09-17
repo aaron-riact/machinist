@@ -40,6 +40,7 @@ def detail_header(view: DeviceView) -> str:
         f"{arm_summary(view.arm)}"
         f"{machine_summary(view.machine)}"
         f"{panel_summary(view.panel)}"
+        f"{status_summary(view.panel)}"
     )
 
 
@@ -92,6 +93,19 @@ def panel_summary(panel: Panel) -> str:
     peer = "peer up" if panel.peer_connected else "waiting"
     ready = "ready" if panel.transport_ready else "offline"
     return f"\n{panel.mode}   transport {ready}   link {peer}"
+
+
+def status_summary(panel: Panel) -> str:
+    """The panel's status rows as ``name value`` pairs, a few to a line."""
+    if not panel.status_fields:
+        return ""
+    items = []
+    for field in panel.status_fields:
+        if field.on is None:
+            items.append(f"{field.name} [cyan]{field.value}[/]")
+        else:
+            items.append(f"{field.name} {'[green]on[/]' if field.on else '[red]off[/]'}")
+    return "\n" + "   ".join(items)
 
 
 def io_rows(view: DeviceView) -> tuple[tuple[Field, ...], tuple[Field, ...]]:

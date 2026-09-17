@@ -74,8 +74,7 @@ class MachinistApp(App[None]):
     #detail-header { height: auto; padding: 0 1; }
     #signals-row { height: 1fr; }
     #inputs, #outputs { width: 1fr; }
-    #detail-lower { height: 40%; }
-    #files, #derived { width: 1fr; border-top: dashed #6e6cd1; }
+    #files { height: 40%; border-top: dashed #6e6cd1; }
     EventLogPanel#log { height: 1fr; border: round #6e6cd1; padding: 0 1; }
     EventLogPanel#log.log-small { height: 3; }
     Input#cmd { dock: bottom; height: 3; border: round #6e6cd1; }

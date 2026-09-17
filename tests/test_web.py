@@ -70,7 +70,7 @@ def test_view_to_dict_includes_ethernetip_breakdown() -> None:
         output_block_hex="01 00",
         input_fields=(Field("DI100", "Target work number data"),),
         output_fields=(Field("DO100", "Current work number"),),
-        derived_fields=(Field("STATE", "Alarm message"),),
+        status_fields=(Field("STATE", "Alarm message"),),
     )
     snap = view_to_dict(_view("smooth", "mazak_smooth", panel=panel))
     assert snap["ethernetip"]["mode"] == "adapter"

@@ -46,7 +46,9 @@ class Panel:
     output_block_hex: str = ""
     input_fields: tuple[Field, ...] = ()
     output_fields: tuple[Field, ...] = ()
-    derived_fields: tuple[Field, ...] = ()
+    #: Standing facts about the device that are neither an input nor an
+    #: output: a model name, an alarm, a fault, a link. Shown in the header.
+    status_fields: tuple[Field, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

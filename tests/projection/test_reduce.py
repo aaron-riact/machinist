@@ -72,7 +72,7 @@ def test_arm_machine_panel_and_programs_views_are_swapped_whole() -> None:
     arm.estop()
     machine = MachineState()
     machine.update(parts=4)
-    panel = Panel(mode="modbus", derived_fields=(Field("W", "Width", value="42.0"),))
+    panel = Panel(mode="modbus", status_fields=(Field("W", "Width", value="42.0"),))
 
     state = _fleet("d")
     state = reduce(state, ArmChanged(device="d", view=arm.state.view))

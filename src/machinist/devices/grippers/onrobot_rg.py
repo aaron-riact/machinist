@@ -226,7 +226,7 @@ class OnRobotRG(Device, HasRegisters):
                 _reg("W_OFF", "Width w/ offset", "0x0113", "int", f"{max(0, s.actual_width_tenths - 2 * s.fingertip_offset_tenths)} (.1 mm)"),
                 _reg("FTOFFSET", "Fingertip offset", "0x0102", "int", f"{s.fingertip_offset_tenths} (.1 mm)"),
             ),
-            derived_fields=(
+            status_fields=(
                 _reg("MODEL", "Model", "", "str", self._settings.model.upper()),
                 _reg("WIDTH_MM", "Actual width", "", "mm", f"{s.actual_width_tenths / 10:.1f}"),
                 _bit("BUSY", "Moving", s.busy),

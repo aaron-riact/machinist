@@ -246,6 +246,6 @@ def test_every_state_change_announces_the_panel() -> None:
     _settle(rg)
 
     assert panels, "a write announced the panel"
-    final = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    final = {f.signal: f.value for f in panels[-1].panel.status_fields}
     assert final["WIDTH_MM"] == "40.0"
     assert final["BUSY"] == "0"

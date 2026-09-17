@@ -753,6 +753,6 @@ def test_block_writes_and_alarms_announce_the_panel() -> None:
 
     assert panels, "the block write announced the panel"
     assert "01 02" in panels[0].panel.input_block_hex
-    derived = {f.name: f.value for f in panels[-1].panel.derived_fields}
+    derived = {f.name: f.value for f in panels[-1].panel.status_fields}
     assert derived["Alarm code"] == "4711"
     assert derived["Alarm message"] == "door jam"

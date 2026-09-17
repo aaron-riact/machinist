@@ -63,6 +63,6 @@ def test_every_state_change_announces_the_panel() -> None:
     _settle(gripper)
 
     assert panels
-    final = {f.signal: f.value for f in panels[-1].panel.derived_fields}
+    final = {f.signal: f.value for f in panels[-1].panel.status_fields}
     assert final["BUSY"] == "0"
     assert abs(float(final["DIAMETER"]) - 50.0) <= 0.2

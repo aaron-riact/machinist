@@ -21,7 +21,7 @@ def test_the_base_panel_is_empty() -> None:
     panel = g.build_detail()
     assert panel == Panel()
     assert panel.mode == "io"
-    assert panel.input_fields == () and panel.output_fields == () and panel.derived_fields == ()
+    assert panel.input_fields == () and panel.output_fields == () and panel.status_fields == ()
 
 
 def test_the_signal_bank_is_the_source_of_io() -> None:

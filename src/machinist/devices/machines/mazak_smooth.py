@@ -503,7 +503,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             text_fields=OUTPUT_TEXT_FIELDS,
             bit_fields=OUTPUT_BIT_FIELDS,
         )
-        derived_fields = (
+        status_fields = (
             Field("STATE", "Active program", "-", "string", active_program or ""),
             Field("STATE", "Connection up", "-", "bool", "ON" if connection_up else "OFF", on=connection_up),
             Field("STATE", "Alarm code", "-", "int", "" if alarm_code is None else str(alarm_code)),
@@ -519,7 +519,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
             output_block_hex=output_block.hex(" "),
             input_fields=input_fields,
             output_fields=output_fields,
-            derived_fields=derived_fields,
+            status_fields=status_fields,
         )
 
     def write_input_block(self, data: bytes | bytearray, *, offset: int = 0) -> None:

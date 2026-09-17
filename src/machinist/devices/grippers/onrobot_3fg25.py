@@ -293,7 +293,7 @@ class OnRobot3FG25(Device, HasRegisters):
                 _reg("PROD", "Product code", "0x0600", "hex", f"0x{s.product_code:02X}"),
                 _reg("FW", "Firmware version", "0x0604", "hex", f"{s.fw_major}.{s.fw_minor}"),
             ),
-            derived_fields=(
+            status_fields=(
                 _reg("DIAMETER", "Actual diameter", "", "mm", f"{actual_tenths / 10:.1f}"),
                 _reg("ANGLE", "Finger angle", "", "deg", f"{s.actual_angle_tenths / 10:.1f}"),
                 _bit("BUSY", "Moving", s.busy),
