@@ -115,8 +115,8 @@ def test_panel_summary_reports_mode_and_link_state() -> None:
 def test_io_rows_fall_back_to_signals_when_the_panel_has_none() -> None:
     view = _view(signals=_signals(i1=True, o1=False))
     inputs, outputs = _io_rows(view)
-    assert [(f.signal, f.value) for f in inputs] == [("I1", "ON")]
-    assert [(f.signal, f.value) for f in outputs] == [("O1", "OFF")]
+    assert [(f.signal, f.value, f.on) for f in inputs] == [("I1", "ON", True)]
+    assert [(f.signal, f.value, f.on) for f in outputs] == [("O1", "OFF", False)]
 
 
 def test_io_rows_prefer_the_panels_own_rows() -> None:

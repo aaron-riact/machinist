@@ -505,7 +505,7 @@ class MazakSmoothEmulator(Device, HasMachineState, HasIO):
         )
         derived_fields = (
             Field("STATE", "Active program", "-", "string", active_program or ""),
-            Field("STATE", "Connection up", "-", "bool", "ON" if connection_up else "OFF"),
+            Field("STATE", "Connection up", "-", "bool", "ON" if connection_up else "OFF", on=connection_up),
             Field("STATE", "Alarm code", "-", "int", "" if alarm_code is None else str(alarm_code)),
             Field("STATE", "Alarm message", "-", "string", alarm_message),
         )
@@ -1011,13 +1011,15 @@ def _field_rows(
             )
         if number in bit_points:
             point = bit_points[number]
+            on = _get_bit(block, point)
             rows.append(
                 Field(
                     signal=f"{prefix}{number:03d}",
                     name=point.description,
                     offset=f"byte {point.byte} bit {point.bit}",
                     type="bit",
-                    value="ON" if _get_bit(block, point) else "OFF",
+                    value="ON" if on else "OFF",
+                    on=on,
                 )
             )
         if number in bit_fields:

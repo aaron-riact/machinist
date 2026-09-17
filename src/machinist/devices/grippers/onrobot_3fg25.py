@@ -259,6 +259,9 @@ class OnRobot3FG25(Device, HasRegisters):
         def _reg(signal: str, name: str, offset: str, type_: str, value: object) -> Field:
             return Field(signal=signal, name=name, offset=offset, type=type_, value=str(value))
 
+        def _bit(signal: str, name: str, on: bool) -> Field:
+            return Field(signal=signal, name=name, type="bit", value="1" if on else "0", on=on)
+
         server = self._server
 
         return Panel(
@@ -293,8 +296,8 @@ class OnRobot3FG25(Device, HasRegisters):
             derived_fields=(
                 _reg("DIAMETER", "Actual diameter", "", "mm", f"{actual_tenths / 10:.1f}"),
                 _reg("ANGLE", "Finger angle", "", "deg", f"{s.actual_angle_tenths / 10:.1f}"),
-                _reg("BUSY", "Moving", "", "bit", "1" if s.busy else "0"),
-                _reg("GRIPPED", "Object gripped", "", "bit", "1" if s.gripped else "0"),
+                _bit("BUSY", "Moving", s.busy),
+                _bit("GRIPPED", "Object gripped", s.gripped),
             ),
         )
 

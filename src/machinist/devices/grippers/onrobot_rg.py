@@ -229,8 +229,8 @@ class OnRobotRG(Device, HasRegisters):
             derived_fields=(
                 _reg("MODEL", "Model", "", "str", self._settings.model.upper()),
                 _reg("WIDTH_MM", "Actual width", "", "mm", f"{s.actual_width_tenths / 10:.1f}"),
-                _reg("BUSY", "Moving", "", "bit", "1" if s.busy else "0"),
-                _reg("GRIPPED", "Object gripped", "", "bit", "1" if s.grip_detected else "0"),
+                _bit("BUSY", "Moving", s.busy),
+                _bit("GRIPPED", "Object gripped", s.grip_detected),
                 _reg("OBJECT", "Object width", "", "mm",
                      "-" if s.held_object_tenths is None else f"{s.held_object_tenths / 10:.1f}"),
             ),
@@ -239,6 +239,10 @@ class OnRobotRG(Device, HasRegisters):
 
 def _reg(signal: str, name: str, offset: str, type_: str, value: str) -> Field:
     return Field(signal=signal, name=name, offset=offset, type=type_, value=value)
+
+
+def _bit(signal: str, name: str, on: bool) -> Field:
+    return Field(signal=signal, name=name, type="bit", value="1" if on else "0", on=on)
 
 
 def _written(s: _State, address: int, value: int) -> _State:

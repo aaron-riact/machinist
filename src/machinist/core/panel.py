@@ -27,6 +27,9 @@ class Field:
     offset: str = ""
     type: str = "str"
     value: str = ""
+    #: For a bit or bool row, its state as a boolean, so a UI can paint an
+    #: indicator without parsing ``value``. ``None`` for every other row.
+    on: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

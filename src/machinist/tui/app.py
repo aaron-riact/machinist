@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import queue
 import time
-from collections.abc import Callable
 from contextlib import suppress
 from typing import ClassVar
 
@@ -232,7 +231,7 @@ class MachinistApp(App[None]):
             and len(previous.panel.derived_fields) == len(derived)
             and self.inputs.row_count == len(inputs)
         )
-        dot = _dot_painter(view)
+        dot = _dot
 
         if not same_shape:
             self.inputs.clear()
@@ -402,26 +401,21 @@ def _io_rows(view: DeviceView) -> tuple[tuple[Field, ...], tuple[Field, ...]]:
     rows = {Direction.INPUT: [], Direction.OUTPUT: []}
     for sig in view.signals.values():
         rows[sig.direction].append(
-            Field(signal=sig.name.upper(), name=sig.name, type="bit", value="ON" if sig.value else "OFF")
+            Field(
+                signal=sig.name.upper(), name=sig.name, type="bit",
+                value="ON" if sig.value else "OFF", on=sig.value,
+            )
         )
     return tuple(rows[Direction.INPUT]), tuple(rows[Direction.OUTPUT])
 
 
-def _dot_painter(view: DeviceView) -> Callable[[Field], Text]:
-    """Green/red dot for bit fields, looked up case-insensitively in the device's signals."""
-    values = {name.lower(): sig.value for name, sig in view.signals.items()}
-
-    def dot(field: Field) -> Text:
-        if field.type not in ("bit", "bool"):
-            return Text(" ")
-        on = values.get(field.signal.lower())
-        if on is None:
-            on = field.value.upper() in ("ON", "1", "TRUE")
-        t = Text("●")
-        t.stylize(Style(color="green" if on else "red"))
-        return t
-
-    return dot
+def _dot(field: Field) -> Text:
+    """A green or red dot for a bit row; a blank for anything else."""
+    if field.on is None:
+        return Text(" ")
+    t = Text("●")
+    t.stylize(Style(color="green" if field.on else "red"))
+    return t
 
 
 def _format_event(event: Event) -> str:
