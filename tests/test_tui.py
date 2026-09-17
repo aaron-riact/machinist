@@ -172,8 +172,8 @@ class _MockTable:
         self.row_count = 0
         self.log.append(("clear",))
 
-    def add_row(self, *cells: object) -> RowKey:
-        rk = RowKey()
+    def add_row(self, *cells: object, key: str | None = None) -> RowKey:
+        rk = RowKey(key)
         self.rows[rk] = object()
         self.row_count = len(self.rows)
         self.log.append(("add_row",) + cells)
@@ -236,6 +236,26 @@ def test_refresh_detail_populates_then_updates_in_place_then_rebuilds_on_switch(
     MachinistApp._refresh_detail(app, changed)
     assert ("clear",) in app.derived.log
     assert app._painted is None
+
+
+def test_refresh_devices_table_updates_rows_in_place_and_never_clears() -> None:
+    """Rebuilding the table resets its cursor, so a highlighted device would jump away."""
+    a = _view("a", lifecycle=DeviceState.CREATED)
+    b = _view("b", lifecycle=DeviceState.CREATED)
+    app = SimpleNamespace(devices_table=_MockTable(), _devices_col_state=ColumnKey("state"))
+
+    MachinistApp._refresh_devices_table(app, FleetState.of([a, b]))
+    assert [c[0] for c in app.devices_table.log] == ["add_row", "add_row"]
+    assert {k.value for k in app.devices_table.rows} == {"a", "b"}
+
+    app.devices_table.log.clear()
+    running = FleetState.of([a, DeviceView(name="b", kind="fake", endpoint="e", lifecycle=DeviceState.RUNNING)])
+    MachinistApp._refresh_devices_table(app, running)
+
+    assert [c[0] for c in app.devices_table.log] == ["update_cell", "update_cell"]
+    assert ("clear",) not in app.devices_table.log
+    updated = [c for c in app.devices_table.log if c[1] == "b"][0]
+    assert "running" in updated[3]
 
 
 def test_refresh_files_lists_the_programs_of_the_view() -> None:

@@ -140,7 +140,7 @@ class MachinistApp(App[None]):
     def on_mount(self) -> None:
         self.title = "◇ Machinist"
         self.sub_title = f"fleet of {len(self.world.devices)} device(s)"
-        self.devices_table.add_columns("name", "kind", "state")
+        _, _, self._devices_col_state = self.devices_table.add_columns("name", "kind", "state")
         (
             self._inputs_col_label,
             _,
@@ -185,8 +185,7 @@ class MachinistApp(App[None]):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.control is self.devices_table:
-            row = self.devices_table.get_row_at(event.cursor_row)
-            self._selected = str(row[0])
+            self._selected = str(event.row_key.value)
             self._refresh_detail(self.projection.state)
             return
         if event.control is self.files:
@@ -195,9 +194,18 @@ class MachinistApp(App[None]):
             return
 
     def _refresh_devices_table(self, state: FleetState) -> None:
-        self.devices_table.clear()
+        """Keep one row per device, keyed by name, and touch only the state cell.
+
+        Rebuilding the table would reset its cursor to the first row on every
+        fleet change, so a device could not stay highlighted while anything moved.
+        """
+        table = self.devices_table
         for view in state.devices.values():
-            self.devices_table.add_row(view.name, view.kind, _paint_lifecycle(view.lifecycle))
+            painted = _paint_lifecycle(view.lifecycle)
+            if view.name in table.rows:
+                table.update_cell(view.name, self._devices_col_state, painted)
+            else:
+                table.add_row(view.name, view.kind, painted, key=view.name)
 
     def _selected_view(self, state: FleetState) -> DeviceView | None:
         return state.devices.get(self._selected) if self._selected else None
