@@ -1414,3 +1414,23 @@ def test_the_passthrough_closes_with_the_dobot(dobot_with_passthrough) -> None:
 
     with pytest.raises(ConnectionRefusedError):
         socket.create_connection(("127.0.0.1", port), timeout=1).close()
+
+
+def test_detail_panel_reads_off_without_a_passthrough(dobot: DobotDashboard) -> None:
+    assert _derived(dobot)["passthrough"] == "off"
+
+
+def test_detail_panel_lists_the_passthrough_ports(dobot_with_passthrough) -> None:
+    dobot, port = dobot_with_passthrough
+
+    assert _derived(dobot)["passthrough"] == f"{port} (0 connected)"
+
+
+def test_detail_panel_counts_who_is_on_the_passthrough(dobot_with_passthrough) -> None:
+    dobot, port = dobot_with_passthrough
+
+    with socket.create_connection(("127.0.0.1", port), timeout=2) as sock:
+        sock.sendall(framed(b"\x41\x03\x01\x0b\x00\x01"))
+        sock.recv(64)
+
+        assert _derived(dobot)["passthrough"] == f"{port} (1 connected)"

@@ -989,6 +989,14 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         ids = self.flange.slave_ids
         return ", ".join(f"0x{slave_id:02X}" for slave_id in ids) if ids else "-"
 
+    def _passthrough_detail(self) -> str:
+        """The TCP doors onto the flange line, and who is standing in them."""
+        ports = self.flange_gateway_ports
+        if not ports or self._gateway is None:
+            return "off"
+        doors = ", ".join(str(port) for port in ports)
+        return f"{doors} ({self._gateway.client_count} connected)"
+
     def _master_details(self) -> list[tuple[int, str]]:
         rows = []
         for index in sorted(self._masters):
@@ -1014,6 +1022,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             Field(signal="alarmids", name="Alarm IDs", type="str", value=self._alarm_ids_detail()),
             Field(signal="enablefail", name="Enable failure", type="str", value=self._enable_failure_detail()),
             Field(signal="flange", name="Flange slaves", type="str", value=self._flange_detail()),
+            Field(signal="passthrough", name="Flange passthrough", type="str", value=self._passthrough_detail()),
         ] + [
             Field(signal=f"master{index}", name=f"Modbus master {index}", type="str", value=value)
             for index, value in self._master_details()
