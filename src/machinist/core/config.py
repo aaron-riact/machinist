@@ -53,14 +53,15 @@ class IOLink(_Frozen):
 
 
 class FlangeLink(_Frozen):
-    """A device wired onto an arm's tool-flange serial line.
+    """A device wired onto a serial line, usually an arm's tool flange.
 
-    The arm owns a Modbus master on that line and reaches the device by
-    *slave_id*, so two entries naming the same master are how an OnRobot
-    Dual Quick Changer's pair of grippers is expressed.
+    The master owns that line and reaches the device by *slave_id*, so two
+    entries naming the same master are how an OnRobot Dual Quick Changer's
+    pair of grippers is expressed. Most masters are arms; a bare
+    ``modbus_rtu_gateway`` is a line with no arm on the end of it.
     """
 
-    master: str  # the arm whose flange carries the line
+    master: str  # the device whose serial line carries this one
     slave: str  # the device wired onto it
     slave_id: int
 
