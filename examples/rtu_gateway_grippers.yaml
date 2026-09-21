@@ -1,0 +1,45 @@
+# Two OnRobot grippers on one RS485 line, with no arm in sight.
+#
+# A gripper driver reaching a tool through a robot's flange sees a TCP port
+# that speaks Modbus RTU, and nothing about the arm behind it. This scene is
+# that port on its own: one line, two tools, addressed by slave id the way an
+# OnRobot Dual Quick Changer addresses its pair.
+#
+# Run with:
+#   uv run machinist run examples/rtu_gateway_grippers.yaml
+#
+# Then talk to it the way the driver does -- RTU framing, no MBAP header:
+#   slave 0x41, read holding 0x010B count 1  ->  the RG2's width in 1/10 mm
+#   slave 0x42, same read                    ->  the RG6's
+#
+# A frame for a slave id that is not on the line gets no reply at all, which
+# is what a real line does. Expect the driver's own timeout, not an error.
+
+devices:
+  - name: bridge
+    kind: modbus_rtu_gateway
+    port: 60000                 # what a Dobot answers on
+    options:
+      extra_ports: [12345]      # and what a UR does
+
+  - name: rg1
+    kind: onrobot_rg
+    options:
+      model: rg2
+      initial_width_mm: 110.0
+
+  - name: rg2
+    kind: onrobot_rg
+    options:
+      model: rg6
+      initial_width_mm: 160.0
+
+# The grippers still serve Modbus/TCP on their own ports as well, so the same
+# tools can be driven either way at once.
+flange_links:
+  - master: bridge
+    slave: rg1
+    slave_id: 65                # 0x41, OnRobot's default
+  - master: bridge
+    slave: rg2
+    slave_id: 66                # 0x42
