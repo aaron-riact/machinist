@@ -44,8 +44,10 @@ def test_a_frame_too_short_to_measure_is_not_measured_yet() -> None:
 
 
 def test_an_unknown_function_leaves_the_stream_unreadable() -> None:
-    with pytest.raises(UnframeableError, match="0x04"):
+    with pytest.raises(UnframeableError, match="0x04") as caught:
         frame_length(b"\x41\x04\x00\x00")
+
+    assert (caught.value.slave_id, caught.value.function) == (0x41, 0x04)
 
 
 def test_a_read_request_parses() -> None:

@@ -61,8 +61,15 @@ class UnframeableError(ValueError):
 
     This is worse than an unsupported function. Without the length there
     is no way to find where the next frame starts, so a reader that meets
-    one has lost the stream and can only answer and hang up.
+    one has lost the stream and can only answer and hang up. Answering
+    still needs the slave id and function code, which only the frame that
+    could not be measured knows, so the error carries them out with it.
     """
+
+    def __init__(self, slave_id: int, function: int) -> None:
+        super().__init__(f"cannot measure a frame for function 0x{function:02X}")
+        self.slave_id = slave_id
+        self.function = function
 
 
 def crc16(data: bytes) -> int:
@@ -99,7 +106,7 @@ def frame_length(buffer: bytes) -> int | None:
         if len(buffer) < _WRITE_MULTIPLE_HEADER:
             return None
         return _WRITE_MULTIPLE_HEADER + buffer[6] + 2
-    raise UnframeableError(f"cannot measure a frame for function 0x{function:02X}")
+    raise UnframeableError(slave_id=buffer[0], function=function)
 
 
 @dataclass(frozen=True, slots=True)
