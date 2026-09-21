@@ -33,6 +33,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import field_validator
 
 from ...core.capabilities import HasFlange, HasIO
 from ...core.device import Device
@@ -47,6 +48,7 @@ from ...kinematics.api import DHParams, Joints, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
+from ...transport.modbus_rtu_gateway import ModbusRtuGateway
 from ...transport.line_server import Reply
 from ...transport.service import Service
 from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, arm_from_options
@@ -55,6 +57,10 @@ DOBOT_DASHBOARD_PORT = 29999
 DOBOT_FEEDBACK_FAST_PORT = 30004
 DOBOT_FEEDBACK_MED_PORT = 30005
 DOBOT_FEEDBACK_SLOW_PORT = 30006
+
+#: Where the controller lets the network at the flange's RS485 line. A
+#: client connects here and speaks RTU; the slave id picks the tool.
+DOBOT_FLANGE_GATEWAY_PORT = 60000
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,6 +466,15 @@ class DobotOptions(ArmOptions):
     robot_type: str = "cr5"
     #: Serve the 30004/30005/30006 feedback streams. Off for tests that only need the dashboard.
     feedback_ports: bool = True
+    #: TCP doors onto the flange's RS485 line. Left out means the port a real
+    #: controller answers on; ``false`` shuts the passthrough; a number or a
+    #: list of them names the ports outright.
+    flange_gateway_ports: tuple[int, ...] = (DOBOT_FLANGE_GATEWAY_PORT,)
+
+    @field_validator("flange_gateway_ports", mode="before")
+    @classmethod
+    def _read_gateway_ports(cls, raw: Any) -> object:
+        return _parse_gateway_ports(raw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -489,6 +504,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         bus: EventBus,
         options: ArmOptions,
         *,
+        flange: FlangeBus,
+        gateway: ModbusRtuGateway | None = None,
         feedback_enabled: bool = True,
         robot_type_code: int = 5,
         model_info: _RobotModelInfo | None = None,
@@ -507,7 +524,10 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
 
         self._current_command_id = 0
         self._fault = StateCell(_FaultState(), on_change=lambda _view: self.announce_panel())
-        self.flange = FlangeBus()
+        self.flange = flange
+        self._gateway = gateway
+        if gateway is not None:
+            self.add_service(gateway)
         self._masters: dict[int, _ModbusMaster] = {}
         self._ai: list[float] = [0.0] * self._ai_count
         self._tool_ai: list[float] = [0.0] * self._tool_ai_count
@@ -872,6 +892,11 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
 
     # ----- modbus masters ------------------------------------------------
 
+    @property
+    def flange_gateway_ports(self) -> tuple[int, ...]:
+        """TCP ports that open straight onto the flange line, if any."""
+        return () if self._gateway is None else self._gateway.ports
+
     def _next_master_index(self) -> int | None:
         return next(
             (i for i in range(MAX_MODBUS_MASTERS) if i not in self._masters), None
@@ -1059,6 +1084,23 @@ def _parse(line: str) -> tuple[str, str]:
     return verb.strip(), rest[:-1]
 
 
+def _parse_gateway_ports(raw: Any) -> tuple[int, ...]:
+    """Read the ``flange_gateway_ports`` option into the ports to listen on.
+
+    Left out means the port a real controller answers on; ``false`` shuts the
+    passthrough; a number or a list of them names the ports outright.
+    """
+    if raw is None:
+        return (DOBOT_FLANGE_GATEWAY_PORT,)
+    if raw is False:
+        return ()
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return (raw,)
+    if isinstance(raw, list | tuple):
+        return tuple(int(port) for port in raw)
+    raise ValueError(f"flange_gateway_ports wants false, a port or a list of them, got {raw!r}")
+
+
 def _parse_modbus_rtu_create(args: str) -> tuple[int, int, str]:
     """Split ``ModbusRTUCreate`` into (slave_id, baud, remaining serial args).
 
@@ -1226,8 +1268,16 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions
     if options.dh_params is None:
         # the model's own geometry, unless the scene gives explicit DH parameters
         options = options.model_copy(update={"dh_params": model_info.dh_params})
+    flange = FlangeBus()
+    gateway = (
+        ModbusRtuGateway(host=endpoint.host, ports=options.flange_gateway_ports, line=flange)
+        if options.flange_gateway_ports
+        else None
+    )
     return DobotDashboard(
         name, endpoint, bus, options,
+        flange=flange,
+        gateway=gateway,
         feedback_enabled=options.feedback_ports,
         model_info=model_info,
     )

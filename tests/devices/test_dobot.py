@@ -13,6 +13,7 @@ from machinist.devices.robots.arm import ArmOptions
 from machinist.devices.robots.arm import ArmMode, ArmStateView
 from machinist.devices.robots.dobot import (
     DOBOT_FEEDBACK_FAST_PORT,
+    DOBOT_FLANGE_GATEWAY_PORT,
     DOBOT_ROBOT_MODELS,
     ERR_COMMAND_FAILED,
     ERR_ROBOT_IN_ERROR_STATE,
@@ -30,6 +31,9 @@ from machinist.devices.robots.dobot import (
     _update_feedback_packet,
 )
 from machinist.kinematics.api import KinematicsOptions
+from machinist.transport.flange_bus import FlangeBus
+from machinist.transport.modbus_rtu import framed
+from machinist.transport.modbus_rtu_gateway import ModbusRtuGateway
 
 from ..conftest import free_port, wait_running
 
@@ -38,7 +42,7 @@ from ..conftest import free_port, wait_running
 def dobot() -> DobotDashboard:
     bus = EventBus()
     d = DobotDashboard("dobot1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
-                       feedback_enabled=False)
+                       flange=FlangeBus(), feedback_enabled=False)
     d.start()
     try:
         wait_running(d)
@@ -54,7 +58,7 @@ def dobot_cr20a() -> DobotDashboard:
     opts = ArmOptions(kinematics=KinematicsOptions(backend="dh", dh=_CR20A_DH))
     d = DobotDashboard(
         "cr20a", Endpoint("127.0.0.1", free_port()), bus, opts,
-        feedback_enabled=False, model_info=DOBOT_ROBOT_MODELS["cr20a"],
+        flange=FlangeBus(), feedback_enabled=False, model_info=DOBOT_ROBOT_MODELS["cr20a"],
     )
     d.start()
     try:
@@ -254,7 +258,8 @@ def test_dobot_speedfactor_appears_in_build_detail(dobot: DobotDashboard) -> Non
 
 def test_dobot_robot_type_defaults_to_cr5() -> None:
     bus = EventBus()
-    d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(), feedback_enabled=False)
+    d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
+                       flange=FlangeBus(), feedback_enabled=False)
     assert d._robot_type_code == 5
 
 
@@ -369,7 +374,7 @@ def test_feedback_server_streams_packets() -> None:
     """Connect to the fast feedback port and verify we receive 1440-byte packets."""
     bus = EventBus()
     d = DobotDashboard(
-        "dobot_fb", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
+        "dobot_fb", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(), flange=FlangeBus(),
     )
     d.start()
     try:
@@ -519,7 +524,7 @@ def test_dobot_quiet_commands_suppress_rx_tx_events() -> None:
     received: list[Event] = []
     bus.subscribe(received.append)
     d = DobotDashboard("quiet1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
-                       feedback_enabled=False)
+                       flange=FlangeBus(), feedback_enabled=False)
     d.start()
     try:
         wait_running(d)
@@ -1282,7 +1287,8 @@ def test_fault_injection_and_masters_announce_the_panel() -> None:
     bus = EventBus()
     panels: list[PanelChanged] = []
     bus.subscribe(lambda e: panels.append(e) if isinstance(e, PanelChanged) else None)
-    d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(), feedback_enabled=False)
+    d = DobotDashboard("d", Endpoint("127.0.0.1", free_port()), bus, ArmOptions(),
+                       flange=FlangeBus(), feedback_enabled=False)
 
     d.inject_protective_stop(controller_ids=(17,))
     derived = {f.signal: f.value for f in panels[-1].panel.status_fields}
@@ -1309,3 +1315,102 @@ def test_panel_lists_tool_bits_and_analogue_channels_as_io_and_faults_as_status(
     status = {f.signal for f in panel.status_fields}
     assert {"robottype", "speedfactor", "pstop", "alarmids", "enablefail", "flange"} <= status
     assert not status & {"AI1", "AO1"}, "channels are IO, not status"
+
+
+# --- the flange line, reached straight over TCP -----------------------
+
+
+def _dobot_from_config(**options) -> DobotDashboard:
+    """Build through the registry, so the YAML boundary is what is tested."""
+    device = default_registry.create(
+        "dobot_dashboard",
+        "gw",
+        Endpoint("127.0.0.1", free_port()),
+        EventBus(),
+        {"feedback_ports": False, **options},
+    )
+    assert isinstance(device, DobotDashboard)
+    return device
+
+
+def test_a_dobot_opens_the_passthrough_on_60000_by_default() -> None:
+    assert _dobot_from_config().flange_gateway_ports == (DOBOT_FLANGE_GATEWAY_PORT,)
+
+
+def test_the_passthrough_can_be_switched_off() -> None:
+    assert _dobot_from_config(flange_gateway_ports=False).flange_gateway_ports == ()
+
+
+def test_the_passthrough_ports_can_be_named_outright() -> None:
+    ports = _dobot_from_config(flange_gateway_ports=[1502, 1503]).flange_gateway_ports
+
+    assert ports == (1502, 1503)
+
+
+def test_an_unusable_passthrough_option_is_refused_at_the_boundary() -> None:
+    with pytest.raises(ValueError, match="flange_gateway_ports"):
+        _dobot_from_config(flange_gateway_ports="60000")
+
+
+@pytest.fixture
+def dobot_with_passthrough():
+    """A Dobot with an RG2 on the flange and a TCP door onto that line."""
+    flange = FlangeBus()
+    port = free_port()
+    gateway = ModbusRtuGateway(host="127.0.0.1", ports=[port], line=flange)
+    device = DobotDashboard(
+        "gw1", Endpoint("127.0.0.1", free_port()), EventBus(), ArmOptions(),
+        flange=flange, gateway=gateway, feedback_enabled=False,
+    )
+    rg = default_registry.create(
+        "onrobot_rg", "rg1", Endpoint("127.0.0.1", free_port()), EventBus(),
+        {"initial_width_mm": 110.0},
+    )
+    flange.attach(0x41, rg.register_port)
+    device.start()
+    try:
+        wait_running(device)
+        yield device, port
+    finally:
+        device.stop()
+
+
+def _rtu(port: int, request: bytes) -> bytes:
+    with socket.create_connection(("127.0.0.1", port), timeout=2) as sock:
+        sock.sendall(request)
+        return sock.recv(64)
+
+
+def test_a_gripper_is_read_over_the_passthrough(dobot_with_passthrough) -> None:
+    """0x010B is the RG's actual width, in tenths of a millimetre."""
+    _, port = dobot_with_passthrough
+
+    reply = _rtu(port, framed(b"\x41\x03\x01\x0b\x00\x01"))
+
+    assert reply == framed(b"\x41\x03\x02\x04\x4c")
+
+
+def test_a_gripper_is_written_over_the_passthrough(dobot_with_passthrough) -> None:
+    _, port = dobot_with_passthrough
+
+    _rtu(port, framed(b"\x41\x06\x00\x01\x01\xf4"))  # target width 50.0 mm
+
+    assert _rtu(port, framed(b"\x41\x03\x00\x01\x00\x01")) == framed(b"\x41\x03\x02\x01\xf4")
+
+
+def test_nothing_answers_for_a_tool_that_is_not_on_the_flange(dobot_with_passthrough) -> None:
+    _, port = dobot_with_passthrough
+
+    with socket.create_connection(("127.0.0.1", port), timeout=0.3) as sock:
+        sock.sendall(framed(b"\x42\x03\x01\x0b\x00\x01"))
+        with pytest.raises(TimeoutError):
+            sock.recv(64)
+
+
+def test_the_passthrough_closes_with_the_dobot(dobot_with_passthrough) -> None:
+    dobot, port = dobot_with_passthrough
+
+    dobot.stop()
+
+    with pytest.raises(ConnectionRefusedError):
+        socket.create_connection(("127.0.0.1", port), timeout=1).close()

@@ -18,6 +18,7 @@ from machinist.core.types import Endpoint
 from machinist.devices.machines.state import HasMachineState, MachineState
 from machinist.devices.robots.arm import ArmOptions, HasArm, RobotArm
 from machinist.devices.robots.dobot import DobotDashboard
+from machinist.transport.flange_bus import FlangeBus
 
 _LOOPBACK = Endpoint("127.0.0.1", 29999)
 
@@ -94,7 +95,8 @@ class RecordingDobot(DobotDashboard):
 
     def __init__(self, name: str = "dobot1") -> None:
         super().__init__(
-            name, Endpoint("127.0.0.1", 0), EventBus(), ArmOptions(), feedback_enabled=False
+            name, Endpoint("127.0.0.1", 0), EventBus(), ArmOptions(),
+            flange=FlangeBus(), feedback_enabled=False,
         )
         self.stops: list[dict] = []
         self.cleared = 0
