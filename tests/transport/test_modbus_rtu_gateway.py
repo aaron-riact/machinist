@@ -189,30 +189,30 @@ def test_a_port_already_in_use_fails_the_caller(line: FlangeBus) -> None:
 # --- the option that names the ports ----------------------------------
 
 
-def test_leaving_the_option_out_takes_the_default() -> None:
-    assert parse_gateway_ports(None, default=(60000,)) == (60000,)
+def test_leaving_the_option_out_follows_the_hardware() -> None:
+    assert parse_gateway_ports(None, ports=(60000,), on_by_default=True) == (60000,)
+    assert parse_gateway_ports(None, ports=(12345,), on_by_default=False) == ()
 
 
-def test_asking_for_it_takes_the_default_too() -> None:
-    assert parse_gateway_ports(True, default=(12345,)) == (12345,)
-
-
-def test_a_device_whose_default_is_nothing_stays_shut() -> None:
-    assert parse_gateway_ports(None, default=()) == ()
+def test_asking_for_it_opens_the_controllers_own_ports() -> None:
+    """A device whose passthrough is off until asked still knows its port."""
+    assert parse_gateway_ports(True, ports=(12345,), on_by_default=False) == (12345,)
 
 
 def test_false_shuts_the_passthrough() -> None:
-    assert parse_gateway_ports(False, default=(60000,)) == ()
+    assert parse_gateway_ports(False, ports=(60000,), on_by_default=True) == ()
 
 
 def test_one_port_can_be_named_on_its_own() -> None:
-    assert parse_gateway_ports(1502, default=(60000,)) == (1502,)
+    assert parse_gateway_ports(1502, ports=(60000,), on_by_default=True) == (1502,)
 
 
 def test_several_ports_can_be_named() -> None:
-    assert parse_gateway_ports([1502, 1503], default=(60000,)) == (1502, 1503)
+    named = parse_gateway_ports([1502, 1503], ports=(60000,), on_by_default=False)
+
+    assert named == (1502, 1503)
 
 
 def test_something_that_is_not_a_port_is_refused() -> None:
     with pytest.raises(ValueError, match="flange_gateway_ports"):
-        parse_gateway_ports("60000", default=(60000,))
+        parse_gateway_ports("60000", ports=(60000,), on_by_default=True)

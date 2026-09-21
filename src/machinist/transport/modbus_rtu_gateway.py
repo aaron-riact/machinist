@@ -200,17 +200,25 @@ class ModbusRtuGateway(Service):
             callback(count)
 
 
-def parse_gateway_ports(raw: Any, *, default: Sequence[int]) -> tuple[int, ...]:
+def parse_gateway_ports(
+    raw: Any, *, ports: Sequence[int], on_by_default: bool
+) -> tuple[int, ...]:
     """Read a ``flange_gateway_ports`` option into the ports to listen on.
 
-    Every device that has a flange spells the option the same way, and
-    differs only in whether leaving it out means the port real hardware
-    answers on or means nothing at all -- which is what *default* says.
-    ``true`` asks for that same default, ``false`` shuts the passthrough,
-    and a number or a list of them names the ports outright.
+    Every device that has a flange spells the option the same way and
+    differs in two things: *ports*, the ones its real controller answers
+    on, and *on_by_default*, whether it answers there unless told not to.
+    A Dobot does; a UR only forwards the line once someone has handed the
+    tool communication interface over.
+
+    So leaving the option out follows the hardware, ``true`` asks for the
+    controller's own ports, ``false`` shuts the passthrough, and a number
+    or a list of them names the ports outright.
     """
-    if raw is None or raw is True:
-        return tuple(default)
+    if raw is None:
+        return tuple(ports) if on_by_default else ()
+    if raw is True:
+        return tuple(ports)
     if raw is False:
         return ()
     if isinstance(raw, int):

@@ -474,7 +474,9 @@ class DobotOptions(ArmOptions):
     @field_validator("flange_gateway_ports", mode="before")
     @classmethod
     def _read_gateway_ports(cls, raw: Any) -> object:
-        return parse_gateway_ports(raw, default=(DOBOT_FLANGE_GATEWAY_PORT,))
+        return parse_gateway_ports(
+            raw, ports=(DOBOT_FLANGE_GATEWAY_PORT,), on_by_default=True
+        )
 
 
 @dataclass(frozen=True, slots=True)
