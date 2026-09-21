@@ -101,3 +101,45 @@ def test_a_scene_wires_grippers_onto_the_gateway_with_flange_links() -> None:
 
     assert first == framed(b"\x41\x03\x02\x04\x4c")
     assert second == framed(b"\x42\x03\x02\x06\x40")
+
+
+# --- what the panel says about the line -------------------------------
+
+
+def _derived(device: ModbusRtuGatewayDevice) -> dict[str, str]:
+    return {f.signal: f.value for f in device.build_detail().status_fields}
+
+
+def test_detail_panel_lists_every_door_onto_the_line() -> None:
+    assert _derived(_gateway(1502, extra_ports=[1503]))["ports"] == "1502, 1503"
+
+
+def test_detail_panel_reads_dash_with_nothing_on_the_line() -> None:
+    assert _derived(_gateway(1502))["flange"] == "-"
+
+
+def test_detail_panel_lists_the_attached_slave_ids() -> None:
+    device = _gateway(1502)
+    rg = default_registry.create(
+        "onrobot_rg", "rg1", Endpoint("127.0.0.1", free_port()), EventBus(), {}
+    )
+    device.flange.attach(0x41, rg.register_port)
+
+    assert _derived(device)["flange"] == "0x41"
+
+
+def test_detail_panel_counts_who_is_on_the_line() -> None:
+    port = free_port()
+    device = _gateway(port)
+    device.start()
+    try:
+        wait_running(device)
+        assert device.build_detail().clients == 0
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3) as sock:
+            sock.sendall(framed(b"\x41\x03\x01\x0b\x00\x01"))
+            with pytest.raises(TimeoutError):
+                sock.recv(64)  # nothing on the line answers, but we are connected
+
+            assert device.build_detail().clients == 1
+    finally:
+        device.stop()

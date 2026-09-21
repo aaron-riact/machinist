@@ -23,6 +23,7 @@ from ...core.capabilities import HasFlange
 from ...core.device import Device
 from ...core.events import EventBus
 from ...core.options import Options
+from ...core.panel import Field, Panel
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.flange_bus import FlangeBus
@@ -63,6 +64,31 @@ class ModbusRtuGatewayDevice(Device, HasFlange):
     def flange_gateway_ports(self) -> tuple[int, ...]:
         """TCP ports that open straight onto the line."""
         return self._gateway.ports
+
+    def build_detail(self) -> Panel:
+        """The doors onto the line, and what is sitting on it."""
+        return Panel(
+            mode="rtu gateway",
+            clients=self._gateway.client_count,
+            status_fields=(
+                Field(
+                    signal="ports",
+                    name="Listening on",
+                    type="str",
+                    value=", ".join(str(port) for port in self._gateway.ports),
+                ),
+                Field(
+                    signal="flange",
+                    name="Line slaves",
+                    type="str",
+                    value=self._slaves_detail(),
+                ),
+            ),
+        )
+
+    def _slaves_detail(self) -> str:
+        ids = self.flange.slave_ids
+        return ", ".join(f"0x{slave_id:02X}" for slave_id in ids) if ids else "-"
 
 
 @register(
