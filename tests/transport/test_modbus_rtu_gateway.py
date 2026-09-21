@@ -10,7 +10,7 @@ import pytest
 
 from machinist.transport.flange_bus import FlangeBus
 from machinist.transport.modbus_rtu import framed
-from machinist.transport.modbus_rtu_gateway import ModbusRtuGateway
+from machinist.transport.modbus_rtu_gateway import ModbusRtuGateway, parse_gateway_ports
 from machinist.transport.registers import RegisterPort
 
 from ..conftest import free_port
@@ -184,3 +184,35 @@ def test_a_port_already_in_use_fails_the_caller(line: FlangeBus) -> None:
             gateway.serve_forever(threading.Event())
     finally:
         taken.close()
+
+
+# --- the option that names the ports ----------------------------------
+
+
+def test_leaving_the_option_out_takes_the_default() -> None:
+    assert parse_gateway_ports(None, default=(60000,)) == (60000,)
+
+
+def test_asking_for_it_takes_the_default_too() -> None:
+    assert parse_gateway_ports(True, default=(12345,)) == (12345,)
+
+
+def test_a_device_whose_default_is_nothing_stays_shut() -> None:
+    assert parse_gateway_ports(None, default=()) == ()
+
+
+def test_false_shuts_the_passthrough() -> None:
+    assert parse_gateway_ports(False, default=(60000,)) == ()
+
+
+def test_one_port_can_be_named_on_its_own() -> None:
+    assert parse_gateway_ports(1502, default=(60000,)) == (1502,)
+
+
+def test_several_ports_can_be_named() -> None:
+    assert parse_gateway_ports([1502, 1503], default=(60000,)) == (1502, 1503)
+
+
+def test_something_that_is_not_a_port_is_refused() -> None:
+    with pytest.raises(ValueError, match="flange_gateway_ports"):
+        parse_gateway_ports("60000", default=(60000,))

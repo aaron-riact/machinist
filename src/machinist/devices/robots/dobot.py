@@ -48,7 +48,7 @@ from ...kinematics.api import DHParams, Joints, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
-from ...transport.modbus_rtu_gateway import ModbusRtuGateway
+from ...transport.modbus_rtu_gateway import ModbusRtuGateway, parse_gateway_ports
 from ...transport.line_server import Reply
 from ...transport.service import Service
 from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, arm_from_options
@@ -474,7 +474,7 @@ class DobotOptions(ArmOptions):
     @field_validator("flange_gateway_ports", mode="before")
     @classmethod
     def _read_gateway_ports(cls, raw: Any) -> object:
-        return _parse_gateway_ports(raw)
+        return parse_gateway_ports(raw, default=(DOBOT_FLANGE_GATEWAY_PORT,))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1091,23 +1091,6 @@ def _parse(line: str) -> tuple[str, str]:
         return line, ""
     verb, rest = line.split("(", 1)
     return verb.strip(), rest[:-1]
-
-
-def _parse_gateway_ports(raw: Any) -> tuple[int, ...]:
-    """Read the ``flange_gateway_ports`` option into the ports to listen on.
-
-    Left out means the port a real controller answers on; ``false`` shuts the
-    passthrough; a number or a list of them names the ports outright.
-    """
-    if raw is None:
-        return (DOBOT_FLANGE_GATEWAY_PORT,)
-    if raw is False:
-        return ()
-    if isinstance(raw, int) and not isinstance(raw, bool):
-        return (raw,)
-    if isinstance(raw, list | tuple):
-        return tuple(int(port) for port in raw)
-    raise ValueError(f"flange_gateway_ports wants false, a port or a list of them, got {raw!r}")
 
 
 def _parse_modbus_rtu_create(args: str) -> tuple[int, int, str]:

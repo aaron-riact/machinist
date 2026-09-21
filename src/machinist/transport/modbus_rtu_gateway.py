@@ -27,6 +27,7 @@ import contextlib
 import socket
 import threading
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from .flange_bus import FlangeBus, NoSlaveError
 from .modbus_rtu import (
@@ -42,7 +43,7 @@ from .modbus_rtu import (
 )
 from .service import Service
 
-__all__ = ["ModbusRtuGateway"]
+__all__ = ["ModbusRtuGateway", "parse_gateway_ports"]
 
 #: How long an accept or recv blocks before the stop flag is looked at again.
 _POLL_SECONDS = 0.25
@@ -197,3 +198,23 @@ class ModbusRtuGateway(Service):
             callback = self._on_connect_change
         if callback is not None:
             callback(count)
+
+
+def parse_gateway_ports(raw: Any, *, default: Sequence[int]) -> tuple[int, ...]:
+    """Read a ``flange_gateway_ports`` option into the ports to listen on.
+
+    Every device that has a flange spells the option the same way, and
+    differs only in whether leaving it out means the port real hardware
+    answers on or means nothing at all -- which is what *default* says.
+    ``true`` asks for that same default, ``false`` shuts the passthrough,
+    and a number or a list of them names the ports outright.
+    """
+    if raw is None or raw is True:
+        return tuple(default)
+    if raw is False:
+        return ()
+    if isinstance(raw, int):
+        return (raw,)
+    if isinstance(raw, list | tuple):
+        return tuple(int(port) for port in raw)
+    raise ValueError(f"flange_gateway_ports wants false, a port or a list of them, got {raw!r}")
