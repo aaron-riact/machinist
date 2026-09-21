@@ -15,6 +15,7 @@ from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.arm import ArmOptions, DHParams, KinematicsOptions, arm_from_options
 from machinist.devices.robots.ur import URDashboardServer
+from machinist.transport.flange_bus import FlangeBus
 
 
 def _ur5_dh() -> DHParams:
@@ -33,7 +34,7 @@ def test_robot_uses_configured_kinematics_backend() -> None:
             dh=_ur5_dh(),
         ),
     )
-    ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options)
+    ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), bus, options, flange=FlangeBus())
     try:
         pose = ur.arm._kinematics.forward(tuple(Radians(0.0) for _ in range(6)))  # noqa: SLF001
         # Non-identity pose because DH parameters are substantial.

@@ -9,6 +9,7 @@ from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.arm import ArmOptions, RobotArm
 from machinist.devices.robots.ur import URDashboardServer
+from machinist.transport.flange_bus import FlangeBus
 from machinist.kinematics.units import Radians
 from machinist.transport.service import Service
 
@@ -31,5 +32,6 @@ def test_arm_ticks_while_served_and_stops_on_shutdown() -> None:
 
 
 def test_robot_device_registers_its_arm_as_a_service() -> None:
-    ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), EventBus(), ArmOptions())
+    ur = URDashboardServer("ur1", Endpoint("127.0.0.1", 0), EventBus(), ArmOptions(),
+                           flange=FlangeBus())
     assert ur.arm in ur.services

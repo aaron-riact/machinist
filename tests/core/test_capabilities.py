@@ -30,7 +30,7 @@ EXPECTED = {
     FanucFocasRobot: {HasArm, HasIO},
     RobotDevice: {HasArm},
     MotomanNX100: {HasArm},
-    URDashboardServer: {HasArm},
+    URDashboardServer: {HasArm, HasFlange},
     HaasNGC: {HasMachineState, HasPrograms},
     MazakSinumerik840D: {HasMachineState, HasIO},
     MazakSmoothEmulator: {HasMachineState, HasIO},
