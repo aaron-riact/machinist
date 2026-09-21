@@ -170,6 +170,48 @@ When two devices want the same `host:port`, Machinist:
 | `onrobot_3fg25`     | Modbus/TCP       | 502          | Diameter, force, grip command      |
 | `zimmer_ged6000il`  | IO-Link HTTP     | 80           | Emulates IFM AL1350 master         |
 | `weidmuller_ur20`   | Modbus/TCP       | 502          | Configurable I/O width             |
+| `modbus_rtu_gateway`| Modbus RTU/TCP   | 60000        | A bare flange line; tools via `flange_links` |
+
+## Tool flanges and RTU passthroughs
+
+A gripper on a robot's tool flange is not on the network. It hangs off an
+RS485 line on the flange connector, answering Modbus RTU on its own slave
+id, and every route to it goes through the arm. `flange_links` is that
+cable:
+
+```yaml
+devices:
+  - {name: dobot, kind: dobot_dashboard}
+  - {name: rg1, kind: onrobot_rg, options: {model: rg2}}
+
+flange_links:
+  - {master: dobot, slave: rg1, slave_id: 65}   # 0x41, OnRobot's default
+```
+
+Two entries naming the same master put two tools on one line, which is how
+an OnRobot Dual Quick Changer's pair is expressed.
+
+There are then two ways in. The arm's own protocol is one: a Dobot driver
+calls `ModbusRTUCreate(65,115200)` and reads through `GetHoldRegs`. The
+other is the passthrough -- a TCP port that takes **RTU framing directly**,
+no MBAP header, with the slave id in the frame picking the tool:
+
+| Device               | Passthrough port | On by default |
+| -------------------- | ---------------- | ------------- |
+| `dobot_dashboard`    | 60000            | yes           |
+| `ur_dashboard`       | 12345            | no            |
+| `modbus_rtu_gateway` | its own `port`   | yes           |
+
+`flange_gateway_ports` changes that per device: `false` shuts the
+passthrough, `true` opens the controller's usual port, and a number or a
+list names ports outright.
+
+When no device on the line answers to a frame's slave id, **nothing comes
+back at all**. That is what an RS485 line does, and a driver that never
+meets it here will meet it on real hardware.
+
+For testing a gripper driver on its own, `modbus_rtu_gateway` is the flange
+without the arm -- see `examples/rtu_gateway_grippers.yaml`.
 
 ## Mazak Smooth config notes
 
@@ -260,7 +302,8 @@ machinist/
 │   ├── robots/        ← UR, Motoman, Dobot, Fanuc, generic — share arm.py
 │   ├── machines/      ← HAAS, Mazak — all share state.py + gcode.py
 │   ├── grippers/      ← OnRobot, Zimmer, Pneumatic
-│   └── io_controllers/← Weidmuller UR20
+│   ├── io_controllers/← Weidmuller UR20
+│   └── gateways/      ← a bare RTU-over-TCP flange line
 ├── srci/             ← transport-agnostic SRCI codec/client/server + CLI
 ├── tui/app.py         ← Textual UI, command bar, live signal panel
 ├── web/               ← stdlib web UI: api.py (pure) + server.py (SSE) + static/
