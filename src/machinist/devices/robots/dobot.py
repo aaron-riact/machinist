@@ -755,6 +755,11 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_stop(self, req: _Request) -> Reply:
         self.arm.stop()
         self._abandon_queue()
+        # A CR20A starts its command ids again after a Stop(): the feedback says 1,
+        # and the next command gets 2. The interface guide does not mention it.
+        with self._queue_lock:
+            self._last_issued_id = 1
+            self._current_command_id = 1
         return _ok(req.verb, req.args)
 
     def _verb_geterrorid(self, req: _Request) -> Reply:

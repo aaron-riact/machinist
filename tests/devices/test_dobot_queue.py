@@ -116,3 +116,20 @@ def test_a_move_sent_after_stop_runs(dobot: DobotDashboard) -> None:
     dobot.handle_line("Stop()")
     dobot.handle_line(SECOND)
     assert dobot.arm.state.view.mode is ArmMode.MOVING
+
+
+def test_after_stop_the_feedback_reports_command_one(dobot: DobotDashboard) -> None:
+    dobot.handle_line(FIRST)
+    dobot.handle_line(SECOND)
+    _finish_move(dobot)
+    assert _reported_id(dobot) == 2  # the second move is running
+    dobot.handle_line("Stop()")
+    assert _reported_id(dobot) == 1
+
+
+def test_after_stop_the_next_command_gets_id_two(dobot: DobotDashboard) -> None:
+    dobot.handle_line(FIRST)
+    dobot.handle_line(SECOND)
+    dobot.handle_line("SetPayload(2.5)")
+    dobot.handle_line("Stop()")
+    assert _value(dobot.handle_line(FIRST)) == 2
