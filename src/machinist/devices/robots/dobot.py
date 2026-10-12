@@ -26,6 +26,7 @@ import socket
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -44,12 +45,12 @@ from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.state import StateCell
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Joints, Pose
+from ...kinematics.api import DHParams, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
-from ...transport.modbus_rtu_gateway import ModbusRtuGateway, parse_gateway_ports
 from ...transport.line_server import Reply
+from ...transport.modbus_rtu_gateway import ModbusRtuGateway, parse_gateway_ports
 from ...transport.service import Service
 from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, arm_from_options
 
@@ -489,6 +490,17 @@ class _Request:
     fault: _FaultState
 
 
+@dataclass(frozen=True, slots=True)
+class _QueuedCommand:
+    """A command in the controller's queue.
+
+    ``run`` carries it out and says whether it set the arm moving.
+    """
+
+    command_id: int
+    run: Callable[[], bool]
+
+
 class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     """Emulated Dobot TCP/IP dashboard (port 29999)."""
 
@@ -515,6 +527,14 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
+        # The controller's command queue: moves and settings run in the order they
+        # were sent, each when the one before has finished. The feedback reports the
+        # id of the command running, or of the last one run.
+        self._queue: deque[_QueuedCommand] = deque()
+        self._queue_lock = threading.Lock()
+        self._last_issued_id = 0
+        self._running = False
+        self.arm.on_move_finished(self._move_finished)
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code
 
@@ -590,6 +610,62 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             return f"-10000,{{}},{verb}({args})"
         return handler(self, req)
 
+    # ----- the command queue ------------------------------------------------
+
+    def _enqueue(self, run: Callable[[], bool]) -> int:
+        """Queue *run* behind the commands already waiting; returns its queue id."""
+        with self._queue_lock:
+            self._last_issued_id += 1
+            command_id = self._last_issued_id
+            self._queue.append(_QueuedCommand(command_id, run))
+        self._run_queue()
+        return command_id
+
+    def _enqueue_move(self, start: Callable[[], None]) -> int:
+        def run() -> bool:
+            start()
+            return True
+        return self._enqueue(run)
+
+    def _enqueue_instant(self, apply: Callable[[], None]) -> int:
+        """Queue a command that is done as soon as it runs.
+
+        That is a setting, or a jump the arm makes at once.
+        """
+        def run() -> bool:
+            apply()
+            return False
+        return self._enqueue(run)
+
+    def _abandon_queue(self) -> None:
+        """Drop every queued command: the arm was stopped, and nothing after it will run."""
+        with self._queue_lock:
+            self._queue.clear()
+            self._running = False
+
+    def _move_finished(self) -> None:
+        with self._queue_lock:
+            self._running = False
+        self._run_queue()
+
+    def _run_queue(self) -> None:
+        """Start the next queued command, unless one is running; settings run straight through."""
+        while True:
+            with self._queue_lock:
+                if self._running or not self._queue:
+                    return
+                command = self._queue.popleft()
+                self._running = True
+                self._current_command_id = command.command_id
+            try:
+                moves = command.run()
+            except RuntimeError:  # the arm refused to move: servo off or e-stopped
+                moves = False
+            if moves:
+                return
+            with self._queue_lock:
+                self._running = False
+
     # ----- dashboard verbs, one method each ----------------------------------
 
     def _verb_enablerobot(self, req: _Request) -> Reply:
@@ -606,6 +682,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
 
     def _verb_emergencystop(self, req: _Request) -> Reply:
         self.arm.estop()
+        self._abandon_queue()
         self._fault.update(alarm_ids=(1,))
         return _ok(req.verb, req.args)
 
@@ -677,6 +754,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
 
     def _verb_stop(self, req: _Request) -> Reply:
         self.arm.stop()
+        self._abandon_queue()
         return _ok(req.verb, req.args)
 
     def _verb_geterrorid(self, req: _Request) -> Reply:
@@ -787,10 +865,9 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             Radians(math.radians(pose[4])),
             Radians(math.radians(pose[5])),
         )
-        # SetTool silently bumps CurrentCommandId even though the
-        # response carries no value field (it'req.arm "immediate" per the
-        # protocol docs, but the real Dobot queues it internally).
-        self._current_command_id += 1
+        # SetTool takes a queue id even though the response carries no value field
+        # (it is "immediate" per the protocol docs, but the real Dobot queues it).
+        self._enqueue_instant(lambda: None)
         return _ok(req.verb, req.args)
 
     def _verb_setpayload(self, req: _Request) -> Reply:
@@ -804,13 +881,15 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 cx, cy, cz = float(parts[1]), float(parts[2]), float(parts[3])
             except ValueError:
                 return f"-30001,{{}},{req.verb}({req.args})"
-            self._payload = (load, cx, cy, cz)
+            payload = (load, cx, cy, cz)
         elif len(parts) == 1:
-            self._payload = (load, 0.0, 0.0, 0.0)
+            payload = (load, 0.0, 0.0, 0.0)
         else:
             return f"-30001,{{}},{req.verb}({req.args})"
-        self._current_command_id += 1
-        return _ok(req.verb, req.args, value=str(self._current_command_id))
+
+        def apply() -> None:
+            self._payload = payload
+        return _ok(req.verb, req.args, value=str(self._enqueue_instant(apply)))
 
     def _verb_tool(self, req: _Request) -> Reply:
         idx, err = _int_arg(req.args, req.verb, lo=0, hi=50)
@@ -818,48 +897,49 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             return err
         if idx != 0 and idx not in self._tool_frames:
             return f"-1,{{}},Tool({idx})"
-        self._active_tool = idx
-        self._current_command_id += 1
-        return _ok(req.verb, req.args, value=str(self._current_command_id))
+        def apply() -> None:
+            self._active_tool = idx
+        return _ok(req.verb, req.args, value=str(self._enqueue_instant(apply)))
 
     def _verb_reljointmovj(self, req: _Request) -> Reply:
         try:
             deltas = _parse_required_floats(req.args, count=len(req.arm.joints))
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
-        target: Joints = tuple(Radians(j + math.radians(d)) for j, d in zip(req.arm.joints, deltas))
-        self.arm.movej(target)
-        self._current_command_id += 1
-        return _ok(req.verb, req.args, value=str(self._current_command_id))
+        def start() -> None:
+            joints = self.arm.state.view.joints  # where the moves ahead of it left the arm
+            self.arm.movej(tuple(Radians(j + math.radians(d)) for j, d in zip(joints, deltas)))
+        return _ok(req.verb, req.args, value=str(self._enqueue_move(start)))
 
     def _verb_relmovltool(self, req: _Request) -> Reply:
         try:
             delta = _parse_required_floats(req.args, count=6)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
-        delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
-                            math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
-        T_cur = _pose_to_mat(req.arm.pose)
-        R = T_cur[:3, :3]
-        tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
-        T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
-        R_tool = T_tool[:3, :3]
-        R_tcp = R @ R_tool
-        p = R @ np.array([tool_pose[0], tool_pose[1], tool_pose[2]], dtype=float)
-        twist = np.zeros(6, dtype=float)
-        twist[:3] = R_tcp @ delta_m[:3]
-        twist[3:] = R_tcp @ delta_m[3:]
-        skew_p = np.array([[0, -p[2], p[1]],
-                           [p[2], 0, -p[0]],
-                           [-p[1], p[0], 0]], dtype=float)
-        twist[:3] = twist[:3] + skew_p @ twist[3:]
-        print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
-        print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in req.arm.pose)})  tool={self._active_tool}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
-        print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
-        print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
-        self.arm.jog_cartesian(twist, dt=1.0)
-        self._current_command_id += 1
-        return _ok(req.verb, req.args, value=str(self._current_command_id))
+        def start() -> None:
+            pose = self.arm.state.view.pose  # where the moves ahead of it left the arm
+            delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
+                                math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
+            T_cur = _pose_to_mat(pose)
+            R = T_cur[:3, :3]
+            tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
+            T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
+            R_tool = T_tool[:3, :3]
+            R_tcp = R @ R_tool
+            p = R @ np.array([tool_pose[0], tool_pose[1], tool_pose[2]], dtype=float)
+            twist = np.zeros(6, dtype=float)
+            twist[:3] = R_tcp @ delta_m[:3]
+            twist[3:] = R_tcp @ delta_m[3:]
+            skew_p = np.array([[0, -p[2], p[1]],
+                               [p[2], 0, -p[0]],
+                               [-p[1], p[0], 0]], dtype=float)
+            twist[:3] = twist[:3] + skew_p @ twist[3:]
+            print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
+            print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in pose)})  tool={self._active_tool}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
+            print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
+            print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
+            self.arm.jog_cartesian(twist, dt=1.0)  # moves the arm at once
+        return _ok(req.verb, req.args, value=str(self._enqueue_instant(start)))
 
     def _verb_movj(self, req: _Request) -> Reply:
         try:
@@ -868,29 +948,31 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             return f"-30001,{{}},{req.verb}({req.args})"
         if form == "joint":
             # MovJ(joint={j1..j6}): target is joint coordinates (degrees).
-            self.arm.movej(tuple(Radians(math.radians(j)) for j in vals))
+            joints = tuple(Radians(math.radians(j)) for j in vals)
+            command_id = self._enqueue_move(lambda: self.arm.movej(joints))
+            return _ok(req.verb, req.args, value=str(command_id))
         else:
             # MovJ(pose={…}) or bare floats: target is a Cartesian pose
             # (mm + deg); joint-interpolated motion to it via IK. This is
             # the default point type per the TCP/IP interface guide.
-            self.arm.movej_pose((
+            pose: Pose = (
                 Meters(vals[0] * 1e-3), Meters(vals[1] * 1e-3), Meters(vals[2] * 1e-3),
                 Radians(math.radians(vals[3])), Radians(math.radians(vals[4])), Radians(math.radians(vals[5])),
-            ))
-        self._current_command_id += 1
-        return _ok(req.verb, req.args, value=str(self._current_command_id))
+            )
+        command_id = self._enqueue_move(lambda: self.arm.movej_pose(pose))
+        return _ok(req.verb, req.args, value=str(command_id))
 
     def _verb_movl(self, req: _Request) -> Reply:
         try:
             pose_mm, _form = _parse_motion_args(req.args, count=6)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
-        self.arm.movel((
+        pose: Pose = (
             Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
             Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
-        ))
-        self._current_command_id += 1
-        return _ok(req.verb, req.args, value=str(self._current_command_id))
+        )
+        command_id = self._enqueue_move(lambda: self.arm.movel(pose))
+        return _ok(req.verb, req.args, value=str(command_id))
 
     # ----- modbus masters ------------------------------------------------
 
@@ -927,6 +1009,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 f"expected one of {PROTECTIVE_STOP_MODES}"
             )
         self.arm.fault()
+        self._abandon_queue()
         self._fault.update(
             active=True,
             robot_mode=robot_mode,
