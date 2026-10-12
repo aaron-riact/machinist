@@ -357,6 +357,15 @@ class RobotArm(Service):
         self._stop = threading.Event()
         self.move_logger: MoveLogger | None = None
         self._move_seq = 0
+        self._move_finished: list[Callable[[], None]] = []
+
+    def on_move_finished(self, callback: Callable[[], None]) -> None:
+        """Call *callback* each time a move runs to its end; a stopped move does not.
+
+        It runs on the arm's tick thread, after the arm's lock is released, so it
+        may start the next move.
+        """
+        self._move_finished.append(callback)
 
     # ----- commands ---------------------------------------------------
 
@@ -522,6 +531,9 @@ class RobotArm(Service):
             self.move_logger.progress(seq=move.seq, kind=move.kind, t=t, elapsed=elapsed, joints=joints, pose=pose)
             if done:
                 self.move_logger.move_end(seq=move.seq, kind=move.kind, joints=joints, pose=pose)
+        if done:
+            for callback in self._move_finished:
+                callback()
 
 
 class HasArm(ABC):
