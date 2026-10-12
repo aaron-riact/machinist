@@ -213,6 +213,27 @@ meets it here will meet it on real hardware.
 For testing a gripper driver on its own, `modbus_rtu_gateway` is the flange
 without the arm -- see `examples/rtu_gateway_grippers.yaml`.
 
+### The Dobot's command queue
+
+Like the real controller, the Dobot queues `MovJ`, `MovL`, `RelJointMovJ`,
+`RelMovLTool`, `SetTool`, `Tool` and `SetPayload`, and runs each when the one
+before has finished. Every command's reply carries its queue id, and the
+feedback's `CurrentCommandId` is the id of the command running, or of the last
+one run -- not the newest id handed out.
+
+`Stop()` drops whatever is still queued and starts the ids again: the feedback
+says 1, and the next command gets 2. A CR20A does this, though the interface
+guide does not say so. It also replies only once the arm has stopped:
+
+```yaml
+devices:
+  - name: dobot
+    kind: dobot_dashboard
+    options:
+      stop_seconds: 0.6     # Stop() from a moving arm; a still arm replies at once
+      reply_seconds: 0.01   # wait before every reply, like a real round trip; off by default
+```
+
 ## Mazak Smooth config notes
 
 `mazak_smooth` models the Mazak robot interface as the **machine** side of
