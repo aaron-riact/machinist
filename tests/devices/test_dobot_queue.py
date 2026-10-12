@@ -8,8 +8,9 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots import arm as arm_module
+from machinist.devices.robots import dobot as dobot_module
 from machinist.devices.robots.arm import ArmMode, ArmOptions
-from machinist.devices.robots.dobot import DobotDashboard, DobotFeedbackPacket
+from machinist.devices.robots.dobot import DobotDashboard, DobotFeedbackPacket, DobotOptions
 from machinist.transport.flange_bus import FlangeBus
 
 FIRST = "MovJ(joint={10,0,0,0,0,0})"
@@ -133,3 +134,29 @@ def test_after_stop_the_next_command_gets_id_two(dobot: DobotDashboard) -> None:
     dobot.handle_line("SetPayload(2.5)")
     dobot.handle_line("Stop()")
     assert _value(dobot.handle_line(FIRST)) == 2
+
+
+def _slow_stopping_dobot() -> DobotDashboard:
+    d = DobotDashboard("dobot1", Endpoint("127.0.0.1", 0), EventBus(), ArmOptions(),
+                       flange=FlangeBus(), feedback_enabled=False, stop_seconds=0.6)
+    d.handle_line("EnableRobot()")
+    return d
+
+
+def test_stop_replies_once_a_moving_arm_has_stopped() -> None:
+    dobot = _slow_stopping_dobot()
+    dobot.handle_line(FIRST)
+    with patch.object(dobot_module.time, "sleep") as sleep:
+        dobot.handle_line("Stop()")
+    sleep.assert_called_once_with(0.6)
+
+
+def test_stop_on_a_still_arm_replies_at_once() -> None:
+    dobot = _slow_stopping_dobot()
+    with patch.object(dobot_module.time, "sleep") as sleep:
+        dobot.handle_line("Stop()")
+    sleep.assert_not_called()
+
+
+def test_a_scene_dobot_takes_as_long_to_stop_as_a_cr20a() -> None:
+    assert DobotOptions().stop_seconds == 0.6

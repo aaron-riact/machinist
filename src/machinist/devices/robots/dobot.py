@@ -471,6 +471,10 @@ class DobotOptions(ArmOptions):
     #: controller answers on; ``false`` shuts the passthrough; a number or a
     #: list of them names the ports outright.
     flange_gateway_ports: tuple[int, ...] = (DOBOT_FLANGE_GATEWAY_PORT,)
+    #: Seconds a Stop() takes to reply when the arm was moving: the controller only
+    #: answers once the arm has stopped. Measured at about 0.6 s on a CR20A jogging
+    #: at 0.15 m/s. A Stop() on a still arm replies at once.
+    stop_seconds: float = 0.6
 
     @field_validator("flange_gateway_ports", mode="before")
     @classmethod
@@ -523,6 +527,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         feedback_enabled: bool = True,
         robot_type_code: int = 5,
         model_info: _RobotModelInfo | None = None,
+        stop_seconds: float = 0.0,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
@@ -535,6 +540,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._last_issued_id = 0
         self._running = False
         self.arm.on_move_finished(self._move_finished)
+        self._stop_seconds = stop_seconds
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code
 
@@ -753,6 +759,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         return _ok(req.verb, req.args)
 
     def _verb_stop(self, req: _Request) -> Reply:
+        was_moving = self.arm.state.view.mode is ArmMode.MOVING
         self.arm.stop()
         self._abandon_queue()
         # A CR20A starts its command ids again after a Stop(): the feedback says 1,
@@ -760,6 +767,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         with self._queue_lock:
             self._last_issued_id = 1
             self._current_command_id = 1
+        if was_moving:
+            time.sleep(self._stop_seconds)  # the reply comes once the arm has stopped
         return _ok(req.verb, req.args)
 
     def _verb_geterrorid(self, req: _Request) -> Reply:
@@ -1362,4 +1371,5 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions
         gateway=gateway,
         feedback_enabled=options.feedback_ports,
         model_info=model_info,
+        stop_seconds=options.stop_seconds,
     )
