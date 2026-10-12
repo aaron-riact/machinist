@@ -475,6 +475,9 @@ class DobotOptions(ArmOptions):
     #: answers once the arm has stopped. Measured at about 0.6 s on a CR20A jogging
     #: at 0.15 m/s. A Stop() on a still arm replies at once.
     stop_seconds: float = 0.6
+    #: Seconds every dashboard command waits before its reply, to try a driver
+    #: against a real controller's round trip (4-14 ms on a CR20A). Off by default.
+    reply_seconds: float = 0.0
 
     @field_validator("flange_gateway_ports", mode="before")
     @classmethod
@@ -528,6 +531,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         robot_type_code: int = 5,
         model_info: _RobotModelInfo | None = None,
         stop_seconds: float = 0.0,
+        reply_seconds: float = 0.0,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
@@ -541,6 +545,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._running = False
         self.arm.on_move_finished(self._move_finished)
         self._stop_seconds = stop_seconds
+        self._reply_seconds = reply_seconds
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code
 
@@ -600,6 +605,12 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             )
 
     def handle_line(self, line: str) -> Reply:
+        reply = self._reply_to(line)
+        if self._reply_seconds:
+            time.sleep(self._reply_seconds)
+        return reply
+
+    def _reply_to(self, line: str) -> Reply:
         verb, args = _parse(line)
         if os.environ.get("MACHINIST_LOG_STDERR"):
             try:
@@ -1372,4 +1383,5 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions
         feedback_enabled=options.feedback_ports,
         model_info=model_info,
         stop_seconds=options.stop_seconds,
+        reply_seconds=options.reply_seconds,
     )

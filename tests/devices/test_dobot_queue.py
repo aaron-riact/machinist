@@ -160,3 +160,17 @@ def test_stop_on_a_still_arm_replies_at_once() -> None:
 
 def test_a_scene_dobot_takes_as_long_to_stop_as_a_cr20a() -> None:
     assert DobotOptions().stop_seconds == 0.6
+
+
+def test_each_reply_waits_the_configured_round_trip() -> None:
+    dobot = DobotDashboard("dobot1", Endpoint("127.0.0.1", 0), EventBus(), ArmOptions(),
+                           flange=FlangeBus(), feedback_enabled=False, reply_seconds=0.01)
+    with patch.object(dobot_module.time, "sleep") as sleep:
+        dobot.handle_line("RobotMode()")
+    sleep.assert_called_once_with(0.01)
+
+
+def test_replies_do_not_wait_unless_configured(dobot: DobotDashboard) -> None:
+    with patch.object(dobot_module.time, "sleep") as sleep:
+        dobot.handle_line("RobotMode()")
+    sleep.assert_not_called()
