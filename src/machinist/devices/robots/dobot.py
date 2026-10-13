@@ -45,7 +45,7 @@ from ...core.panel import Field, Panel, PanelChanged
 from ...core.registry import register
 from ...core.state import StateCell
 from ...core.types import Endpoint
-from ...kinematics.api import DHParams, Pose
+from ...kinematics.api import DHParams, Joints, Pose
 from ...kinematics.units import Meters, Radians
 from ...transport.flange_bus import FlangeBus, NoSlaveError
 from ...transport.framing import PAREN
@@ -495,6 +495,10 @@ class DobotOptions(ArmOptions):
     #: parameters page, and here to match.
     max_linear_speed_mm_s: float = 2000.0
     max_rotation_speed_deg_s: float = 180.0
+    #: The Playback parameters' maximum joint speeds, J1 to J6, which a joint
+    #: move's ``v`` and the global speed ratio scale. The riflex Dobot driver's
+    #: figures, not read off a robot.
+    max_joint_speeds_deg_s: tuple[float, ...] = (120.0, 120.0, 150.0, 180.0, 180.0, 180.0)
 
     @field_validator("flange_gateway_ports", mode="before")
     @classmethod
@@ -502,6 +506,10 @@ class DobotOptions(ArmOptions):
         return parse_gateway_ports(
             raw, ports=(DOBOT_FLANGE_GATEWAY_PORT,), on_by_default=True
         )
+
+
+#: DobotOptions' maximum joint speeds in rad/s, for a Dobot built without a scene.
+_DEFAULT_MAX_JOINT_SPEEDS = tuple(math.radians(d) for d in DobotOptions().max_joint_speeds_deg_s)
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,6 +559,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         reply_seconds: float = 0.0,
         max_linear_speed: float = 2.0,
         max_rotation_speed: float = math.pi,
+        max_joint_speeds: tuple[float, ...] = _DEFAULT_MAX_JOINT_SPEEDS,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
@@ -567,6 +576,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self._reply_seconds = reply_seconds
         self._max_linear_speed = max_linear_speed  # m/s
         self._max_rotation_speed = max_rotation_speed  # rad/s
+        self._max_joint_speeds = max_joint_speeds  # rad/s, J1 to J6
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code
 
@@ -937,11 +947,13 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_reljointmovj(self, req: _Request) -> Reply:
         try:
             deltas = _parse_required_floats(req.args, count=len(req.arm.joints))
+            ratio = _keyword_float(req.args, "v", default=100.0)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
         def start() -> None:
             joints = self.arm.state.view.joints  # where the moves ahead of it left the arm
-            self.arm.movej(tuple(Radians(j + math.radians(d)) for j, d in zip(joints, deltas)))
+            target = tuple(Radians(j + math.radians(d)) for j, d in zip(joints, deltas, strict=True))
+            self._move_joints(target, ratio=ratio)
         return _ok(req.verb, req.args, value=str(self._enqueue_move(start)))
 
     def _verb_relmovltool(self, req: _Request) -> Reply:
@@ -962,16 +974,35 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
             tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
             flange = _pose_to_mat(self.arm.state.view.pose) @ tool @ _pose_to_mat(delta)
             target = _mat_to_pose(flange @ np.linalg.inv(tool))
-            seconds = self._linear_seconds(delta)
-            if absolute_mm_s:
-                # An absolute speed ignores the global speed ratio, but not the maximum
-                speed = min(absolute_mm_s * 1e-3, self._max_linear_speed)
-                self.arm.movel(target, duration=seconds * self._max_linear_speed / speed,
-                               follows_speed_factor=False)
-            else:
-                # The arm scales by the global speed ratio itself
-                self.arm.movel(target, duration=seconds / (ratio / 100))
+            self._move_linear(target, delta, ratio=ratio, absolute_mm_s=absolute_mm_s)
         return _ok(req.verb, req.args, value=str(self._enqueue_move(start)))
+
+    def _move_linear(self, target: Pose, delta: Pose, *, ratio: float, absolute_mm_s: float) -> None:
+        """Move linearly to *target*, *delta* away, at the speed the guide gives a linear move.
+
+        The maximum Cartesian speed x the global speed ratio x *ratio* percent; or,
+        given *absolute_mm_s*, that speed, which the global ratio does not scale but
+        the maximum caps.
+        """
+        seconds = self._linear_seconds(delta)
+        if absolute_mm_s:
+            speed = min(absolute_mm_s * 1e-3, self._max_linear_speed)
+            self.arm.movel(target, duration=seconds * self._max_linear_speed / speed,
+                           follows_speed_factor=False)
+        else:
+            self.arm.movel(target, duration=seconds / (ratio / 100))  # the arm applies the global ratio
+
+    def _move_joints(self, target: Joints, *, ratio: float, requested_pose: Pose | None = None) -> None:
+        """Move the joints to *target* at the maximum joint speeds x the global ratio x *ratio* percent."""
+        seconds = self._joint_seconds(self.arm.state.view.joints, target) / (ratio / 100)
+        if requested_pose is None:
+            self.arm.movej(target, duration=seconds)
+        else:
+            self.arm.movej_pose(requested_pose, duration=seconds)
+
+    def _joint_seconds(self, start: Joints, target: Joints) -> float:
+        """How long the slowest joint to arrive takes, each at its maximum speed."""
+        return max(abs(t - s) / v for s, t, v in zip(start, target, self._max_joint_speeds, strict=False))
 
     def _linear_seconds(self, delta: Pose) -> float:
         """How long a linear move by *delta* takes at the maximum Cartesian speeds."""
@@ -983,35 +1014,37 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_movj(self, req: _Request) -> Reply:
         try:
             vals, form = _parse_motion_args(req.args, count=len(req.arm.joints))
+            ratio = _keyword_float(req.args, "v", default=100.0)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
         if form == "joint":
             # MovJ(joint={j1..j6}): target is joint coordinates (degrees).
             joints = tuple(Radians(math.radians(j)) for j in vals)
-            command_id = self._enqueue_move(lambda: self.arm.movej(joints))
+            command_id = self._enqueue_move(lambda: self._move_joints(joints, ratio=ratio))
             return _ok(req.verb, req.args, value=str(command_id))
-        else:
-            # MovJ(pose={…}) or bare floats: target is a Cartesian pose
-            # (mm + deg); joint-interpolated motion to it via IK. This is
-            # the default point type per the TCP/IP interface guide.
-            pose: Pose = (
-                Meters(vals[0] * 1e-3), Meters(vals[1] * 1e-3), Meters(vals[2] * 1e-3),
-                Radians(math.radians(vals[3])), Radians(math.radians(vals[4])), Radians(math.radians(vals[5])),
-            )
-        command_id = self._enqueue_move(lambda: self.arm.movej_pose(pose))
+        # MovJ(pose={…}) or bare floats: target is a Cartesian pose (mm + deg);
+        # joint-interpolated motion to it via IK. This is the default point type
+        # per the TCP/IP interface guide.
+        pose = _pose_from_mm_deg(vals)
+        command_id = self._enqueue_move(
+            lambda: self._move_joints(self.arm.inverse(pose), ratio=ratio, requested_pose=pose)
+        )
         return _ok(req.verb, req.args, value=str(command_id))
 
     def _verb_movl(self, req: _Request) -> Reply:
         try:
             pose_mm, _form = _parse_motion_args(req.args, count=6)
+            ratio = _keyword_float(req.args, "v", default=100.0)
+            absolute_mm_s = _keyword_float(req.args, "speed", default=0.0)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
-        pose: Pose = (
-            Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
-            Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
-        )
-        command_id = self._enqueue_move(lambda: self.arm.movel(pose))
-        return _ok(req.verb, req.args, value=str(command_id))
+        pose = _pose_from_mm_deg(pose_mm)
+        def start() -> None:
+            # From where the moves ahead of it left the arm
+            here = _pose_to_mat(self.arm.state.view.pose)
+            delta = _mat_to_pose(np.linalg.inv(here) @ _pose_to_mat(pose))
+            self._move_linear(pose, delta, ratio=ratio, absolute_mm_s=absolute_mm_s)
+        return _ok(req.verb, req.args, value=str(self._enqueue_move(start)))
 
     def _verb_servop(self, req: _Request) -> Reply:
         try:
@@ -1353,6 +1386,15 @@ def _parse_motion_args(text: str, *, count: int) -> tuple[list[float], str]:
     return _parse_required_floats(text, count=count), "bare"
 
 
+def _pose_from_mm_deg(values: list[float]) -> Pose:
+    """A pose in the guide's units, mm and degrees, in the emulator's metres and radians."""
+    return (
+        Meters(values[0] * 1e-3), Meters(values[1] * 1e-3), Meters(values[2] * 1e-3),
+        Radians(math.radians(values[3])), Radians(math.radians(values[4])),
+        Radians(math.radians(values[5])),
+    )
+
+
 def _keyword_float(text: str, name: str, *, default: float) -> float:
     """The value of a ``name=value`` argument in comma-separated *text*, or *default*."""
     for part in text.split(","):
@@ -1436,4 +1478,5 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions
         reply_seconds=options.reply_seconds,
         max_linear_speed=options.max_linear_speed_mm_s * 1e-3,
         max_rotation_speed=math.radians(options.max_rotation_speed_deg_s),
+        max_joint_speeds=tuple(math.radians(d) for d in options.max_joint_speeds_deg_s),
     )

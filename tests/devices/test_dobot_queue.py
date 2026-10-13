@@ -1,6 +1,7 @@
 """The Dobot runs moves and settings from a queue, in the order they were sent."""
 from __future__ import annotations
 
+import math
 from unittest.mock import patch
 
 import pytest
@@ -256,3 +257,24 @@ def test_relmovltool_moves_along_the_tool_axes(dobot: DobotDashboard) -> None:
     assert dobot.arm._move is not None
     # the tool's x axis is the base's y axis
     assert dobot.arm._move.requested_pose[:3] == pytest.approx((0, 0.01, 0), abs=1e-9)
+
+
+def test_movl_takes_the_time_its_distance_needs_at_v(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(100)")
+    start = dobot.arm.state.view.pose
+    x, y, z = (round(c * 1000 + d, 6) for c, d in zip(start[:3], (40, 0, 0), strict=True))
+    rx, ry, rz = (math.degrees(a) for a in start[3:])
+    dobot.handle_line(f"MovL(pose={{{x},{y},{z},{rx},{ry},{rz}}},v=50)")
+    assert _move_seconds(dobot) == pytest.approx(0.04)  # 40 mm at 50% of 2000 mm/s
+
+
+def test_reljointmovj_takes_the_time_its_slowest_joint_needs(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(100)")
+    dobot.handle_line("RelJointMovJ(60,0,0,90,0,0,v=50)")
+    assert _move_seconds(dobot) == pytest.approx(1.0)  # J1: 60 degrees at 50% of 120 degrees/s
+
+
+def test_movj_to_joints_is_slowed_by_the_global_speed_ratio(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(50)")
+    dobot.handle_line("MovJ(joint={0,0,0,0,0,90})")
+    assert _move_seconds(dobot) == pytest.approx(1.0)  # J6: 90 degrees at 50% of 180 degrees/s
