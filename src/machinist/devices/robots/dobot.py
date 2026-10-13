@@ -59,6 +59,11 @@ DOBOT_FEEDBACK_FAST_PORT = 30004
 DOBOT_FEEDBACK_MED_PORT = 30005
 DOBOT_FEEDBACK_SLOW_PORT = 30006
 
+#: Where a Dobot starts unless the scene says otherwise: its natural pose,
+#: elbow (J3) at 90 degrees and wrist (J5) at -90, rather than stretched out
+#: at all zeros.
+DOBOT_NATURAL_JOINTS_DEG = (0.0, 0.0, 90.0, 0.0, -90.0, 0.0)
+
 #: Where the controller lets the network at the flange's RS485 line. A
 #: client connects here and speaks RTU; the slave id picks the tool.
 DOBOT_FLANGE_GATEWAY_PORT = 60000
@@ -1410,6 +1415,8 @@ def _mat_to_pose(T: NDArray[np.float64]) -> Pose:
 @register("dobot_dashboard", default_port=DOBOT_DASHBOARD_PORT, options=DobotOptions)
 def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions) -> Device:
     model_info = DOBOT_ROBOT_MODELS.get(options.robot_type, _DEFAULT_MODEL)
+    if options.start_joints_deg is None:
+        options = options.model_copy(update={"start_joints_deg": DOBOT_NATURAL_JOINTS_DEG})
     if options.dh_params is None:
         # the model's own geometry, unless the scene gives explicit DH parameters
         options = options.model_copy(update={"dh_params": model_info.dh_params})
