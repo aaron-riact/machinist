@@ -281,9 +281,15 @@ class _ModbusMaster:
     serial: str = ""
 
 
+#: ServoP's run time for one point: its default and range, from the TCP/IP
+#: interface guide, in seconds.
+SERVO_DEFAULT_SECONDS = 0.1
+SERVO_MIN_SECONDS = 0.004
+SERVO_MAX_SECONDS = 3600.0
+
 #: Verbs that start motion. A robot in a protective stop refuses them all,
 #: so a queued move cannot quietly resume while the stop is engaged.
-_MOTION_VERBS = frozenset({"movj", "movl", "reljointmovj", "relmovltool"})
+_MOTION_VERBS = frozenset({"movj", "movl", "reljointmovj", "relmovltool", "servop"})
 
 #: Protective-stop modes by the name the ``pstop`` command accepts.
 PROTECTIVE_STOP_MODE_BY_NAME: dict[str, int] = {
@@ -999,6 +1005,21 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         command_id = self._enqueue_move(lambda: self.arm.movel(pose))
         return _ok(req.verb, req.args, value=str(command_id))
 
+    def _verb_servop(self, req: _Request) -> Reply:
+        try:
+            pose_mm = _parse_required_floats(req.args, count=6)
+            run_seconds = _keyword_float(req.args, "t", default=SERVO_DEFAULT_SECONDS)
+        except ValueError:
+            return f"-30001,{{}},{req.verb}({req.args})"
+        if not SERVO_MIN_SECONDS <= run_seconds <= SERVO_MAX_SECONDS:
+            return f"-40001,{{}},{req.verb}({req.args})"
+        pose: Pose = (
+            Meters(pose_mm[0] * 1e-3), Meters(pose_mm[1] * 1e-3), Meters(pose_mm[2] * 1e-3),
+            Radians(math.radians(pose_mm[3])), Radians(math.radians(pose_mm[4])), Radians(math.radians(pose_mm[5])),
+        )
+        command_id = self._enqueue_move(lambda: self.arm.servo_pose(pose, duration=run_seconds))
+        return _ok(req.verb, req.args, value=str(command_id))
+
     # ----- modbus masters ------------------------------------------------
 
     @property
@@ -1184,6 +1205,7 @@ _VERBS: dict[str, Callable[[DobotDashboard, _Request], Reply]] = {
     "relmovltool": DobotDashboard._verb_relmovltool,
     "movj": DobotDashboard._verb_movj,
     "movl": DobotDashboard._verb_movl,
+    "servop": DobotDashboard._verb_servop,
 }
 
 
@@ -1321,6 +1343,15 @@ def _parse_motion_args(text: str, *, count: int) -> tuple[list[float], str]:
             raise ValueError(f"expected {count} values, got {len(vals)} from {text!r}")
         return [float(v) for v in vals], form
     return _parse_required_floats(text, count=count), "bare"
+
+
+def _keyword_float(text: str, name: str, *, default: float) -> float:
+    """The value of a ``name=value`` argument in comma-separated *text*, or *default*."""
+    for part in text.split(","):
+        key, eq, value = part.partition("=")
+        if eq and key.strip() == name:
+            return float(value)
+    return default
 
 
 def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:

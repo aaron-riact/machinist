@@ -174,3 +174,35 @@ def test_replies_do_not_wait_unless_configured(dobot: DobotDashboard) -> None:
     with patch.object(dobot_module.time, "sleep") as sleep:
         dobot.handle_line("RobotMode()")
     sleep.assert_not_called()
+
+
+SERVO = "ServoP(100,200,300,0,0,0,t=0.03)"
+
+
+def test_servop_queues_behind_the_move_ahead_of_it(dobot: DobotDashboard) -> None:
+    dobot.handle_line(FIRST)
+    assert _value(dobot.handle_line(SERVO)) == 2
+    assert _reported_id(dobot) == 1
+
+
+def test_servop_moves_the_arm_to_its_point(dobot: DobotDashboard) -> None:
+    dobot.handle_line("ServoP(100,200,300,90,0,0,t=0.03)")
+    assert dobot.arm._move is not None
+    assert dobot.arm._move.requested_pose == pytest.approx((0.1, 0.2, 0.3, 1.5708, 0, 0), abs=1e-4)
+
+
+def test_servop_takes_its_run_time_whatever_the_speed_factor(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(10)")
+    dobot.handle_line(SERVO)
+    assert dobot.arm._move is not None
+    assert dobot.arm._move.duration == pytest.approx(0.03)
+
+
+def test_servop_without_a_run_time_takes_the_default(dobot: DobotDashboard) -> None:
+    dobot.handle_line("ServoP(100,200,300,0,0,0)")
+    assert dobot.arm._move is not None
+    assert dobot.arm._move.duration == pytest.approx(0.1)
+
+
+def test_servop_rejects_a_run_time_out_of_range(dobot: DobotDashboard) -> None:
+    assert dobot.handle_line("ServoP(100,200,300,0,0,0,t=0.001)").startswith("-40001,")

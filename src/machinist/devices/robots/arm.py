@@ -428,6 +428,16 @@ class RobotArm(Service):
         target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
         self._begin_move(target_joints, duration=duration, kind="movej", requested_pose=target_pose)
 
+    def servo_pose(self, target_pose: Pose, *, duration: float) -> None:
+        """Linear move to *target_pose* that takes *duration*, whatever the speed factor.
+
+        A servo command (Dobot ``ServoP``) gives each point its own run time and
+        is not slowed by the global speed ratio.
+        """
+        target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
+        self._begin_move(target_joints, duration=duration, kind="servop", requested_pose=target_pose,
+                         follows_speed_factor=False)
+
     def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
         """Single-step velocity-based cartesian jog via SVD Jacobian pseudoinverse.
 
@@ -478,13 +488,15 @@ class RobotArm(Service):
 
     # -----------------------------------------------------------------
 
-    def _begin_move(self, target: Joints, *, duration: float, kind: str, requested_pose: Pose | None = None) -> None:
+    def _begin_move(self, target: Joints, *, duration: float, kind: str, requested_pose: Pose | None = None,
+                    follows_speed_factor: bool = True) -> None:
         with self._lock:
             view = self.state.view
             if view.mode is ArmMode.ESTOPPED or not view.servo_on:
                 raise RuntimeError(f"cannot move: mode={view.mode} servo={view.servo_on}")
             self._move_seq += 1
-            scaled = max(duration, 1e-3) / max(view.speed_fraction, 1e-3)
+            speed_fraction = view.speed_fraction if follows_speed_factor else 1.0
+            scaled = max(duration, 1e-3) / max(speed_fraction, 1e-3)
             self._move = _Move(
                 target=target,
                 duration=scaled,
