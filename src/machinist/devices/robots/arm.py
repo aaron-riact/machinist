@@ -73,6 +73,9 @@ class ArmOptions(Options):
     backend: str | None = None
     dh_params: DHParams | None = None
     urdf: str | None = None
+    #: The joints the arm starts at, in degrees. Left out means all zero, or
+    #: the vendor's default where a vendor robot has one.
+    start_joints_deg: tuple[float, ...] | None = None
 
 
 class ArmMode(StrEnum):
@@ -352,8 +355,11 @@ class RobotArm(Service):
         kinematics: Kinematics | None = None,
         owner: str = "arm",
         publish: Publish | None = None,
+        start_joints: Joints | None = None,
     ) -> None:
-        home_joints: Joints = (Radians(0.0),) * joint_count
+        home_joints: Joints = start_joints or (Radians(0.0),) * joint_count
+        if len(home_joints) != joint_count:
+            raise ValueError(f"{owner}: {len(home_joints)} start joints for {joint_count} joints")
         self._kinematics: Kinematics = kinematics or NoOpKinematics(
             RobotModel(joint_count=joint_count)
         )
@@ -601,6 +607,9 @@ def arm_from_options(
         kinematics=build_kinematics(kin_opts),
         owner=name,
         publish=publish,
+        start_joints=None if options.start_joints_deg is None else tuple(
+            Radians(math.radians(j)) for j in options.start_joints_deg
+        ),
     )
     arm.move_logger = move_logger_from_env(name)
     return arm
