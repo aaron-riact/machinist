@@ -947,7 +947,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_reljointmovj(self, req: _Request) -> Reply:
         try:
             deltas = _parse_required_floats(req.args, count=len(req.arm.joints))
-            ratio = _keyword_float(req.args, "v", default=100.0)
+            ratio = _speed_ratio(req)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
         def start() -> None:
@@ -959,7 +959,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_relmovltool(self, req: _Request) -> Reply:
         try:
             offset = _parse_required_floats(req.args, count=6)
-            ratio = _keyword_float(req.args, "v", default=100.0)
+            ratio = _speed_ratio(req)
             absolute_mm_s = _keyword_float(req.args, "speed", default=0.0)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
@@ -1014,7 +1014,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_movj(self, req: _Request) -> Reply:
         try:
             vals, form = _parse_motion_args(req.args, count=len(req.arm.joints))
-            ratio = _keyword_float(req.args, "v", default=100.0)
+            ratio = _speed_ratio(req)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
         if form == "joint":
@@ -1034,7 +1034,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     def _verb_movl(self, req: _Request) -> Reply:
         try:
             pose_mm, _form = _parse_motion_args(req.args, count=6)
-            ratio = _keyword_float(req.args, "v", default=100.0)
+            ratio = _speed_ratio(req)
             absolute_mm_s = _keyword_float(req.args, "speed", default=0.0)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
@@ -1393,6 +1393,14 @@ def _pose_from_mm_deg(values: list[float]) -> Pose:
         Radians(math.radians(values[3])), Radians(math.radians(values[4])),
         Radians(math.radians(values[5])),
     )
+
+
+def _speed_ratio(req: _Request) -> float:
+    """A move's ``v``, in percent: 100 if not given, refused outside the guide's 1 to 100."""
+    ratio = _keyword_float(req.args, "v", default=100.0)
+    if not 1 <= ratio <= 100:
+        raise _Refused(f"-40001,{{}},{req.verb}({req.args})")
+    return ratio
 
 
 def _keyword_float(text: str, name: str, *, default: float) -> float:

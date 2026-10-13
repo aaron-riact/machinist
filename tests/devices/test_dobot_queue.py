@@ -278,3 +278,9 @@ def test_movj_to_joints_is_slowed_by_the_global_speed_ratio(dobot: DobotDashboar
     dobot.handle_line("SpeedFactor(50)")
     dobot.handle_line("MovJ(joint={0,0,0,0,0,90})")
     assert _move_seconds(dobot) == pytest.approx(1.0)  # J6: 90 degrees at 50% of 180 degrees/s
+
+
+@pytest.mark.parametrize("verb", ["RelMovLTool(5,0,0,0,0,0", "RelJointMovJ(5,0,0,0,0,0"])
+def test_a_move_with_v_below_one_percent_is_refused(dobot: DobotDashboard, verb: str) -> None:
+    assert dobot.handle_line(f"{verb},v=0)").startswith("-40001,")
+    assert dobot.arm._move is None
