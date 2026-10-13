@@ -206,3 +206,53 @@ def test_servop_without_a_run_time_takes_the_default(dobot: DobotDashboard) -> N
 
 def test_servop_rejects_a_run_time_out_of_range(dobot: DobotDashboard) -> None:
     assert dobot.handle_line("ServoP(100,200,300,0,0,0,t=0.001)").startswith("-40001,")
+
+
+def _move_seconds(dobot: DobotDashboard) -> float:
+    assert dobot.arm._move is not None, "no move under way"
+    return dobot.arm._move.duration
+
+
+def test_relmovltool_waits_for_the_move_ahead_of_it(dobot: DobotDashboard) -> None:
+    dobot.handle_line(FIRST)
+    dobot.handle_line("RelMovLTool(10,0,0,0,0,0)")
+    assert _reported_id(dobot) == 1
+
+
+def test_relmovltool_takes_the_time_its_distance_needs_at_v(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(100)")
+    dobot.handle_line("RelMovLTool(20,0,0,0,0,0,v=50)")
+    assert _move_seconds(dobot) == pytest.approx(0.02)  # 20 mm at 50% of 2000 mm/s
+
+
+def test_relmovltool_without_v_runs_at_full_ratio(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(100)")
+    dobot.handle_line("RelMovLTool(20,0,0,0,0,0)")
+    assert _move_seconds(dobot) == pytest.approx(0.01)
+
+
+def test_relmovltool_is_slowed_by_the_global_speed_ratio(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(20)")
+    dobot.handle_line("RelMovLTool(20,0,0,0,0,0,v=50)")
+    assert _move_seconds(dobot) == pytest.approx(0.1)
+
+
+def test_relmovltool_at_an_absolute_speed_ignores_the_global_ratio(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(20)")
+    dobot.handle_line("RelMovLTool(20,0,0,0,0,0,speed=100)")
+    assert _move_seconds(dobot) == pytest.approx(0.2)  # 20 mm at 100 mm/s
+
+
+def test_relmovltool_takes_the_time_its_rotation_needs(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SpeedFactor(100)")
+    dobot.handle_line("RelMovLTool(0,0,0,0,0,90)")
+    assert _move_seconds(dobot) == pytest.approx(0.5)  # 90 degrees at 180 degrees/s
+
+
+def test_relmovltool_moves_along_the_tool_axes(dobot: DobotDashboard) -> None:
+    dobot.handle_line("SetTool(1,{0,0,0,0,0,90})")
+    dobot.handle_line("Tool(1)")
+    dobot.handle_line("RelMovLTool(10,0,0,0,0,0)")
+    assert dobot.arm._move is not None
+    # the tool's x axis is the base's y axis
+    assert dobot.arm._move.requested_pose[:3] == pytest.approx((0, 0.01, 0), abs=1e-9)

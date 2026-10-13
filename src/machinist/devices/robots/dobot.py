@@ -484,6 +484,12 @@ class DobotOptions(ArmOptions):
     #: Seconds every dashboard command waits before its reply, to try a driver
     #: against a real controller's round trip (4-14 ms on a CR20A). Off by default.
     reply_seconds: float = 0.0
+    #: The Playback parameters' maximum Cartesian speeds, which a move's ``v``
+    #: ratio and the global speed ratio scale. 2000 mm/s is the guide's example;
+    #: the rotation speed is a guess. Change both on the robot's Motion
+    #: parameters page, and here to match.
+    max_linear_speed_mm_s: float = 2000.0
+    max_rotation_speed_deg_s: float = 180.0
 
     @field_validator("flange_gateway_ports", mode="before")
     @classmethod
@@ -538,6 +544,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         model_info: _RobotModelInfo | None = None,
         stop_seconds: float = 0.0,
         reply_seconds: float = 0.0,
+        max_linear_speed: float = 2.0,
+        max_rotation_speed: float = math.pi,
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
@@ -552,6 +560,8 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         self.arm.on_move_finished(self._move_finished)
         self._stop_seconds = stop_seconds
         self._reply_seconds = reply_seconds
+        self._max_linear_speed = max_linear_speed  # m/s
+        self._max_rotation_speed = max_rotation_speed  # rad/s
         self._model_info = model_info or _RobotModelInfo(type_code=robot_type_code)
         self._robot_type_code = self._model_info.type_code
 
@@ -944,33 +954,39 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
 
     def _verb_relmovltool(self, req: _Request) -> Reply:
         try:
-            delta = _parse_required_floats(req.args, count=6)
+            offset = _parse_required_floats(req.args, count=6)
+            ratio = _keyword_float(req.args, "v", default=100.0)
+            absolute_mm_s = _keyword_float(req.args, "speed", default=0.0)
         except ValueError:
             return f"-30001,{{}},{req.verb}({req.args})"
+        delta: Pose = (
+            Meters(offset[0] * 1e-3), Meters(offset[1] * 1e-3), Meters(offset[2] * 1e-3),
+            Radians(math.radians(offset[3])), Radians(math.radians(offset[4])),
+            Radians(math.radians(offset[5])),
+        )
         def start() -> None:
-            pose = self.arm.state.view.pose  # where the moves ahead of it left the arm
-            delta_m = np.array([delta[0] * 1e-3, delta[1] * 1e-3, delta[2] * 1e-3,
-                                math.radians(delta[3]), math.radians(delta[4]), math.radians(delta[5])], dtype=float)
-            T_cur = _pose_to_mat(pose)
-            R = T_cur[:3, :3]
+            # From where the moves ahead of it left the arm, along the active tool's own axes
             tool_pose = self._tool_frames.get(self._active_tool, (0.0,) * 6)
-            T_tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
-            R_tool = T_tool[:3, :3]
-            R_tcp = R @ R_tool
-            p = R @ np.array([tool_pose[0], tool_pose[1], tool_pose[2]], dtype=float)
-            twist = np.zeros(6, dtype=float)
-            twist[:3] = R_tcp @ delta_m[:3]
-            twist[3:] = R_tcp @ delta_m[3:]
-            skew_p = np.array([[0, -p[2], p[1]],
-                               [p[2], 0, -p[0]],
-                               [-p[1], p[0], 0]], dtype=float)
-            twist[:3] = twist[:3] + skew_p @ twist[3:]
-            print(f"[dobot/{self.name}] RelMovLTool delta_m=({','.join(f'{v:.4f}' for v in delta_m)})", file=sys.stderr, flush=True)
-            print(f"[dobot/{self.name}]   pose=({','.join(f'{v:.4f}' for v in pose)})  tool={self._active_tool}  tool_pose=({','.join(f'{v:.4f}' for v in tool_pose)})", file=sys.stderr, flush=True)
-            print(f"[dobot/{self.name}]   R_tcp=[[{R_tcp[0,0]:.4f},{R_tcp[0,1]:.4f},{R_tcp[0,2]:.4f}]...]  p=({p[0]:.4f},{p[1]:.4f},{p[2]:.4f})", file=sys.stderr, flush=True)
-            print(f"[dobot/{self.name}]   world_flange_twist=({','.join(f'{v:.6f}' for v in twist)})", file=sys.stderr, flush=True)
-            self.arm.jog_cartesian(twist, dt=1.0)  # moves the arm at once
-        return _ok(req.verb, req.args, value=str(self._enqueue_instant(start)))
+            tool = _pose_to_mat(tool_pose)  # type: ignore[arg-type]
+            flange = _pose_to_mat(self.arm.state.view.pose) @ tool @ _pose_to_mat(delta)
+            target = _mat_to_pose(flange @ np.linalg.inv(tool))
+            seconds = self._linear_seconds(delta)
+            if absolute_mm_s:
+                # An absolute speed ignores the global speed ratio, but not the maximum
+                speed = min(absolute_mm_s * 1e-3, self._max_linear_speed)
+                self.arm.movel(target, duration=seconds * self._max_linear_speed / speed,
+                               follows_speed_factor=False)
+            else:
+                # The arm scales by the global speed ratio itself
+                self.arm.movel(target, duration=seconds / (ratio / 100))
+        return _ok(req.verb, req.args, value=str(self._enqueue_move(start)))
+
+    def _linear_seconds(self, delta: Pose) -> float:
+        """How long a linear move by *delta* takes at the maximum Cartesian speeds."""
+        distance = math.dist(delta[:3], (0.0, 0.0, 0.0))
+        rotation = _pose_to_mat(delta)[:3, :3]
+        angle = math.acos(max(-1.0, min(1.0, (np.trace(rotation) - 1) / 2)))
+        return max(distance / self._max_linear_speed, angle / self._max_rotation_speed)
 
     def _verb_movj(self, req: _Request) -> Reply:
         try:
@@ -1415,4 +1431,6 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: DobotOptions
         model_info=model_info,
         stop_seconds=options.stop_seconds,
         reply_seconds=options.reply_seconds,
+        max_linear_speed=options.max_linear_speed_mm_s * 1e-3,
+        max_rotation_speed=math.radians(options.max_rotation_speed_deg_s),
     )

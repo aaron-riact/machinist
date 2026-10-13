@@ -414,9 +414,12 @@ class RobotArm(Service):
     def movej(self, target: Joints, *, duration: float = 1.0) -> None:
         self._begin_move(target, duration=duration, kind="movej")
 
-    def movel(self, target_pose: Pose, *, duration: float = 1.0) -> None:
+    def movel(
+        self, target_pose: Pose, *, duration: float = 1.0, follows_speed_factor: bool = True
+    ) -> None:
         target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
-        self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose)
+        self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose,
+                         follows_speed_factor=follows_speed_factor)
 
     def movej_pose(self, target_pose: Pose, *, duration: float = 1.0) -> None:
         """Joint-interpolated move to a Cartesian *target_pose* (``MovJ`` with a pose target).
