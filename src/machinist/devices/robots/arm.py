@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum, auto
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, TypedDict, Unpack
 
 import numpy as np
 from numpy.typing import NDArray
@@ -127,6 +127,18 @@ class ArmChanged(Event):
     view: ArmStateView
 
 
+
+class _ArmStateChanges(TypedDict, total=False):
+    """The fields of :class:`ArmStateView` that :meth:`ArmState.update` may replace."""
+
+    joints: Joints
+    pose: Pose
+    mode: ArmMode
+    servo_on: bool
+    program_running: bool
+    speed_fraction: float
+    current_command: str | None
+
 class ArmState:
     """The single writer of an arm's :class:`ArmStateView`.
 
@@ -152,7 +164,7 @@ class ArmState:
     def snapshot(self) -> ArmStateView:
         return self._view
 
-    def update(self, **changes: object) -> ArmStateView:
+    def update(self, **changes: Unpack[_ArmStateChanges]) -> ArmStateView:
         """Replace the given fields. Publishes only if something changed."""
         with self._lock:
             new = replace(self._view, **changes)
@@ -241,7 +253,7 @@ class MoveLogger:
         rec["target_fk_pose"] = _pose_mm_deg(target_fk_pose)
         if requested_pose is not None:
             req = _pose_mm_deg(requested_pose)
-            fk = rec["target_fk_pose"]
+            fk = _pose_mm_deg(target_fk_pose)
             rec["requested_pose"] = req
             rec["ik_pos_err_mm"] = round(math.dist(req[:3], fk[:3]), 4)
         self._write(rec)
