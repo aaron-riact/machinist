@@ -641,7 +641,10 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         handler = _VERBS.get(verb.lower())
         if handler is None:
             return f"-10000,{{}},{verb}({args})"
-        return handler(self, req)
+        try:
+            return handler(self, req)
+        except _Refused as refused:
+            return refused.reply
 
     # ----- the command queue ------------------------------------------------
 
@@ -732,9 +735,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         return _ok(req.verb, req.args, value=str(index))
 
     def _verb_modbusclose(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, lo=0, hi=MAX_MODBUS_MASTERS - 1)
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, lo=0, hi=MAX_MODBUS_MASTERS - 1)
         if self._masters.pop(idx, None) is None:
             return f"{ERR_COMMAND_FAILED},{{}},{req.verb}({req.args})"
         self.announce_panel()
@@ -850,39 +851,27 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         return _ok(req.verb, req.args, value=str(_robot_mode(req.arm, req.fault)))
 
     def _verb_tooldi(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, hi=self._tool_di_count)
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, hi=self._tool_di_count)
         return _ok(req.verb, req.args, value=str(int(self.io[f"tooldi{idx}"].value)))
 
     def _verb_gettooldo(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, hi=self._tool_do_count)
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, hi=self._tool_do_count)
         return _ok(req.verb, req.args, value=str(int(self.io[f"tooldo{idx}"].value)))
 
     def _verb_ai(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, hi=len(self._ai))
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, hi=len(self._ai))
         return _ok(req.verb, req.args, value=str(self._ai[idx - 1]))
 
     def _verb_getao(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, hi=len(self._ao))
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, hi=len(self._ao))
         return _ok(req.verb, req.args, value=str(self._ao[idx - 1]))
 
     def _verb_toolai(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, hi=len(self._tool_ai))
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, hi=len(self._tool_ai))
         return _ok(req.verb, req.args, value=str(self._tool_ai[idx - 1]))
 
     def _verb_speedfactor(self, req: _Request) -> Reply:
-        ratio, err = _int_arg(req.args, req.verb, hi=100)
-        if err:
-            return err
+        ratio = _int_arg(req.args, req.verb, hi=100)
         self.arm.set_speed_factor(ratio / 100)
         self.announce_panel()  # the panel shows the speed factor
         return _ok(req.verb, req.args)
@@ -933,9 +922,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
         return _ok(req.verb, req.args, value=str(self._enqueue_instant(apply)))
 
     def _verb_tool(self, req: _Request) -> Reply:
-        idx, err = _int_arg(req.args, req.verb, lo=0, hi=50)
-        if err:
-            return err
+        idx = _int_arg(req.args, req.verb, lo=0, hi=50)
         if idx != 0 and idx not in self._tool_frames:
             return f"-1,{{}},Tool({idx})"
         def apply() -> None:
@@ -1296,7 +1283,7 @@ def _parse_floats(text: str, *, count: int) -> list[float]:
     return [float(p) for p in parts]
 
 
-def _literal_eval_braced(text: str) -> tuple:
+def _literal_eval_braced(text: str) -> tuple[Any, ...]:
     """Parse comma‑separated args, converting ``{x,y,z}`` Set nodes to tuples.
 
     For example ``"1,{10,20,30,0,0,0}"`` becomes ``(1, (10.0, 20.0, …, 0.0))``.
@@ -1370,16 +1357,25 @@ def _keyword_float(text: str, name: str, *, default: float) -> float:
     return default
 
 
-def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> tuple[int | None, str | None]:
+class _Refused(Exception):
+    """A command the controller answers with an error reply instead of running it."""
+
+    def __init__(self, reply: str) -> None:
+        super().__init__(reply)
+        self.reply = reply
+
+
+def _int_arg(args: str, verb: str, *, lo: int = 1, hi: int) -> int:
+    """The command's one integer argument, or :class:`_Refused` with the controller's error."""
     if not args:
-        return None, f"-20000,{{}},{verb}()"
+        raise _Refused(f"-20000,{{}},{verb}()")
     try:
         val = int(args.strip())
     except ValueError:
-        return None, f"-30001,{{}},{verb}({args})"
+        raise _Refused(f"-30001,{{}},{verb}({args})") from None
     if val < lo or val > hi:
-        return None, f"-40001,{{}},{verb}({args})"
-    return val, None
+        raise _Refused(f"-40001,{{}},{verb}({args})")
+    return val
 
 
 def _ok(verb: str, args: str, *, value: str = "") -> str:
