@@ -68,3 +68,9 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
+
+# eeip is vendored (src/eeip): its errors are upstream's, and fixing them here
+# would fork it. Code that imports it is still checked against its signatures.
+[[tool.mypy.overrides]]
+module = "eeip.*"
+ignore_errors = true
