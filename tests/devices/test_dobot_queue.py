@@ -11,7 +11,7 @@ from machinist.core.types import Endpoint
 from machinist.devices.robots import arm as arm_module
 from machinist.devices.robots import dobot as dobot_module
 from machinist.devices.robots.arm import ArmMode, ArmOptions
-from machinist.devices.robots.dobot import DobotDashboard, DobotFeedbackPacket, DobotOptions
+from machinist.devices.robots.dobot import DOBOT_ROBOT_MODELS, DobotDashboard, DobotFeedbackPacket, DobotOptions
 from machinist.transport.flange_bus import FlangeBus
 
 FIRST = "MovJ(joint={10,0,0,0,0,0})"
@@ -284,3 +284,54 @@ def test_movj_to_joints_is_slowed_by_the_global_speed_ratio(dobot: DobotDashboar
 def test_a_move_with_v_below_one_percent_is_refused(dobot: DobotDashboard, verb: str) -> None:
     assert dobot.handle_line(f"{verb},v=0)").startswith("-40001,")
     assert dobot.arm._move is None
+
+
+@pytest.fixture
+def cr20a() -> DobotDashboard:
+    """A CR20A with its real geometry, so moves exercise inverse kinematics."""
+    d = DobotDashboard("cr20a", Endpoint("127.0.0.1", 0), EventBus(),
+                       ArmOptions(backend="dh", dh_params=DOBOT_ROBOT_MODELS["cr20a"].dh_params),
+                       flange=FlangeBus(), feedback_enabled=False, model_info=DOBOT_ROBOT_MODELS["cr20a"])
+    d.handle_line("EnableRobot()")
+    return d
+
+
+#: Where a jog on the robot met the wrist singularity: J5 at -0.18 degrees.
+WRIST_STRAIGHT = "MovJ(joint={-181.064,20.8947,120.0009,-31.6578,-0.1807,-89.3492})"
+
+
+#: The servo points a jog sent from WRIST_STRAIGHT (x, z in mm), up to where it met the singularity.
+JOG_POINTS = [(892.04, 379.44), (892.33, 380.20), (892.79, 381.39), (893.51, 383.26), (894.31, 385.36),
+              (895.29, 387.90), (896.43, 390.87), (897.91, 394.74), (899.62, 399.18), (901.26, 403.45),
+              (902.89, 407.70), (904.52, 411.95), (906.43, 416.91)]
+
+
+def _servo_point(x: float, z: float) -> str:
+    return f"ServoP({x},295.587353,{z},-90.181381,19.888580,-1.066193,t=0.030303)"
+
+
+def _jog_from_wrist_straight(dobot: DobotDashboard) -> None:
+    dobot.handle_line(WRIST_STRAIGHT)
+    _finish_move(dobot)
+    for x, z in JOG_POINTS:
+        dobot.handle_line(_servo_point(x, z))
+        if dobot.arm._move is None:
+            return
+        _finish_move(dobot)
+
+
+def test_a_servo_point_near_the_wrist_singularity_moves(cr20a: DobotDashboard) -> None:
+    cr20a.handle_line(WRIST_STRAIGHT)
+    _finish_move(cr20a)
+    cr20a.handle_line(_servo_point(*JOG_POINTS[0]))
+    assert cr20a.arm.state.view.mode is ArmMode.MOVING
+
+
+def test_a_jog_into_the_wrist_singularity_raises_the_ik_alarm(cr20a: DobotDashboard) -> None:
+    _jog_from_wrist_straight(cr20a)
+    assert cr20a.handle_line("GetErrorID()").startswith("0,{[2]}")
+
+
+def test_a_jog_into_the_wrist_singularity_does_not_flip_the_wrist(cr20a: DobotDashboard) -> None:
+    _jog_from_wrist_straight(cr20a)
+    assert math.degrees(cr20a.arm.state.view.joints[4]) == pytest.approx(-0.18, abs=1)

@@ -37,6 +37,7 @@ from ...kinematics.api import (
     Pose,
     RobotModel,
 )
+from ...kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ...kinematics.units import Radians
 from ...transport.service import Service
 
@@ -83,6 +84,25 @@ class ArmMode(StrEnum):
     MOVING = auto()
     ESTOPPED = auto()
     FAULTED = auto()
+
+
+#: A linear move is solved along its line in steps of at most this much travel
+#: and rotation, each from the joints of the step before, as a controller
+#: following the line would.
+LINE_STEP_METRES = 0.005
+LINE_STEP_RADIANS = math.radians(2)
+#: A joint turning further than this within one step is the arm changing
+#: configuration (an elbow or wrist flip), which a linear move cannot do.
+LINE_MAX_JOINT_STEP = math.radians(20)
+
+
+class NoLinearPath(Exception):
+    """A linear move's line cannot be followed without changing the arm's configuration.
+
+    Near a singularity, inverse kinematics from the current joints stops
+    converging and the nearest solution belongs to another configuration. A
+    real controller stops with an alarm there rather than flipping joints.
+    """
 
 
 @dataclass(slots=True)
@@ -181,6 +201,28 @@ class ArmState:
 
 def _joints_deg(joints: Joints) -> list[float]:
     return [round(math.degrees(j), 4) for j in joints]
+
+
+def _rotation_vector(rotation: NDArray[np.float64]) -> NDArray[np.float64]:
+    """The axis times angle of a rotation matrix."""
+    angle = math.acos(max(-1.0, min(1.0, (float(np.trace(rotation)) - 1) / 2)))
+    if angle < 1e-9:
+        return np.zeros(3)
+    axis = np.array([rotation[2, 1] - rotation[1, 2],
+                     rotation[0, 2] - rotation[2, 0],
+                     rotation[1, 0] - rotation[0, 1]]) / (2 * math.sin(angle))
+    return axis * angle
+
+
+def _rotation_matrix(rotation_vector: NDArray[np.float64]) -> NDArray[np.float64]:
+    """The rotation matrix of an axis times angle (Rodrigues)."""
+    angle = float(np.linalg.norm(rotation_vector))
+    if angle < 1e-12:
+        return np.eye(3)
+    k = rotation_vector / angle
+    skew = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    rotation: NDArray[np.float64] = np.eye(3) + math.sin(angle) * skew + (1 - math.cos(angle)) * skew @ skew
+    return rotation
 
 
 def _pose_mm_deg(pose: Pose) -> list[float]:
@@ -435,7 +477,7 @@ class RobotArm(Service):
     def movel(
         self, target_pose: Pose, *, duration: float = 1.0, follows_speed_factor: bool = True
     ) -> None:
-        target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
+        target_joints = self._inverse_along_line(target_pose)
         self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose,
                          follows_speed_factor=follows_speed_factor)
 
@@ -459,9 +501,36 @@ class RobotArm(Service):
         A servo command (Dobot ``ServoP``) gives each point its own run time and
         is not slowed by the global speed ratio.
         """
-        target_joints = self._kinematics.inverse(target_pose, seed=self.state.view.joints)
+        target_joints = self._inverse_along_line(target_pose)
         self._begin_move(target_joints, duration=duration, kind="servop", requested_pose=target_pose,
                          follows_speed_factor=False)
+
+    def _inverse_along_line(self, target_pose: Pose) -> Joints:
+        """The joints at *target_pose*, reached along the straight line from where the arm is.
+
+        Raises :class:`NoLinearPath` where following the line would flip a joint.
+        """
+        view = self.state.view
+        start, end = pose_to_mat(view.pose), pose_to_mat(target_pose)
+        travel = end[:3, 3] - start[:3, 3]
+        rotation = _rotation_vector(start[:3, :3].T @ end[:3, :3])
+        steps = max(1, math.ceil(max(float(np.linalg.norm(travel)) / LINE_STEP_METRES,
+                                     float(np.linalg.norm(rotation)) / LINE_STEP_RADIANS)))
+        joints = view.joints
+        for i in range(1, steps + 1):
+            t = i / steps
+            point = np.eye(4)
+            point[:3, :3] = start[:3, :3] @ _rotation_matrix(t * rotation)
+            point[:3, 3] = start[:3, 3] + t * travel
+            solved = self._kinematics.inverse(_mat_to_pose(point), seed=joints)
+            jump = max(abs(a - b) for a, b in zip(solved, joints, strict=True))
+            if jump > LINE_MAX_JOINT_STEP:
+                raise NoLinearPath(
+                    f"joints would turn {math.degrees(jump):.0f} degrees within one "
+                    f"{LINE_STEP_METRES * 1000:.0f} mm step at {_pose_mm_deg(_mat_to_pose(point))}"
+                )
+            joints = solved
+        return joints
 
     def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
         """Single-step velocity-based cartesian jog via SVD Jacobian pseudoinverse.

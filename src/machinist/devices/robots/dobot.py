@@ -52,7 +52,7 @@ from ...transport.framing import PAREN
 from ...transport.line_server import Reply
 from ...transport.modbus_rtu_gateway import ModbusRtuGateway, parse_gateway_ports
 from ...transport.service import Service
-from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, arm_from_options
+from .arm import ArmMode, ArmOptions, ArmStateView, HasArm, NoLinearPath, arm_from_options
 
 DOBOT_DASHBOARD_PORT = 29999
 DOBOT_FEEDBACK_FAST_PORT = 30004
@@ -231,6 +231,9 @@ ROBOT_MODE_DISABLED = 4
 ROBOT_MODE_ENABLE = 5
 ROBOT_MODE_RUNNING = 7
 ROBOT_MODE_ERROR = 9
+#: Controller alarm 2, "algorithm error - inverse kinematics solution not found":
+#: what a CR20A raises when a linear move or a servo point meets a singularity.
+ALARM_IK_NOT_FOUND = 2
 ROBOT_MODE_COLLISION = 11
 
 #: Modes an injected protective stop may report. A real controller reaches
@@ -712,6 +715,13 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
                 moves = command.run()
             except RuntimeError:  # the arm refused to move: servo off or e-stopped
                 moves = False
+            except NoLinearPath as err:
+                # As the robot does: it stops with an inverse kinematics alarm
+                # instead of flipping joints, and drops the queue behind it.
+                self.emit("error", message=f"Inverse kinematics solution not found: {err}")
+                self.inject_protective_stop(robot_mode=ROBOT_MODE_ERROR,
+                                            controller_ids=(ALARM_IK_NOT_FOUND,))
+                return
             if moves:
                 return
             with self._queue_lock:
