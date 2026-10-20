@@ -1,13 +1,15 @@
-"""Yaskawa Motoman NX100 Ethernet-server emulator.
+"""Yaskawa Motoman Ethernet-server emulator (NX100, DX200, YRC1000).
 
-Reference: *NX100 Options Instructions for Ethernet Server Function*
-(HW0483202), in the repository as ``NX100_http_network_command.pdf``.
+References: *NX100 Options Instructions for Ethernet Server Function*
+(HW0483202), in the repository as ``NX100_http_network_command.pdf``, and
+the DX200's (HW1481823). The two describe the same protocol; what differs
+between controllers is in :data:`CONTROLLERS`.
 
-The NX100 serves on TCP port 80 but the protocol is **not** HTTP. A session
-runs::
+The controller serves on TCP port 80 but the protocol is **not** HTTP. A
+session runs::
 
     CONNECT Robot_access[ Keep-Alive:<n>]<CR><LF>
-    ← OK: NX Information Server (3.00)[ Keep-Alive:<n>].<CR><LF>
+    ← OK: NX Information Server (3.00)[ Keep-Alive:<n>].<CR><LF>   (NX100's name)
     HOSTCTRL_REQUEST <Command> <Size><CR><LF>
     ← OK: <Command><CR><LF>                 (or NG: <Message><CR><LF>, then close)
     [if Size > 0] <Command data><CR>
@@ -25,6 +27,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
+from typing import Literal
 
 import numpy as np
 from pydantic import Field, model_validator
@@ -42,7 +45,6 @@ from ...transport.line_server import Hangup, Reply, SessionHandler
 from .arm import ArmOptions, HasArm, NoLinearPath, RobotArm, arm_from_options
 
 MOTOMAN_PORT = 80
-SERVER_NAME = "OK: NX Information Server (3.00)"
 #: The reply to a START request the controller cannot accept, before it closes.
 START_ERROR = "NG: HTTP Error Response"
 NORMAL_ANSWER = "0000"
@@ -50,10 +52,8 @@ MAX_KEEP_ALIVE = 32767
 #: Position answers carry this many axes: the robot's six and six external ones.
 AXES_ON_THE_WIRE = 12
 EXTERNAL_AXES = 6
-#: Coordinate numbers: base, robot, then user frames 1 to 24 as 2 to 25.
-BASE_COORDINATE, ROBOT_COORDINATE, LAST_USER_COORDINATE = 0, 1, 25
-#: IMOV may also step in the tool's own frame.
-TOOL_COORDINATE = 26
+#: Coordinate numbers: base, robot, then user frames from 2 on.
+BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 #: The alarm RALARM reports while the arm is faulted. A real controller names
 #: the cause; the arm only knows that it faulted, so this is a stand-in.
 FAULT_ALARM = 4000
@@ -68,20 +68,66 @@ UP50N_PULSES_PER_DEGREE = (1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.6
 #: The YR-UP50N's maximum joint speeds in degrees per second (S, L, U, R, B, T),
 #: from its specification sheet.
 UP50N_MAX_JOINT_SPEED = (170.0, 170.0, 170.0, 250.0, 250.0, 350.0)
-#: Tool files 0 to 23.
-MAX_TOOL = 23
 #: Joint speed in percent of the maximum, and linear speed in mm/s or degrees/s.
 MIN_JOINT_SPEED, MAX_JOINT_SPEED_PERCENT, MIN_LINEAR_SPEED = 0.01, 100.0, 0.1
 #: A move takes at least this long, so a move to where the arm is still runs.
 MIN_MOVE_SECONDS = 0.02
 #: Signal numbers count eight to a byte: #22010 to #22017 are byte 2201's bits.
 SIGNALS_PER_BYTE = 8
-#: The network inputs, the only signals IOWRITE may write.
-NETWORK_INPUTS = range(22010, 23288)
+
+
+@dataclass(frozen=True, slots=True)
+class ControllerProfile:
+    """What one Yaskawa controller generation does differently on the Ethernet server."""
+
+    #: The START reply, before the Keep-Alive count and the closing dot.
+    server_name: str
+    #: Decimals of Rx, Ry, Rz in answers (X, Y, Z always have 3).
+    rotation_decimals: int
+    #: Tool files 0 to max_tool.
+    max_tool: int
+    #: User frames 1 to user_frames, as coordinates 2 to user_frames + 1.
+    user_frames: int
+    #: The network inputs, the only signals IOWRITE may write.
+    network_inputs: range
+
+    @property
+    def last_user_coordinate(self) -> int:
+        return self.user_frames + 1
+
+    @property
+    def tool_coordinate(self) -> int:
+        """IMOV may also step in the tool's own frame, numbered after the user frames."""
+        return self.user_frames + 2
+
+
+#: The controllers by name. NX100 and DX200 follow their Ethernet server
+#: manuals; the YRC1000 has not been checked against one, so it takes the
+#: DX200's values until a real controller says otherwise.
+CONTROLLERS: dict[str, ControllerProfile] = {
+    "nx100": ControllerProfile(
+        server_name="OK: NX Information Server (3.00)",
+        rotation_decimals=2,
+        max_tool=23,
+        user_frames=24,
+        network_inputs=range(22010, 23288),
+    ),
+    "dx200": ControllerProfile(
+        server_name="OK: DX Information Server (1.00)",
+        rotation_decimals=4,
+        max_tool=63,
+        user_frames=64,
+        network_inputs=range(27010, 29568),
+    ),
+}
+CONTROLLERS["yrc1000"] = CONTROLLERS["dx200"]
 
 
 class MotomanOptions(ArmOptions):
-    """The ``motoman_nx100`` block: an arm, and how its joints count pulses."""
+    """The ``motoman_nx100`` block: an arm, its controller, and how its joints count pulses."""
+
+    #: Which controller generation answers: nx100, dx200 or yrc1000.
+    controller: Literal["nx100", "dx200", "yrc1000"] = "nx100"
 
     #: Encoder pulses per degree of each joint, in joint order.
     pulses_per_degree: tuple[float, ...] = UP50N_PULSES_PER_DEGREE
@@ -96,8 +142,9 @@ class MotomanOptions(ArmOptions):
 
     @model_validator(mode="after")
     def _ladder_copies_name_bytes(self) -> MotomanOptions:
+        network_inputs = CONTROLLERS[self.controller].network_inputs
         for source, target in self.ladder_copies.items():
-            if source not in NETWORK_INPUTS:
+            if source not in network_inputs:
                 raise ValueError(f"ladder copies from #{source}, not a network input")
             for signal in (source, target):
                 if signal % 10:
@@ -166,10 +213,11 @@ Command = Callable[[str], str | None]
 
 
 @dataclass(slots=True)
-class NX100Controller:
+class EthernetServerController:
     """The controller state every session shares, and the commands that act on it."""
 
     arm: RobotArm
+    profile: ControllerProfile
     pulses_per_degree: tuple[float, ...]
     max_joint_speed_deg_s: tuple[float, ...]
     cycle: Status1 = Status1.ONE_CYCLE
@@ -234,13 +282,13 @@ class NX100Controller:
 
     def _rposc(self, data: str) -> str:
         coordinate, external = _parse_ints(data, count=2)
-        _check_coordinate(coordinate)
+        self._check_coordinate(coordinate)
         if external not in (0, 1):
             raise CommandError(InterpreterMessage.BAD_DATA, f"external axis flag {external}")
         x, y, z, rx, ry, rz = self.arm.state.view.pose
         fields = [
             *(f"{m * 1000:.3f}" for m in (x, y, z)),
-            *(f"{math.degrees(r):.2f}" for r in (rx, ry, rz)),
+            *(f"{math.degrees(r):.{self.profile.rotation_decimals}f}" for r in (rx, ry, rz)),
             str(self.form),
             str(self.tool),
         ]
@@ -279,7 +327,7 @@ class NX100Controller:
         values = _parse_numbers(data, count=14)
         speed = _joint_speed(values[0])
         target = self._joints(values[1:7])
-        self.tool = _tool(values[7])
+        self.tool = self._tool(values[7])
         self._check_can_move()
         self.arm.movej(target, duration=self._joint_move_seconds(target, speed))
 
@@ -288,16 +336,16 @@ class NX100Controller:
         values = _parse_numbers(data, count=15)
         selection, speed = _linear_speed(values[0], values[1])
         target = self.arm.forward(self._joints(values[2:8]))
-        self.tool = _tool(values[8])
+        self.tool = self._tool(values[8])
         self._move_linear(target, selection, speed)
 
     def _movj(self, data: str) -> None:
         """Speed (%), coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
         values = _parse_numbers(data, count=16)
         speed = _joint_speed(values[0])
-        _check_coordinate(_integer(values[1]))
+        self._check_coordinate(_integer(values[1]))
         target = _pose(values[2:8])
-        self.form, self.tool = _integer(values[8]), _tool(values[9])
+        self.form, self.tool = _integer(values[8]), self._tool(values[9])
         self._check_can_move()
         joints = self.arm.inverse(target)
         self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed))
@@ -306,9 +354,9 @@ class NX100Controller:
         """Speed selection, speed, coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
         values = _parse_numbers(data, count=17)
         selection, speed = _linear_speed(values[0], values[1])
-        _check_coordinate(_integer(values[2]))
+        self._check_coordinate(_integer(values[2]))
         target = _pose(values[3:9])
-        self.form, self.tool = _integer(values[9]), _tool(values[10])
+        self.form, self.tool = _integer(values[9]), self._tool(values[10])
         self._move_linear(target, selection, speed)
 
     def _imov(self, data: str) -> None:
@@ -321,12 +369,13 @@ class NX100Controller:
         values = _parse_numbers(data, count=17)
         selection, speed = _linear_speed(values[0], values[1])
         coordinate = _integer(values[2])
-        if coordinate != TOOL_COORDINATE:
-            _check_coordinate(coordinate)
+        in_tool = coordinate == self.profile.tool_coordinate
+        if not in_tool:
+            self._check_coordinate(coordinate)
         step = pose_to_mat(_pose(values[3:9]))
-        self.tool = _tool(values[10])
+        self.tool = self._tool(values[10])
         here = pose_to_mat(self.arm.state.view.pose)
-        if coordinate == TOOL_COORDINATE:
+        if in_tool:
             there = here @ step
         else:
             there = np.eye(4)
@@ -350,7 +399,8 @@ class NX100Controller:
             raise CommandError(
                 InterpreterMessage.BAD_DATA, f"{len(bytes_)} bytes for {count} signals"
             )
-        if signals[0] not in NETWORK_INPUTS or signals[-1] + 7 not in NETWORK_INPUTS:
+        network_inputs = self.profile.network_inputs
+        if signals[0] not in network_inputs or signals[-1] + 7 not in network_inputs:
             raise CommandError(InterpreterMessage.NOT_WRITABLE, f"#{start} is not a network input")
         for signal, value in zip(signals, bytes_, strict=True):
             if not 0 <= value <= 0xFF:
@@ -358,6 +408,23 @@ class NX100Controller:
             self.io[signal] = value
             if signal in self.ladder_copies:
                 self.io[self.ladder_copies[signal]] = value
+
+    def _tool(self, value: float) -> int:
+        tool = _integer(value)
+        if not 0 <= tool <= self.profile.max_tool:
+            raise CommandError(InterpreterMessage.BAD_DATA, f"tool {tool}")
+        return tool
+
+    def _check_coordinate(self, coordinate: int) -> None:
+        """Base and robot coordinates are one frame here (no base axis); user frames are unset."""
+        if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
+            return
+        if ROBOT_COORDINATE < coordinate <= self.profile.last_user_coordinate:
+            raise CommandError(
+                InterpreterMessage.UNDEFINED_USER_FRAME,
+                f"user frame {coordinate - 1} is not defined",
+            )
+        raise CommandError(InterpreterMessage.BAD_DATA, f"coordinate {coordinate}")
 
     def _joints(self, pulses: list[float]) -> Joints:
         robot_pulses = pulses[: len(self.pulses_per_degree)]
@@ -448,13 +515,6 @@ def _integer(value: float) -> int:
     return int(value)
 
 
-def _tool(value: float) -> int:
-    tool = _integer(value)
-    if not 0 <= tool <= MAX_TOOL:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"tool {tool}")
-    return tool
-
-
 def _parse_numbers(data: str, *, count: int) -> list[float]:
     """Exactly *count* comma-separated numbers."""
     try:
@@ -472,17 +532,6 @@ def _parse_switch(data: str) -> bool:
     if value not in (0, 1):
         raise CommandError(InterpreterMessage.BAD_DATA, f"switch {value}")
     return value == 1
-
-
-def _check_coordinate(coordinate: int) -> None:
-    """Base and robot coordinates are one frame here (no base axis); user frames are unset."""
-    if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
-        return
-    if ROBOT_COORDINATE < coordinate <= LAST_USER_COORDINATE:
-        raise CommandError(
-            InterpreterMessage.UNDEFINED_USER_FRAME, f"user frame {coordinate - 1} is not defined"
-        )
-    raise CommandError(InterpreterMessage.BAD_DATA, f"coordinate {coordinate}")
 
 
 def _parse_ints(data: str, *, count: int | None) -> list[int]:
@@ -512,7 +561,7 @@ class _Request:
 class _Session:
     """One connection: the START request, then up to Keep-Alive commands."""
 
-    controller: NX100Controller
+    controller: EthernetServerController
     #: Commands this connection may run; None until the START request.
     keep_alive: int | None = None
     answered: int = 0
@@ -532,14 +581,15 @@ class _Session:
         words = message.split()
         if words[:2] != ["CONNECT", "Robot_access"] or len(words) > 3:
             return Hangup([START_ERROR + "\r\n"])
+        server_name = self.controller.profile.server_name
         if len(words) == 2:
             self.keep_alive = 1
-            return SERVER_NAME + ".\r\n"
+            return server_name + ".\r\n"
         keep_alive = _parse_keep_alive(words[2])
         if keep_alive is None:
             return Hangup([START_ERROR + "\r\n"])
         self.keep_alive = keep_alive
-        return f"{SERVER_NAME} Keep-Alive:{keep_alive}.\r\n"
+        return f"{server_name} Keep-Alive:{keep_alive}.\r\n"
 
     # --- command ------------------------------------------------------
 
@@ -598,8 +648,9 @@ class MotomanNX100(LineServerDevice, HasArm):
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
-        self.controller = NX100Controller(
+        self.controller = EthernetServerController(
             arm=self.arm,
+            profile=CONTROLLERS[options.controller],
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             ladder_copies=dict(options.ladder_copies),

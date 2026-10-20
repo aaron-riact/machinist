@@ -13,22 +13,31 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.robots.yaskawa import MotomanNX100, MotomanOptions
+from machinist.devices.robots.yaskawa import CONTROLLERS, MotomanNX100, MotomanOptions
 
 from ..conftest import free_port, wait_running
 
 
-@pytest.fixture
-def motoman() -> Iterator[MotomanNX100]:
-    bus = EventBus()
-    options = MotomanOptions(start_joints_deg=(10, 20, -30, 0, 45, -90))
-    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, options)
+def _running(options: MotomanOptions) -> Iterator[MotomanNX100]:
+    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
     m.start()
     try:
         wait_running(m)
         yield m
     finally:
         m.stop()
+
+
+@pytest.fixture
+def motoman() -> Iterator[MotomanNX100]:
+    yield from _running(MotomanOptions(start_joints_deg=(10, 20, -30, 0, 45, -90)))
+
+
+@pytest.fixture
+def dx200() -> Iterator[MotomanNX100]:
+    yield from _running(
+        MotomanOptions(controller="dx200", start_joints_deg=(10, 20, -30, 0, 45, -90))
+    )
 
 
 def _connect(motoman: MotomanNX100) -> socket.socket:
@@ -330,3 +339,52 @@ def test_the_ladder_copies_a_network_input_byte() -> None:
 def test_ladder_copies_name_network_input_bytes(copies: dict[int, int]) -> None:
     with pytest.raises(ValueError, match=r"ladder copies|first signal"):
         MotomanOptions(ladder_copies=copies)
+
+
+# --- DX200 (HW1481823): what differs from the NX100 -------------------------
+
+
+def test_dx200_names_itself_dx(dx200: MotomanNX100) -> None:
+    received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
+    assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
+
+
+def test_dx200_answers_rotation_to_4_decimals(dx200: MotomanNX100) -> None:
+    assert _answer(dx200, "RPOSC", "0,0") == (
+        b"174.533,349.066,-523.599,0.0000,45.0000,-90.0000,0,0\r"
+    )
+
+
+@pytest.mark.parametrize(("tool", "answer"), [(63, b"0000\r\n"), (64, None)])
+def test_dx200_has_64_tools(dx200: MotomanNX100, tool: int, answer: bytes | None) -> None:
+    move = f"10, 14166, 38908, -59831, 0, 36653, -37676, {tool}, 0, 0, 0, 0, 0, 0"
+    expected = answer or b"ERROR:PMOVJ is not successful (9001).\r\n"
+    assert _answer(dx200, "PMOVJ", move) == expected
+
+
+@pytest.mark.parametrize(("coordinate", "code"), [(65, 9002), (66, 9001)])
+def test_dx200_has_64_user_frames(dx200: MotomanNX100, coordinate: int, code: int) -> None:
+    error = f"ERROR:RPOSC is not successful ({code}).\r\n"
+    assert _answer(dx200, "RPOSC", f"{coordinate},0") == error.encode()
+
+
+def test_dx200_steps_in_the_tool_coordinate_66(dx200: MotomanNX100) -> None:
+    step = "0, 100, 66, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(dx200, "IMOV", step) == b"0000\r\n"
+
+
+def test_dx200_network_inputs_start_at_27010(dx200: MotomanNX100) -> None:
+    assert _answer(dx200, "IOWRITE", "27010,24,63,0,25") == b"0000\r\n"
+    assert _answer(dx200, "IOREAD", "27010,24") == b"63,0,25\r"
+    error = b"ERROR:IOWRITE is not successful (9007).\r\n"
+    assert _answer(dx200, "IOWRITE", "22010,8,1") == error
+
+
+def test_ladder_copies_follow_the_controllers_network_inputs() -> None:
+    MotomanOptions(controller="dx200", ladder_copies={27010: 30040})
+    with pytest.raises(ValueError, match="not a network input"):
+        MotomanOptions(controller="dx200", ladder_copies={22010: 30040})
+
+
+def test_the_yrc1000_takes_the_dx200s_values_until_checked() -> None:
+    assert CONTROLLERS["yrc1000"] == CONTROLLERS["dx200"]
