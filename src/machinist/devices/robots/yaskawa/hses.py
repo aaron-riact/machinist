@@ -1,0 +1,153 @@
+"""The Yaskawa High-Speed Ethernet Server (HSES), answered for a controller.
+
+Reference: *DX200 Options Instructions for High-Speed Ethernet Server
+Function* (HW1481977), chapter 3.3. Each robot control command is one
+request datagram and one answer datagram; the packets themselves are in
+:mod:`machinist.transport.yaskawa_hses`.
+
+A command's data are 32-bit little-endian integers, one per element. A
+read either takes one element (Get_Attribute_Single, its attribute the
+element's number) or all of them (Get_Attribute_All, attribute 0).
+"""
+
+from __future__ import annotations
+
+import struct
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import IntEnum
+
+from ....transport.yaskawa_hses import (
+    ANSWER_SERVICE,
+    AddedStatus,
+    Answer,
+    Division,
+    FrameError,
+    Request,
+    Status,
+    encode_answer,
+    parse_request,
+    request_id_of,
+)
+from .controller import CommandRefusedError, Refusal, YaskawaController
+
+
+class Service(IntEnum):
+    """How a request reaches its data (the CIP services the manual names)."""
+
+    GET_ALL = 0x01
+    SET_ALL = 0x02
+    GET_SINGLE = 0x0E
+    SET_SINGLE = 0x10
+    READ_PLURAL = 0x33
+    WRITE_PLURAL = 0x34
+
+
+#: The added status (chapter 5) that answers each refusal. NO_LINEAR_PATH
+#: has no code of its own; a real controller stops such a move with an alarm.
+ADDED_STATUS: dict[Refusal, AddedStatus] = {
+    Refusal.BAD_DATA: AddedStatus.OPERAND_RANGE,
+    Refusal.UNDEFINED_USER_FRAME: AddedStatus.USER_COORDINATE_NOT_TAUGHT,
+    Refusal.EMERGENCY_STOP: AddedStatus.SERVO_CANNOT_TURN_ON,
+    Refusal.SERVO_OFF: AddedStatus.SERVO_OFF,
+    Refusal.HELD: AddedStatus.COMMAND_HOLD,
+    Refusal.NO_LINEAR_PATH: AddedStatus.OUTSIDE_THE_DATA,
+    Refusal.NOT_WRITABLE: AddedStatus.OUTSIDE_THE_DATA,
+}
+
+
+class HsesError(Exception):
+    """A request the server answers with *status* (and *added_status*, if any)."""
+
+    def __init__(self, status: Status, added_status: AddedStatus | None = None) -> None:
+        super().__init__(f"{status.name} {added_status.name if added_status else ''}")
+        self.status = status
+        self.added_status = added_status
+
+
+def _added(added_status: AddedStatus) -> HsesError:
+    return HsesError(Status.VENDOR, added_status)
+
+
+#: A robot control command: the request in, the answer's data out.
+Handler = Callable[[Request], bytes]
+
+
+def int32s(*values: int) -> bytes:
+    return struct.pack(f"<{len(values)}i", *values)
+
+
+@dataclass(slots=True)
+class HighSpeedEthernetServer:
+    """HSES robot control commands, read and answered for a :class:`YaskawaController`."""
+
+    controller: YaskawaController
+
+    def handle(self, datagram: bytes) -> bytes:
+        """One request datagram in, one answer datagram out."""
+        try:
+            request = parse_request(datagram)
+        except FrameError as exc:
+            return encode_answer(Answer(
+                division=Division.ROBOT, request_id=request_id_of(datagram), service=0,
+                status=Status.VENDOR, added_status=exc.added_status,
+            ))
+        answer = Answer(
+            division=request.division, request_id=request.request_id,
+            service=request.service + ANSWER_SERVICE,
+        )
+        try:
+            data = self._run(request)
+        except HsesError as exc:
+            return encode_answer(Answer(
+                division=answer.division, request_id=answer.request_id, service=answer.service,
+                status=exc.status, added_status=exc.added_status,
+            ))
+        except CommandRefusedError as exc:
+            return encode_answer(Answer(
+                division=answer.division, request_id=answer.request_id, service=answer.service,
+                status=Status.VENDOR, added_status=ADDED_STATUS[exc.refusal],
+            ))
+        return encode_answer(Answer(
+            division=answer.division, request_id=answer.request_id, service=answer.service,
+            data=data,
+        ))
+
+    def _run(self, request: Request) -> bytes:
+        if request.division is not Division.ROBOT:
+            raise HsesError(Status.UNDEFINED_COMMAND)  # file control is not emulated
+        handler = self._commands().get(request.command)
+        if handler is None:
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handler(request)
+
+    def _commands(self) -> dict[int, Handler]:
+        return {
+            0x72: self._status,
+        }
+
+    # --- 3.3.3 Status information reading (0x72) ------------------------------
+
+    def _status(self, request: Request) -> bytes:
+        _instance(request, 1)
+        data1, data2 = self.controller.status()
+        return _read(request, [int32s(data1), int32s(data2)])
+
+
+def _instance(request: Request, *allowed: int) -> int:
+    if request.instance not in allowed:
+        raise _added(AddedStatus.INSTANCE_ERROR)
+    return request.instance
+
+
+def _read(request: Request, elements: list[bytes]) -> bytes:
+    """One element (Get_Attribute_Single) or all of them (Get_Attribute_All)."""
+    if request.service == Service.GET_ALL:
+        if request.attribute != 0:
+            raise _added(AddedStatus.ATTRIBUTE_ERROR)
+        return b"".join(elements)
+    if request.service == Service.GET_SINGLE:
+        if not 1 <= request.attribute <= len(elements):
+            raise _added(AddedStatus.ATTRIBUTE_ERROR)
+        return elements[request.attribute - 1]
+    raise HsesError(Status.UNDEFINED_COMMAND)

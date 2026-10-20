@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -14,9 +13,11 @@ from ....core.registry import register
 from ....core.types import Endpoint
 from ....transport.framing import CR
 from ....transport.line_server import LineServer, Reply, SessionHandler
+from ....transport.message import UdpMessageServer
 from ..arm import ArmOptions, HasArm, arm_from_options
 from .controller import CONTROLLERS, ROBOTS, YaskawaController
 from .ethernet_server import EthernetServer, _Session
+from .hses import HighSpeedEthernetServer
 
 MOTOMAN_PORT = 80
 #: Where the High-Speed Ethernet Server (HSES) listens, over UDP.
@@ -130,17 +131,12 @@ class YaskawaRobot(Device, HasArm):
             self.add_service(LineServer(
                 endpoint.host, endpoint.port, session_factory=self.make_session, framer=CR,
             ))
+        if "hses" in self.protocols:
+            hses = HighSpeedEthernetServer(self.controller)
+            self.add_service(UdpMessageServer(endpoint.host, self.hses_port, hses.handle))
 
     def make_session(self) -> SessionHandler:
         return _TracingSession(self, _Session(server=EthernetServer(self.controller)))
-
-    def _serve(self, stop: threading.Event) -> None:
-        if "hses" in self.protocols:
-            self.emit(
-                "warning",
-                message=f"HSES is not implemented yet; nothing listens on UDP {self.hses_port}",
-            )
-        stop.wait()
 
 
 @dataclass(slots=True)

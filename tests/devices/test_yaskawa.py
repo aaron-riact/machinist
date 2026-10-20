@@ -11,7 +11,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from machinist.core.events import EventBus, Note
+from machinist.core.events import EventBus
 from machinist.core.registry import default_registry
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import CONTROLLERS, ROBOTS, YaskawaOptions, YaskawaRobot
@@ -463,24 +463,15 @@ def test_the_nx100_has_no_hses() -> None:
 
 
 def test_without_the_ethernet_server_nothing_listens_on_its_port() -> None:
-    bus = EventBus()
-    notes: list[Note] = []
-    bus.subscribe(lambda event: notes.append(event) if isinstance(event, Note) else None)
     port = free_port()
-    options = YaskawaOptions(controller="yrc1000", robot="up50n", protocols=("hses",))
-    m = YaskawaRobot("r1", Endpoint("127.0.0.1", port), bus, options)
+    options = YaskawaOptions(controller="yrc1000", robot="up50n", protocols=("hses",),
+                             hses_port=free_port())
+    m = YaskawaRobot("r1", Endpoint("127.0.0.1", port), EventBus(), options)
     m.start()
     try:
         wait_running(m)
         with pytest.raises(ConnectionRefusedError):
             socket.create_connection(("127.0.0.1", port), timeout=1)
-        deadline = time.monotonic() + 2
-        while not any(n.name == "warning" for n in notes):
-            assert time.monotonic() < deadline, "no warning that HSES is missing"
-            time.sleep(0.02)
-        assert "nothing listens on UDP 10040" in next(
-            n.data["message"] for n in notes if n.name == "warning"
-        )
     finally:
         m.stop()
 
