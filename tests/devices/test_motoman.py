@@ -282,3 +282,51 @@ def test_movl_in_a_user_frame_is_an_error(motoman: MotomanNX100) -> None:
 def test_imov_steps_in_base_or_tool_coordinates(motoman: MotomanNX100, coordinate: int) -> None:
     step = f"0, 100, {coordinate}, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
     assert _answer(motoman, "IMOV", step) == b"0000\r\n"
+
+
+def test_iowrite_then_ioread_as_in_the_manual(motoman: MotomanNX100) -> None:
+    """3.3.3: write three bytes from #22010, then read them back."""
+    assert _answer(motoman, "IOWRITE", "22010,24,63,0,25") == b"0000\r\n"
+    assert _answer(motoman, "IOREAD", "22010,24") == b"63,0,25\r"
+
+
+def test_ioread_of_unset_signals_reads_zero(motoman: MotomanNX100) -> None:
+    """3.3.2 reads three bytes from #50010."""
+    assert _answer(motoman, "IOREAD", "50010, 24") == b"0,0,0\r"
+
+
+def test_iowrite_outside_the_network_inputs_is_an_error(motoman: MotomanNX100) -> None:
+    error = b"ERROR:IOWRITE is not successful (9007).\r\n"
+    assert _answer(motoman, "IOWRITE", "30040,8,1") == error
+
+
+@pytest.mark.parametrize(
+    ("command", "data"),
+    [
+        ("IOREAD", "22011,8"),  # not the first signal of a byte
+        ("IOREAD", "22010,4"),  # not a multiple of eight
+        ("IOWRITE", "22010,16,1"),  # one byte for two
+        ("IOWRITE", "22010,8,256"),  # not a byte
+    ],
+)
+def test_io_with_bad_data_is_an_error(motoman: MotomanNX100, command: str, data: str) -> None:
+    error = f"ERROR:{command} is not successful (9001).\r\n"
+    assert _answer(motoman, command, data) == error.encode()
+
+
+def test_the_ladder_copies_a_network_input_byte() -> None:
+    options = MotomanOptions(ladder_copies={22010: 30040})
+    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    m.start()
+    try:
+        wait_running(m)
+        assert _answer(m, "IOWRITE", "22010,8,5") == b"0000\r\n"
+        assert _answer(m, "IOREAD", "30040,8") == b"5\r"
+    finally:
+        m.stop()
+
+
+@pytest.mark.parametrize("copies", [{20010: 30040}, {22011: 30040}, {22010: 30041}])
+def test_ladder_copies_name_network_input_bytes(copies: dict[int, int]) -> None:
+    with pytest.raises(ValueError, match=r"ladder copies|first signal"):
+        MotomanOptions(ladder_copies=copies)

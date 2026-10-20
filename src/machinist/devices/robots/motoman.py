@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
 
 import numpy as np
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from ...core.device import Device
 from ...core.events import EventBus
@@ -74,6 +74,10 @@ MAX_TOOL = 23
 MIN_JOINT_SPEED, MAX_JOINT_SPEED_PERCENT, MIN_LINEAR_SPEED = 0.01, 100.0, 0.1
 #: A move takes at least this long, so a move to where the arm is still runs.
 MIN_MOVE_SECONDS = 0.02
+#: Signal numbers count eight to a byte: #22010 to #22017 are byte 2201's bits.
+SIGNALS_PER_BYTE = 8
+#: The network inputs, the only signals IOWRITE may write.
+NETWORK_INPUTS = range(22010, 23288)
 
 
 class MotomanOptions(ArmOptions):
@@ -84,6 +88,21 @@ class MotomanOptions(ArmOptions):
     #: Each joint's top speed in degrees per second, which 100 % of a joint
     #: move's speed means.
     max_joint_speed_deg_s: tuple[float, ...] = UP50N_MAX_JOINT_SPEED
+
+    #: What the cell's ladder copies: each network-input byte to another
+    #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
+    #: Signal numbers name the first signal of each byte.
+    ladder_copies: dict[int, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _ladder_copies_name_bytes(self) -> MotomanOptions:
+        for source, target in self.ladder_copies.items():
+            if source not in NETWORK_INPUTS:
+                raise ValueError(f"ladder copies from #{source}, not a network input")
+            for signal in (source, target):
+                if signal % 10:
+                    raise ValueError(f"#{signal} is not the first signal of a byte")
+        return self
 
     @model_validator(mode="after")
     def _one_value_per_joint(self) -> MotomanOptions:
@@ -108,6 +127,7 @@ class InterpreterMessage(IntEnum):
     SERVO_OFF = 9004
     HELD = 9005
     NO_LINEAR_PATH = 9006
+    NOT_WRITABLE = 9007
 
 
 class Status1(IntFlag):
@@ -159,6 +179,9 @@ class NX100Controller:
     tool: int = 0
     #: HOLD from a command: the arm stops and takes no move until HOLD 0.
     hold: bool = False
+    ladder_copies: dict[int, int] = field(default_factory=dict)
+    #: Each IO byte by the number of its first signal; an unset byte reads 0.
+    io: dict[int, int] = field(default_factory=dict)
 
     def command(self, name: str) -> Command | None:
         """The command called *name*, or None for one the controller does not know.
@@ -181,6 +204,8 @@ class NX100Controller:
             "MOVJ": self._movj,
             "MOVL": self._movl,
             "IMOV": self._imov,
+            "IOREAD": self._ioread,
+            "IOWRITE": self._iowrite,
         }
         return commands.get(name)
 
@@ -309,6 +334,31 @@ class NX100Controller:
             there[:3, 3] = here[:3, 3] + step[:3, 3]
         self._move_linear(_mat_to_pose(there), selection, speed)
 
+    def _ioread(self, data: str) -> str:
+        """First signal and signal count → one value per byte."""
+        start, count = _parse_ints(data, count=2)
+        return ",".join(str(self.io.get(signal, 0)) for signal in _bytes(start, count))
+
+    def _iowrite(self, data: str) -> None:
+        """First signal, signal count, then one value per byte. Network inputs only."""
+        values = _parse_ints(data, count=None)
+        if len(values) < 3:
+            raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields")
+        start, count, *bytes_ = values
+        signals = _bytes(start, count)
+        if len(bytes_) != len(signals):
+            raise CommandError(
+                InterpreterMessage.BAD_DATA, f"{len(bytes_)} bytes for {count} signals"
+            )
+        if signals[0] not in NETWORK_INPUTS or signals[-1] + 7 not in NETWORK_INPUTS:
+            raise CommandError(InterpreterMessage.NOT_WRITABLE, f"#{start} is not a network input")
+        for signal, value in zip(signals, bytes_, strict=True):
+            if not 0 <= value <= 0xFF:
+                raise CommandError(InterpreterMessage.BAD_DATA, f"byte {value}")
+            self.io[signal] = value
+            if signal in self.ladder_copies:
+                self.io[self.ladder_copies[signal]] = value
+
     def _joints(self, pulses: list[float]) -> Joints:
         robot_pulses = pulses[: len(self.pulses_per_degree)]
         return tuple(
@@ -372,6 +422,17 @@ def _linear_speed(selection: float, speed: float) -> tuple[SpeedSelection, float
     return SpeedSelection(int(selection)), speed
 
 
+def _bytes(start: int, count: int) -> list[int]:
+    """The first signal of each byte from *start*, for *count* signals.
+
+    Both must fall on byte boundaries: a start that ends in 0 and a count in
+    multiples of eight.
+    """
+    if start % 10 or count <= 0 or count % SIGNALS_PER_BYTE:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"signals #{start}, count {count}")
+    return [start + 10 * i for i in range(count // SIGNALS_PER_BYTE)]
+
+
 def _pose(values: list[float]) -> Pose:
     """X, Y, Z in mm and Rx, Ry, Rz in degrees → metres and radians."""
     x, y, z, rx, ry, rz = values
@@ -424,13 +485,13 @@ def _check_coordinate(coordinate: int) -> None:
     raise CommandError(InterpreterMessage.BAD_DATA, f"coordinate {coordinate}")
 
 
-def _parse_ints(data: str, *, count: int) -> list[int]:
-    """Exactly *count* comma-separated integers."""
+def _parse_ints(data: str, *, count: int | None) -> list[int]:
+    """Comma-separated integers: exactly *count* of them, or any number for None."""
     try:
         values = [int(part) for part in data.split(",")]
     except ValueError as exc:
         raise CommandError(InterpreterMessage.BAD_DATA, f"not integers: {data!r}") from exc
-    if len(values) != count:
+    if count is not None and len(values) != count:
         raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields, expected {count}")
     return values
 
@@ -541,6 +602,7 @@ class MotomanNX100(LineServerDevice, HasArm):
             arm=self.arm,
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
+            ladder_copies=dict(options.ladder_copies),
         )
 
     def make_session(self) -> SessionHandler:
