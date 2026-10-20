@@ -27,11 +27,12 @@ import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import IntEnum, IntFlag
+from enum import Enum, IntEnum, IntFlag, auto
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field, model_validator
 
 from ...core.device import Device
@@ -228,21 +229,31 @@ class MotomanNX100Options(YaskawaOptions):
     robot: str | None = "up50n"
 
 
-class InterpreterMessage(IntEnum):
-    """The code in an ``ERROR:<Command> is not successful (<code>).`` answer.
+class Refusal(Enum):
+    """Why the controller refuses a command, whichever protocol carried it."""
 
-    The manual leaves the list to the Data Transmission manual (RE-CKI-A445),
-    which is not at hand, so these codes are stand-ins that only name why a
-    command failed.
-    """
+    BAD_DATA = auto()
+    UNDEFINED_USER_FRAME = auto()
+    EMERGENCY_STOP = auto()
+    SERVO_OFF = auto()
+    HELD = auto()
+    NO_LINEAR_PATH = auto()
+    NOT_WRITABLE = auto()
 
-    BAD_DATA = 9001
-    UNDEFINED_USER_FRAME = 9002
-    EMERGENCY_STOP = 9003
-    SERVO_OFF = 9004
-    HELD = 9005
-    NO_LINEAR_PATH = 9006
-    NOT_WRITABLE = 9007
+
+#: The code in an Ethernet server ``ERROR:<Command> is not successful (<code>).``
+#: answer. The manual leaves the list to the Data Transmission manual
+#: (RE-CKI-A445), which is not at hand, so these codes are stand-ins that only
+#: name why a command failed.
+INTERPRETER_MESSAGES: dict[Refusal, int] = {
+    Refusal.BAD_DATA: 9001,
+    Refusal.UNDEFINED_USER_FRAME: 9002,
+    Refusal.EMERGENCY_STOP: 9003,
+    Refusal.SERVO_OFF: 9004,
+    Refusal.HELD: 9005,
+    Refusal.NO_LINEAR_PATH: 9006,
+    Refusal.NOT_WRITABLE: 9007,
+}
 
 
 class Status1(IntFlag):
@@ -269,42 +280,180 @@ class Status2(IntFlag):
     SERVO_ON = 0x40
 
 
-class CommandError(Exception):
-    """A command the controller refuses with an ERROR answer."""
+class CommandRefusedError(Exception):
+    """A command the controller refuses; each protocol answers it its own way."""
 
-    def __init__(self, code: InterpreterMessage, reason: str) -> None:
+    def __init__(self, refusal: Refusal, reason: str) -> None:
         super().__init__(reason)
-        self.code = code
+        self.refusal = refusal
 
 
 Command = Callable[[str], str | None]
 
 
 @dataclass(slots=True)
-class EthernetServerController:
-    """The controller state every session shares, and the commands that act on it."""
+class YaskawaController:
+    """The controller's state and what it does, whichever protocol asks.
+
+    Every server a device runs (the Ethernet server, HSES) acts on this one
+    controller, as they do on a real one: a HOLD over one shows in the
+    status the other reads.
+    """
 
     arm: RobotArm
     profile: ControllerProfile
     pulses_per_degree: tuple[float, ...]
     max_joint_speed_deg_s: tuple[float, ...]
     cycle: Status1 = Status1.ONE_CYCLE
-    #: The form (posture) type and tool number of the last move, which RPOSC
-    #: reports. The arm has no tool files, so the tool only travels along.
+    #: The form (posture) type and tool number of the last move, which
+    #: position reads report. The arm has no tool files, so the tool only
+    #: travels along.
     form: int = 0
     tool: int = 0
-    #: HOLD from a command: the arm stops and takes no move until HOLD 0.
+    #: HOLD from a command: the arm stops and takes no move until it is released.
     hold: bool = False
     ladder_copies: dict[int, int] = field(default_factory=dict)
     #: Each IO byte by the number of its first signal; an unset byte reads 0.
     io: dict[int, int] = field(default_factory=dict)
 
+    # --- status -----------------------------------------------------------
+
+    def status(self) -> tuple[Status1, Status2]:
+        view = self.arm.state.view
+        data1 = Status1.COMMAND_REMOTE | Status1.PLAY | self.cycle
+        if view.moving:
+            data1 |= Status1.RUNNING
+        data2 = Status2(0)
+        if view.servo_on and not view.estopped:
+            data2 |= Status2.SERVO_ON
+        if view.faulted:
+            data2 |= Status2.ALARM
+        if self.hold:
+            data2 |= Status2.HOLD_COMMAND
+        return data1, data2
+
+    def alarms(self) -> list[tuple[int, int]]:
+        """The alarms showing, newest first, each as (code, data)."""
+        return [(FAULT_ALARM, 0)] if self.arm.state.view.faulted else []
+
+    def pulses(self) -> list[int]:
+        """Each robot axis's position in encoder pulses."""
+        return [
+            round(math.degrees(joint) * ratio)
+            for joint, ratio in zip(self.arm.state.view.joints, self.pulses_per_degree, strict=True)
+        ]
+
+    def joints_at(self, pulses: list[float]) -> Joints:
+        """The joint angles at the robot axes' *pulses* (any external axes after them ignored)."""
+        robot_pulses = pulses[: len(self.pulses_per_degree)]
+        return tuple(
+            Radians(math.radians(p / ratio))
+            for p, ratio in zip(robot_pulses, self.pulses_per_degree, strict=True)
+        )
+
+    # --- operation ----------------------------------------------------------
+
+    def set_servo(self, on: bool) -> None:
+        if on:
+            if self.arm.state.view.estopped:
+                raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
+            self.arm.set_servo(True)
+        else:
+            self.arm.stop()
+            self.arm.set_servo(False)
+
+    def set_hold(self, on: bool) -> None:
+        self.hold = on
+        if on:
+            self.arm.stop()
+
+    def reset_alarm(self) -> None:
+        self.arm.clear_fault()
+
+    def cancel_error(self) -> None:
+        """Cancels an error. The emulator raises none, so there is nothing to cancel."""
+
+    def check_tool(self, tool: int) -> int:
+        if not 0 <= tool <= self.profile.max_tool:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"tool {tool}")
+        return tool
+
+    def check_user_frame(self, number: int) -> None:
+        """User frames exist by number, but none is taught."""
+        if 1 <= number <= self.profile.user_frames:
+            raise CommandRefusedError(
+                Refusal.UNDEFINED_USER_FRAME, f"user frame {number} is not defined"
+            )
+        raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
+
+    def move_joints(self, target: Joints, speed_percent: float) -> None:
+        """Joint-space move at *speed_percent* of each joint's top speed."""
+        self._check_can_move()
+        self.arm.movej(target, duration=self._joint_move_seconds(target, speed_percent))
+
+    def move_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
+        """Straight-line move, *speed* in mm/s (V) or degrees/s (VR)."""
+        self._check_can_move()
+        start = pose_to_mat(self.arm.state.view.pose)
+        end = pose_to_mat(target)
+        if selection is SpeedSelection.V:
+            travel = float(np.linalg.norm(end[:3, 3] - start[:3, 3])) * 1000
+        else:
+            turn = start[:3, :3].T @ end[:3, :3]
+            travel = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(turn) - 1) / 2))))
+        try:
+            self.arm.movel(target, duration=max(travel / speed, MIN_MOVE_SECONDS),
+                           follows_speed_factor=False)
+        except NoLinearPath as exc:
+            raise CommandRefusedError(Refusal.NO_LINEAR_PATH, str(exc)) from exc
+
+    def read_io(self, signals: list[int]) -> list[int]:
+        """The bytes whose first signals are *signals*."""
+        return [self.io.get(signal, 0) for signal in signals]
+
+    def write_network_inputs(self, signals: list[int], values: list[int]) -> None:
+        """Write bytes to network inputs, the only signals a host may write."""
+        network_inputs = self.profile.network_inputs
+        if signals[0] not in network_inputs or signals[-1] + 7 not in network_inputs:
+            raise CommandRefusedError(Refusal.NOT_WRITABLE, f"#{signals[0]} is not a network input")
+        for signal, value in zip(signals, values, strict=True):
+            if not 0 <= value <= 0xFF:
+                raise CommandRefusedError(Refusal.BAD_DATA, f"byte {value}")
+            self.io[signal] = value
+            if signal in self.ladder_copies:
+                self.io[self.ladder_copies[signal]] = value
+
+    def _check_can_move(self) -> None:
+        view = self.arm.state.view
+        if view.estopped:
+            raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
+        if not view.servo_on:
+            raise CommandRefusedError(Refusal.SERVO_OFF, "servo power is off")
+        if self.hold:
+            raise CommandRefusedError(Refusal.HELD, "the controller is held")
+
+    def _joint_move_seconds(self, target: Joints, speed_percent: float) -> float:
+        """The time the slowest joint needs at *speed_percent* of its top speed."""
+        start = self.arm.state.view.joints
+        seconds = max(
+            abs(math.degrees(b - a)) / (top * speed_percent / 100)
+            for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
+        )
+        return max(seconds, MIN_MOVE_SECONDS)
+
+
+@dataclass(slots=True)
+class EthernetServer:
+    """The Ethernet server's text commands, read and answered for a :class:`YaskawaController`."""
+
+    controller: YaskawaController
+
     def command(self, name: str) -> Command | None:
         """The command called *name*, or None for one the controller does not know.
 
         A command takes the command data and returns the answer's data, or
-        None for an answer without data. It raises :class:`CommandError` when
-        the controller refuses it.
+        None for an answer without data. It raises :class:`CommandRefusedError` when the
+        controller refuses it.
         """
         commands: dict[str, Command] = {
             "RSTATS": self._rstats,
@@ -326,86 +475,60 @@ class EthernetServerController:
         return commands.get(name)
 
     def _rstats(self, data: str) -> str:
-        view = self.arm.state.view
-        data1 = Status1.COMMAND_REMOTE | Status1.PLAY | self.cycle
-        if view.moving:
-            data1 |= Status1.RUNNING
-        data2 = Status2(0)
-        if view.servo_on and not view.estopped:
-            data2 |= Status2.SERVO_ON
-        if view.faulted:
-            data2 |= Status2.ALARM
-        if self.hold:
-            data2 |= Status2.HOLD_COMMAND
+        data1, data2 = self.controller.status()
         return f"{int(data1)},{int(data2)}"
 
-
     def _rposj(self, data: str) -> str:
-        pulses = [
-            round(math.degrees(joint) * ratio)
-            for joint, ratio in zip(self.arm.state.view.joints, self.pulses_per_degree, strict=True)
-        ]
-        return ",".join(str(p) for p in _pad(pulses, AXES_ON_THE_WIRE))
-
+        return ",".join(str(p) for p in _pad(self.controller.pulses(), AXES_ON_THE_WIRE))
 
     def _rposc(self, data: str) -> str:
         coordinate, external = _parse_ints(data, count=2)
         self._check_coordinate(coordinate)
         if external not in (0, 1):
-            raise CommandError(InterpreterMessage.BAD_DATA, f"external axis flag {external}")
-        x, y, z, rx, ry, rz = self.arm.state.view.pose
+            raise CommandRefusedError(Refusal.BAD_DATA, f"external axis flag {external}")
+        decimals = self.controller.profile.rotation_decimals
+        x, y, z, rx, ry, rz = self.controller.arm.state.view.pose
         fields = [
             *(f"{m * 1000:.3f}" for m in (x, y, z)),
-            *(f"{math.degrees(r):.{self.profile.rotation_decimals}f}" for r in (rx, ry, rz)),
-            str(self.form),
-            str(self.tool),
+            *(f"{math.degrees(r):.{decimals}f}" for r in (rx, ry, rz)),
+            str(self.controller.form),
+            str(self.controller.tool),
         ]
         if external:
             fields += ["0"] * EXTERNAL_AXES
         return ",".join(fields)
 
-
     def _ralarm(self, data: str) -> str:
-        alarms = [FAULT_ALARM, 0] if self.arm.state.view.faulted else []
+        alarms = [v for alarm in self.controller.alarms()[:ALARM_SLOTS] for v in alarm]
         return ",".join(str(v) for v in [0, 0, *_pad(alarms, ALARM_SLOTS * 2)])
 
     def _svon(self, data: str) -> None:
-        if _parse_switch(data):
-            if self.arm.state.view.estopped:
-                raise CommandError(InterpreterMessage.EMERGENCY_STOP, "emergency stop is engaged")
-            self.arm.set_servo(True)
-        else:
-            self.arm.stop()
-            self.arm.set_servo(False)
+        self.controller.set_servo(_parse_switch(data))
 
     def _hold(self, data: str) -> None:
-        self.hold = _parse_switch(data)
-        if self.hold:
-            self.arm.stop()
+        self.controller.set_hold(_parse_switch(data))
 
     def _reset(self, data: str) -> None:
-        self.arm.clear_fault()
+        self.controller.reset_alarm()
 
     def _cancel(self, data: str) -> None:
-        """Cancels an error. The emulator raises none, so there is nothing to cancel."""
-
+        self.controller.cancel_error()
 
     def _pmovj(self, data: str) -> None:
         """Speed (%), six pulses, tool, six external axes."""
         values = _parse_numbers(data, count=14)
         speed = _joint_speed(values[0])
-        target = self._joints(values[1:7])
-        self.tool = self._tool(values[7])
-        self._check_can_move()
-        self.arm.movej(target, duration=self._joint_move_seconds(target, speed))
+        target = self.controller.joints_at(values[1:7])
+        self.controller.tool = self.controller.check_tool(_integer(values[7]))
+        self.controller.move_joints(target, speed)
 
     def _pmovl(self, data: str) -> None:
         """Speed selection, speed, six pulses, tool, six external axes."""
         values = _parse_numbers(data, count=15)
         selection, speed = _linear_speed(values[0], values[1])
-        target = self.arm.forward(self._joints(values[2:8]))
-        self.tool = self._tool(values[8])
-        self._move_linear(target, selection, speed)
+        target = self.controller.arm.forward(self.controller.joints_at(values[2:8]))
+        self.controller.tool = self.controller.check_tool(_integer(values[8]))
+        self.controller.move_linear(target, selection, speed)
 
     def _movj(self, data: str) -> None:
         """Speed (%), coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
@@ -413,10 +536,9 @@ class EthernetServerController:
         speed = _joint_speed(values[0])
         self._check_coordinate(_integer(values[1]))
         target = _pose(values[2:8])
-        self.form, self.tool = _integer(values[8]), self._tool(values[9])
-        self._check_can_move()
-        joints = self.arm.inverse(target)
-        self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed))
+        self.controller.form = _integer(values[8])
+        self.controller.tool = self.controller.check_tool(_integer(values[9]))
+        self.controller.move_joints(self.controller.arm.inverse(target), speed)
 
     def _movl(self, data: str) -> None:
         """Speed selection, speed, coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
@@ -424,8 +546,9 @@ class EthernetServerController:
         selection, speed = _linear_speed(values[0], values[1])
         self._check_coordinate(_integer(values[2]))
         target = _pose(values[3:9])
-        self.form, self.tool = _integer(values[9]), self._tool(values[10])
-        self._move_linear(target, selection, speed)
+        self.controller.form = _integer(values[9])
+        self.controller.tool = self.controller.check_tool(_integer(values[10]))
+        self.controller.move_linear(target, selection, speed)
 
     def _imov(self, data: str) -> None:
         """Speed selection, speed, coordinate, the step in X Y Z Rx Ry Rz, reserved, tool,
@@ -437,102 +560,46 @@ class EthernetServerController:
         values = _parse_numbers(data, count=17)
         selection, speed = _linear_speed(values[0], values[1])
         coordinate = _integer(values[2])
-        in_tool = coordinate == self.profile.tool_coordinate
+        in_tool = coordinate == self.controller.profile.tool_coordinate
         if not in_tool:
             self._check_coordinate(coordinate)
         step = pose_to_mat(_pose(values[3:9]))
-        self.tool = self._tool(values[10])
-        here = pose_to_mat(self.arm.state.view.pose)
-        if in_tool:
-            there = here @ step
-        else:
-            there = np.eye(4)
-            there[:3, :3] = step[:3, :3] @ here[:3, :3]
-            there[:3, 3] = here[:3, 3] + step[:3, 3]
-        self._move_linear(_mat_to_pose(there), selection, speed)
+        self.controller.tool = self.controller.check_tool(_integer(values[10]))
+        here = self.controller.arm.state.view.pose
+        self.controller.move_linear(_stepped(here, step, in_tool=in_tool), selection, speed)
 
     def _ioread(self, data: str) -> str:
         """First signal and signal count → one value per byte."""
         start, count = _parse_ints(data, count=2)
-        return ",".join(str(self.io.get(signal, 0)) for signal in _bytes(start, count))
+        return ",".join(str(v) for v in self.controller.read_io(_bytes(start, count)))
 
     def _iowrite(self, data: str) -> None:
         """First signal, signal count, then one value per byte. Network inputs only."""
         values = _parse_ints(data, count=None)
         if len(values) < 3:
-            raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields")
+            raise CommandRefusedError(Refusal.BAD_DATA, f"{len(values)} fields")
         start, count, *bytes_ = values
         signals = _bytes(start, count)
         if len(bytes_) != len(signals):
-            raise CommandError(
-                InterpreterMessage.BAD_DATA, f"{len(bytes_)} bytes for {count} signals"
-            )
-        network_inputs = self.profile.network_inputs
-        if signals[0] not in network_inputs or signals[-1] + 7 not in network_inputs:
-            raise CommandError(InterpreterMessage.NOT_WRITABLE, f"#{start} is not a network input")
-        for signal, value in zip(signals, bytes_, strict=True):
-            if not 0 <= value <= 0xFF:
-                raise CommandError(InterpreterMessage.BAD_DATA, f"byte {value}")
-            self.io[signal] = value
-            if signal in self.ladder_copies:
-                self.io[self.ladder_copies[signal]] = value
-
-    def _tool(self, value: float) -> int:
-        tool = _integer(value)
-        if not 0 <= tool <= self.profile.max_tool:
-            raise CommandError(InterpreterMessage.BAD_DATA, f"tool {tool}")
-        return tool
+            raise CommandRefusedError(Refusal.BAD_DATA, f"{len(bytes_)} bytes for {count} signals")
+        self.controller.write_network_inputs(signals, bytes_)
 
     def _check_coordinate(self, coordinate: int) -> None:
-        """Base and robot coordinates are one frame here (no base axis); user frames are unset."""
+        """Base and robot coordinates are one frame here (no base axis); user frames follow."""
         if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
             return
-        if ROBOT_COORDINATE < coordinate <= self.profile.last_user_coordinate:
-            raise CommandError(
-                InterpreterMessage.UNDEFINED_USER_FRAME,
-                f"user frame {coordinate - 1} is not defined",
-            )
-        raise CommandError(InterpreterMessage.BAD_DATA, f"coordinate {coordinate}")
+        self.controller.check_user_frame(coordinate - 1)
 
-    def _joints(self, pulses: list[float]) -> Joints:
-        robot_pulses = pulses[: len(self.pulses_per_degree)]
-        return tuple(
-            Radians(math.radians(p / ratio))
-            for p, ratio in zip(robot_pulses, self.pulses_per_degree, strict=True)
-        )
 
-    def _check_can_move(self) -> None:
-        view = self.arm.state.view
-        if view.estopped:
-            raise CommandError(InterpreterMessage.EMERGENCY_STOP, "emergency stop is engaged")
-        if not view.servo_on:
-            raise CommandError(InterpreterMessage.SERVO_OFF, "servo power is off")
-        if self.hold:
-            raise CommandError(InterpreterMessage.HELD, "the controller is held")
-
-    def _joint_move_seconds(self, target: Joints, speed_percent: float) -> float:
-        """The time the slowest joint needs at *speed_percent* of its top speed."""
-        start = self.arm.state.view.joints
-        seconds = max(
-            abs(math.degrees(b - a)) / (top * speed_percent / 100)
-            for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
-        )
-        return max(seconds, MIN_MOVE_SECONDS)
-
-    def _move_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
-        self._check_can_move()
-        start = pose_to_mat(self.arm.state.view.pose)
-        end = pose_to_mat(target)
-        if selection is SpeedSelection.V:
-            travel = float(np.linalg.norm(end[:3, 3] - start[:3, 3])) * 1000
-        else:
-            turn = start[:3, :3].T @ end[:3, :3]
-            travel = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(turn) - 1) / 2))))
-        try:
-            self.arm.movel(target, duration=max(travel / speed, MIN_MOVE_SECONDS),
-                           follows_speed_factor=False)
-        except NoLinearPath as exc:
-            raise CommandError(InterpreterMessage.NO_LINEAR_PATH, str(exc)) from exc
+def _stepped(pose: Pose, step: NDArray[np.float64], *, in_tool: bool) -> Pose:
+    """*pose* moved by *step*: in the tool's own frame, or along and about the base axes."""
+    here = pose_to_mat(pose)
+    if in_tool:
+        return _mat_to_pose(here @ step)
+    there = np.eye(4)
+    there[:3, :3] = step[:3, :3] @ here[:3, :3]
+    there[:3, 3] = here[:3, 3] + step[:3, 3]
+    return _mat_to_pose(there)
 
 
 class SpeedSelection(IntEnum):
@@ -545,15 +612,15 @@ class SpeedSelection(IntEnum):
 
 def _joint_speed(value: float) -> float:
     if not MIN_JOINT_SPEED <= value <= MAX_JOINT_SPEED_PERCENT:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"joint speed {value} %")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"joint speed {value} %")
     return value
 
 
 def _linear_speed(selection: float, speed: float) -> tuple[SpeedSelection, float]:
     if selection not in (SpeedSelection.V, SpeedSelection.VR):
-        raise CommandError(InterpreterMessage.BAD_DATA, f"speed selection {selection}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"speed selection {selection}")
     if speed < MIN_LINEAR_SPEED:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"linear speed {speed}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"linear speed {speed}")
     return SpeedSelection(int(selection)), speed
 
 
@@ -564,7 +631,7 @@ def _bytes(start: int, count: int) -> list[int]:
     multiples of eight.
     """
     if start % 10 or count <= 0 or count % SIGNALS_PER_BYTE:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"signals #{start}, count {count}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"signals #{start}, count {count}")
     return [start + 10 * i for i in range(count // SIGNALS_PER_BYTE)]
 
 
@@ -579,7 +646,7 @@ def _pose(values: list[float]) -> Pose:
 
 def _integer(value: float) -> int:
     if value != int(value):
-        raise CommandError(InterpreterMessage.BAD_DATA, f"not an integer: {value}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"not an integer: {value}")
     return int(value)
 
 
@@ -588,9 +655,9 @@ def _parse_numbers(data: str, *, count: int) -> list[float]:
     try:
         values = [float(part) for part in data.split(",")]
     except ValueError as exc:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"not numbers: {data!r}") from exc
+        raise CommandRefusedError(Refusal.BAD_DATA, f"not numbers: {data!r}") from exc
     if len(values) != count:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields, expected {count}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"{len(values)} fields, expected {count}")
     return values
 
 
@@ -598,7 +665,7 @@ def _parse_switch(data: str) -> bool:
     """``1`` for on, ``0`` for off."""
     (value,) = _parse_ints(data, count=1)
     if value not in (0, 1):
-        raise CommandError(InterpreterMessage.BAD_DATA, f"switch {value}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"switch {value}")
     return value == 1
 
 
@@ -607,9 +674,9 @@ def _parse_ints(data: str, *, count: int | None) -> list[int]:
     try:
         values = [int(part) for part in data.split(",")]
     except ValueError as exc:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"not integers: {data!r}") from exc
+        raise CommandRefusedError(Refusal.BAD_DATA, f"not integers: {data!r}") from exc
     if count is not None and len(values) != count:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields, expected {count}")
+        raise CommandRefusedError(Refusal.BAD_DATA, f"{len(values)} fields, expected {count}")
     return values
 
 
@@ -629,7 +696,7 @@ class _Request:
 class _Session:
     """One connection: the START request, then up to Keep-Alive commands."""
 
-    controller: EthernetServerController
+    server: EthernetServer
     #: Commands this connection may run; None until the START request.
     keep_alive: int | None = None
     answered: int = 0
@@ -649,7 +716,7 @@ class _Session:
         words = message.split()
         if words[:2] != ["CONNECT", "Robot_access"] or len(words) > 3:
             return Hangup([START_ERROR + "\r\n"])
-        server_name = self.controller.profile.server_name
+        server_name = self.server.controller.profile.server_name
         if len(words) == 2:
             self.keep_alive = 1
             return server_name + ".\r\n"
@@ -666,7 +733,7 @@ class _Session:
         if len(words) != 3 or words[0] != "HOSTCTRL_REQUEST" or not words[2].isdigit():
             return Hangup([f"NG: bad request {message!r}\r\n"])
         name, size = words[1], int(words[2])
-        run = self.controller.command(name)
+        run = self.server.command(name)
         if run is None:
             return Hangup([f"NG: unknown command {name}\r\n"])
         request = _Request(name=name, size=size, run=run)
@@ -684,8 +751,9 @@ class _Session:
             return Hangup([f"NG: size {request.size} for {sent} bytes\r\n"])
         try:
             answer = request.run(data)
-        except CommandError as exc:
-            return Hangup([f"ERROR:{request.name} is not successful ({exc.code:04d}).\r\n"])
+        except CommandRefusedError as exc:
+            code = INTERPRETER_MESSAGES[exc.refusal]
+            return Hangup([f"ERROR:{request.name} is not successful ({code:04d}).\r\n"])
         reply = NORMAL_ANSWER + "\r\n" if answer is None else answer + "\r"
         self.answered += 1
         if self.keep_alive != -1 and self.answered >= (self.keep_alive or 1):
@@ -719,7 +787,7 @@ class YaskawaRobot(Device, HasArm):
         self.add_service(self.arm)
         self.protocols = options.protocols
         self.hses_port = options.hses_port
-        self.controller = EthernetServerController(
+        self.controller = YaskawaController(
             arm=self.arm,
             profile=CONTROLLERS[options.controller],
             pulses_per_degree=options.pulses_per_degree,
@@ -732,7 +800,7 @@ class YaskawaRobot(Device, HasArm):
             ))
 
     def make_session(self) -> SessionHandler:
-        return _TracingSession(self, _Session(controller=self.controller))
+        return _TracingSession(self, _Session(server=EthernetServer(self.controller)))
 
     def _serve(self, stop: threading.Event) -> None:
         if "hses" in self.protocols:
