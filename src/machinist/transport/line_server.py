@@ -27,6 +27,16 @@ from .service import Service
 Reply = Iterable[str] | str | None
 
 
+class Hangup(tuple[str, ...]):
+    """A reply after which the server closes the connection.
+
+    Its lines are sent as any other reply's are, then the socket closes, as a
+    controller does when a protocol says the session is over.
+    """
+
+    __slots__ = ()
+
+
 class SessionHandler(Protocol):
     """Per-connection message handler."""
 
@@ -121,14 +131,17 @@ class LineServer(Service):
                     return
                 buf.extend(chunk)
                 for message in self._framer.decode(buf):
-                    self._dispatch(client, session, message)
+                    if self._dispatch(client, session, message):
+                        return
         finally:
             client.close()
 
-    def _dispatch(self, client: socket.socket, session: SessionHandler, msg: str) -> None:
+    def _dispatch(self, client: socket.socket, session: SessionHandler, msg: str) -> bool:
+        """Send *msg*'s reply. True when the session hung up."""
         reply = session.handle(msg)
         if reply is None:
-            return
+            return False
         lines = (reply,) if isinstance(reply, str) else tuple(reply)
         out = b"".join(self._framer.encode(line) for line in lines)
         client.sendall(out)
+        return isinstance(reply, Hangup)
