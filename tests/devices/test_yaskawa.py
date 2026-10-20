@@ -509,6 +509,44 @@ def test_loadv_writes_a_string_with_commas(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "SAVEV", "7,3") == b"A,B C\r"
 
 
+def test_loadv_writes_a_p_variable_in_pulses(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "LOADV", "4,5,0,1,2,3,4,5,6,3") == b"0000\r\n"
+    assert motoman.controller.positions["P"][5] == (0, 0, 3, 0, 0, 1, 2, 3, 4, 5, 6, 0, 0)
+
+
+def test_loadv_writes_a_p_variable_in_a_user_frame(motoman: YaskawaRobot) -> None:
+    """User frame 3 is coordinate 4; HSES keeps it as data type 18, user 3."""
+    data = "4,5,1,4,1000.5,-2,300,180,0,-90,4,2"
+    assert _answer(motoman, "LOADV", data) == b"0000\r\n"
+    record = (18, 4, 2, 3, 0, 1000500, -2000, 300000, 1800000, 0, -900000, 0, 0)
+    assert motoman.controller.positions["P"][5] == record
+
+
+def test_loadv_then_savev_reads_a_position_back(motoman: YaskawaRobot) -> None:
+    _answer(motoman, "LOADV", "4,9,1,0,1000.500,-2.000,300.000,180.00,0.00,-90.00,4,2")
+    assert _answer(motoman, "SAVEV", "4,9") == (
+        b"1,0,1000.500,-2.000,300.000,180.00,0.00,-90.00,4,2\r"
+    )
+
+
+def test_loadv_writes_a_bp_variable_in_base_coordinates(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "LOADV", "5,1,1,0,100,0,0,0,0,0,0,0") == b"0000\r\n"
+    assert motoman.controller.positions["BP"][1] == (16, 100000, 0, 0, 0, 0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "data",
+    ["6,1,1,0,0,0,0,0,0,0,0,0",  # EX takes pulses only
+     "5,1,1,1,0,0,0,0,0,0,0,0",  # BP takes base coordinates only
+     "4,1,1,27,0,0,0,0,0,0,0,0",  # the master tool coordinate
+     "4,1,0,1,2,3,4,5,6,24",  # tool 24 on an NX100
+     "4,1,0,1,2,3",  # too few fields
+     "4,128,0,0,0,0,0,0,0,0"],
+)
+def test_loadv_with_a_bad_position_is_an_error(motoman: YaskawaRobot, data: str) -> None:
+    assert _answer(motoman, "LOADV", data) == b"ERROR:LOADV is not successful (5200).\r\n"
+
+
 @pytest.mark.parametrize(
     "data", ["0,7,256", "1,7,32768", "2,7,2147483648", "3,7,x", "3,7,inf", "3,7,nan",
              "0,100,1", "8,0,1", "0,7",

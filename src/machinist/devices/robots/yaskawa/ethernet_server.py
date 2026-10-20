@@ -242,11 +242,56 @@ class EthernetServer:
                 raise CommandRefusedError(Refusal.BAD_DATA, f"{len(text)}-byte string")
             self.controller.set_string(_variable_number(number), text)
             return
+        if variable_type in POSITION_VARIABLES:
+            kind = POSITION_VARIABLES[variable_type]
+            if number not in POSITION_NUMBERS:
+                raise CommandRefusedError(Refusal.BAD_DATA, f"position variable {number}")
+            record = self._position_record(kind, _parse_numbers(value, count=None))
+            self.controller.positions.setdefault(kind, {})[number] = record
+            return
         if variable_type not in NUMBER_VARIABLES:
             raise CommandRefusedError(Refusal.BAD_DATA, f"variable type {variable_type}")
         kind = NUMBER_VARIABLES[variable_type]
         number = _variable_number(number)
         self.controller.variables.setdefault(kind, {})[number] = _variable_value(kind, value)
+
+    def _position_record(self, kind: str, values: list[float]) -> tuple[int, ...]:
+        """A position variable from LOADV's fields, as the controller keeps it:
+        0 and six pulses, or 1, the coordinate, X Y Z (mm) Rx Ry Rz (degrees) and the
+        type; then the tool. EX takes pulses only, BP Cartesian in base coordinates."""
+        if not values or values[0] not in (0, 1):
+            raise CommandRefusedError(Refusal.BAD_DATA, "position data type")
+        cartesian = values[0] == 1
+        if len(values) != (10 if cartesian else 8):
+            raise CommandRefusedError(Refusal.BAD_DATA, f"{len(values)} position fields")
+        tool = self.controller.check_tool(_integer(values[-1]))
+        if not cartesian:
+            pulses = [_integer(v) for v in values[1:7]]
+            fields = [0, 0, tool, 0, 0, *pulses] if kind == ROBOT_POSITION else [0, *pulses]
+        else:
+            data_type, user = self._position_data_type(kind, _integer(values[1]))
+            x, y, z, rx, ry, rz = values[2:8]
+            axes = [round(v * 1000) for v in (x, y, z)] + [round(v * 10000) for v in (rx, ry, rz)]
+            fields = [data_type, *axes]
+            if kind == ROBOT_POSITION:
+                fields = [data_type, _integer(values[8]), tool, user, 0, *axes]
+        return tuple(_pad(fields, POSITION_FIELDS[kind]))
+
+    def _position_data_type(self, kind: str, coordinate: int) -> tuple[int, int]:
+        """The data type and user frame a coordinate keeps a Cartesian position in.
+        The master tool coordinate has no HSES data type, so it is not taken."""
+        if kind == ROBOT_POSITION:
+            if coordinate == BASE_COORDINATE:
+                return BASE_DATA, 0
+            if coordinate == ROBOT_COORDINATE:
+                return ROBOT_DATA, 0
+            if 1 <= coordinate - 1 <= self.controller.profile.user_frames:
+                return USER_DATA, coordinate - 1
+            if coordinate == self.controller.profile.tool_coordinate:
+                return TOOL_DATA, 0
+        elif kind != "EX" and coordinate == BASE_COORDINATE:
+            return BASE_DATA, 0
+        raise CommandRefusedError(Refusal.BAD_DATA, f"{kind} coordinate {coordinate}")
 
     def _position_fields(self, kind: str, number: int) -> list[str]:
         """A position variable as SAVEV answers it: 0 and six pulses, or 1, the
@@ -497,13 +542,13 @@ def _integer(value: float) -> int:
     return int(value)
 
 
-def _parse_numbers(data: str, *, count: int) -> list[float]:
-    """Exactly *count* comma-separated numbers."""
+def _parse_numbers(data: str, *, count: int | None) -> list[float]:
+    """Comma-separated numbers: exactly *count* of them, or any number for None."""
     try:
         values = [float(part) for part in data.split(",")]
     except ValueError as exc:
         raise CommandRefusedError(Refusal.BAD_DATA, f"not numbers: {data!r}") from exc
-    if len(values) != count:
+    if count is not None and len(values) != count:
         raise CommandRefusedError(Refusal.BAD_DATA, f"{len(values)} fields, expected {count}")
     return values
 
