@@ -90,6 +90,7 @@ class UrdfKinematics(Kinematics):
 # --- URDF parsing ---------------------------------------------------------
 
 _MOVING_TYPES = frozenset({"revolute", "continuous"})
+_FIXED_TYPE = "fixed"
 
 
 def _parse_chain(urdf_path: str | Path, *, tip_link: str | None = None) -> list[dict]:
@@ -119,6 +120,14 @@ def _walk_chain(
     while link in parent_joint:
         path.append(parent_joint[link])
         link = parent_joint[link]["parent"]
+
+    for joint in path:
+        if joint["type"] not in _MOVING_TYPES | {_FIXED_TYPE} or joint["mimic"]:
+            kind = "mimic" if joint["mimic"] else joint["type"]
+            raise ValueError(
+                f"{urdf_path}: joint {joint['name']!r} on the way to {tip!r} is {kind}, "
+                "which this backend cannot model"
+            )
 
     chain: list[dict] = []
     pending = np.eye(4)
@@ -158,6 +167,7 @@ def _parse_joint(elem: ET.Element) -> dict:
     return {
         "name": elem.get("name"),
         "type": elem.get("type", "revolute"),
+        "mimic": elem.find("mimic") is not None,
         "parent": elem.find("parent").get("link"),
         "child": elem.find("child").get("link"),
         "fixed": fixed,

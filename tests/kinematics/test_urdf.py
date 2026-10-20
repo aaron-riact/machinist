@@ -145,3 +145,34 @@ def test_urdf_tip_link_must_be_a_link(tmp_path: Path) -> None:
     urdf.write_text(_TWO_LINK)
     with pytest.raises(ValueError, match="has no link 'nope'"):
         build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link="nope"))
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "kind"),
+    [
+        ('name="j2" type="revolute"', 'name="j2" type="prismatic"', "prismatic"),
+        ('name="j2" type="revolute"', 'name="j2" type="floating"', "floating"),
+        ("<axis xyz=\"0 0 1\"/></joint>\n  <joint name=\"riser\"",
+         "<axis xyz=\"0 0 1\"/><mimic joint=\"j1\"/></joint>\n  <joint name=\"riser\"", "mimic"),
+    ],
+)
+def test_urdf_refuses_joints_it_cannot_model(
+    tmp_path: Path, old: str, new: str, kind: str
+) -> None:
+    urdf = tmp_path / "odd.urdf"
+    assert old in _TWO_LINK
+    urdf.write_text(_TWO_LINK.replace(old, new))
+    with pytest.raises(ValueError, match=f"joint 'j2' on the way to 'tip' is {kind}"):
+        build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf))
+
+
+def test_urdf_ignores_joints_off_the_path(tmp_path: Path) -> None:
+    """A prismatic slide on another branch does not stop the chain to the tip."""
+    urdf = tmp_path / "slide.urdf"
+    urdf.write_text(_TWO_LINK.replace(
+        "</robot>",
+        '<link name="slide"/><joint name="s" type="prismatic"><parent link="a"/>'
+        '<child link="slide"/><axis xyz="1 0 0"/></joint>\n</robot>',
+    ))
+    kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link="tip"))
+    assert kin.joint_count == 2
