@@ -124,6 +124,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.BAD_GROUP: 3370,  # incorrect control group
     Refusal.NOT_PERMITTED: 4490,  # relative job / independent control not permitted
     Refusal.FRAME_NOT_SET: 3460,  # coordinate system cannot be set
+    Refusal.ALARM: 2060,  # alarm or error occurring
 }
 
 
@@ -263,6 +264,7 @@ class EthernetServer:
 
     def _loadv(self, data: str) -> None:
         """A variable's type and number, then its value."""
+        self.controller.check_no_alarm()
         variable_type, number, value = _parse_variable_write(data)
         if variable_type == STRING_VARIABLE:
             text = value.encode("ascii", errors="replace")

@@ -216,6 +216,26 @@ def test_reset_clears_the_alarm(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "RALARM") == b"0,0,0,0,0,0,0,0,0,0\r"
 
 
+@pytest.mark.parametrize(
+    ("command", "data"),
+    [("PMOVJ", "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"), ("SVON", "1"),
+     ("LOADV", "0,1,5"), ("JSEQ", "MAIN,0"), ("START", "MAIN")],
+)
+def test_an_alarm_refuses_moves_and_writes(
+    with_jobs: YaskawaRobot, command: str, data: str
+) -> None:
+    """2060: alarm or error occurring (the interlock table, 11.1.1)."""
+    with_jobs.arm.fault()
+    error = f"ERROR:{command} is not successful (2060).\r\n".encode()
+    assert _answer(with_jobs, command, data) == error
+
+
+def test_an_alarm_still_lets_hold_and_reads_through(motoman: YaskawaRobot) -> None:
+    motoman.arm.fault()
+    assert _answer(motoman, "HOLD", "1") == b"0000\r\n"
+    assert _answer(motoman, "SAVEV", "0,1") == b"0\r"
+
+
 def test_svon_switches_the_servo(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "SVON", "0") == b"0000\r\n"
     assert _answer(motoman, "RSTATS") == b"194,0\r"

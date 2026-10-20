@@ -181,6 +181,7 @@ class Refusal(Enum):
     BAD_GROUP = auto()
     NOT_PERMITTED = auto()
     FRAME_NOT_SET = auto()
+    ALARM = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,6 +444,7 @@ class YaskawaController:
 
     def set_servo(self, on: bool) -> None:
         if on:
+            self.check_no_alarm()
             if self.arm.state.view.estopped:
                 raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
             self.arm.set_servo(True)
@@ -502,6 +504,7 @@ class YaskawaController:
         the arm moves."""
         if self.arm.state.view.moving:
             raise CommandRefusedError(Refusal.MOVING, "the manipulator is operating")
+        self.check_no_alarm()
         if name not in self.jobs:
             raise CommandRefusedError(Refusal.NO_SUCH_JOB, f"no job {name!r}")
         if master_of_task is not None:
@@ -584,17 +587,25 @@ class YaskawaController:
             if signal in self.ladder_copies:
                 self.io[self.ladder_copies[signal]] = value
 
+    def check_no_alarm(self) -> None:
+        """The interlock table (11.1.1) refuses moves, servo on, job selection,
+        editing and variable writes while an alarm shows."""
+        if self.alarms():
+            raise CommandRefusedError(Refusal.ALARM, "an alarm is showing")
+
     def _check_can_edit(self) -> None:
-        """Editing (DELETE, WUFRAME, ...) needs teach mode and a still arm (11.1.1)."""
+        """Editing (DELETE, WUFRAME, ...) needs teach mode, a still arm and no alarm."""
         if self.mode is not Status1.TEACH:
             raise CommandRefusedError(Refusal.WRONG_MODE, "the controller is in play mode")
         if self.arm.state.view.moving:
             raise CommandRefusedError(Refusal.MOVING, "the manipulator is operating")
+        self.check_no_alarm()
 
     def _check_can_move(self) -> None:
         view = self.arm.state.view
         if self.mode is not Status1.PLAY:
             raise CommandRefusedError(Refusal.WRONG_MODE, "the controller is in teach mode")
+        self.check_no_alarm()
         if view.estopped:
             raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
         if not view.servo_on:

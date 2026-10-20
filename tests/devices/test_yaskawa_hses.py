@@ -386,6 +386,12 @@ def test_no_move_while_servo_is_off_or_held(
     assert (answer.status, answer.added_status) == (Status.VENDOR, added_status)
 
 
+def test_no_move_during_an_alarm(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
+    assert answer.added_status == AddedStatus.ALARM
+
+
 def test_no_move_in_teach_mode(yrc: YaskawaRobot) -> None:
     """The Ethernet server's MODE puts the controller HSES moves in teach mode."""
     yrc.controller.mode = Status1.TEACH
