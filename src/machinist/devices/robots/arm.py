@@ -481,6 +481,10 @@ class RobotArm(Service):
         self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose,
                          follows_speed_factor=follows_speed_factor)
 
+    def forward(self, joints: Joints) -> Pose:
+        """The pose the arm would have at *joints*."""
+        return self._kinematics.forward(joints)
+
     def inverse(self, target_pose: Pose) -> Joints:
         """The joints that put the arm at *target_pose*, starting the search from where it is."""
         return self._kinematics.inverse(target_pose, seed=self.state.view.joints)
