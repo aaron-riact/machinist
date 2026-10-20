@@ -62,6 +62,34 @@ class TerminatorFramer:
 
 
 @dataclass(frozen=True, slots=True)
+class CarriageReturnFramer:
+    """Yaskawa Ethernet-server framing: every message ends at a CR.
+
+    The host ends its framing lines (``CONNECT``, ``HOSTCTRL_REQUEST``) with
+    CR LF but its command data with CR alone, so a message ends at the first
+    CR and the LF of a CR LF arrives at the start of the next one, where it
+    is dropped.
+
+    The controller's own line endings differ by reply too (CR after an
+    answer that carries data, CR LF after everything else), so
+    :meth:`encode` adds nothing: each reply carries its own ending.
+    """
+
+    encoding: str = "ascii"
+
+    def decode(self, buf: bytearray) -> list[str]:
+        out: list[str] = []
+        while (idx := buf.find(b"\r")) >= 0:
+            head = bytes(buf[:idx]).removeprefix(b"\n")
+            del buf[: idx + 1]
+            out.append(head.decode(self.encoding, errors="replace"))
+        return out
+
+    def encode(self, message: str) -> bytes:
+        return message.encode(self.encoding)
+
+
+@dataclass(frozen=True, slots=True)
 class ParenFramer:
     """Dobot-style framing: incoming ends at the first ``)``; reply
     terminates with ``;`` (no newline).
@@ -88,4 +116,5 @@ class ParenFramer:
 # Convenience framer singletons for common cases.
 NEWLINE = TerminatorFramer(rx_terminator="\n")
 CRLF = TerminatorFramer(rx_terminator="\r\n")
+CR = CarriageReturnFramer()
 PAREN = ParenFramer()
