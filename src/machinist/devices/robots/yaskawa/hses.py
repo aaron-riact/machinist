@@ -165,6 +165,46 @@ BYTE_VARIABLES = Numbered("B", "B", STANDARD_VARIABLES, None, plural_max=474, pl
 INTEGER_VARIABLES = Numbered("I", "h", STANDARD_VARIABLES, None, plural_max=237)
 DOUBLE_VARIABLES = Numbered("D", "i", STANDARD_VARIABLES, None, plural_max=118)
 REAL_VARIABLES = Numbered("R", "f", STANDARD_VARIABLES, None, plural_max=118)
+@dataclass(frozen=True, slots=True)
+class PositionKind:
+    """A kind of position variable: its fields, the data types it takes, and how many
+    one plural command carries."""
+
+    name: str
+    #: 32-bit fields per variable, its data type first.
+    elements: int
+    data_types: frozenset[int]
+    plural_max: int
+    #: Whether one field can be read or written on its own.
+    elementwise: bool
+
+    @property
+    def empty(self) -> tuple[int, ...]:
+        return (0,) * self.elements
+
+    def parse(self, data: bytes, *, count: int) -> list[tuple[int, ...]]:
+        if len(data) != 4 * self.elements * count:
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        values = struct.unpack(f"<{self.elements * count}i", data)
+        return [
+            self.check(values[i * self.elements : (i + 1) * self.elements])
+            for i in range(count)
+        ]
+
+    def check(self, record: tuple[int, ...]) -> tuple[int, ...]:
+        if record[0] not in self.data_types:
+            raise _added(AddedStatus.OPERAND_RANGE)
+        return record
+
+
+#: Position variables 0 to 127, the standard setting.
+POSITION_NUMBERS = range(128)
+#: P variables (3.3.16, 3.3.34): data type (pulses, or base, robot, user or tool
+#: coordinates), form, tool, user coordinate, extended form, eight axes.
+ROBOT_POSITIONS = PositionKind(
+    "P", elements=13, data_types=frozenset({0, 16, 17, 18, 19}), plural_max=9,
+    elementwise=False,
+)
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -242,6 +282,7 @@ class HighSpeedEthernetServer:
             0x7B: self._single(INTEGER_VARIABLES),
             0x7C: self._single(DOUBLE_VARIABLES),
             0x7D: self._single(REAL_VARIABLES),
+            0x7F: self._position_variable(ROBOT_POSITIONS),
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
@@ -254,6 +295,7 @@ class HighSpeedEthernetServer:
             0x303: self._plural(INTEGER_VARIABLES),
             0x304: self._plural(DOUBLE_VARIABLES),
             0x305: self._plural(REAL_VARIABLES),
+            0x307: self._plural_positions(ROBOT_POSITIONS),
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
@@ -384,6 +426,58 @@ class HighSpeedEthernetServer:
                 for number in numbers:
                     _check_writable(kind, number)
                 store.update(zip(numbers, values, strict=True))
+                return b""
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handle
+
+    # --- Position variables: one (3.3.16-) or many (3.3.34-) ------------------
+
+    def _position_variable(self, kind: PositionKind) -> Handler:
+        def handle(request: Request) -> bytes:
+            number = _position_number(request.instance)
+            store = self.controller.positions.setdefault(kind.name, {})
+            record = store.get(number, kind.empty)
+            if request.service == Service.GET_ALL:
+                return _read(request, [int32s(v) for v in record])
+            if request.service == Service.GET_SINGLE and kind.elementwise:
+                return _read(request, [int32s(v) for v in record])
+            if request.service == Service.SET_ALL:
+                if request.attribute != 0:
+                    raise _added(AddedStatus.ATTRIBUTE_ERROR)
+                store[number] = kind.parse(request.data, count=1)[0]
+                return b""
+            if request.service == Service.SET_SINGLE and kind.elementwise:
+                if not 1 <= request.attribute <= kind.elements:
+                    raise _added(AddedStatus.ATTRIBUTE_ERROR)
+                if len(request.data) != 4:
+                    raise _added(AddedStatus.DATA_SIZE_ERROR)
+                updated = list(record)
+                updated[request.attribute - 1] = struct.unpack("<i", request.data)[0]
+                store[number] = kind.check(tuple(updated))
+                return b""
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handle
+
+    def _plural_positions(self, kind: PositionKind) -> Handler:
+        def handle(request: Request) -> bytes:
+            first = _position_number(request.instance)
+            if request.attribute != 0:
+                raise _added(AddedStatus.ATTRIBUTE_ERROR)
+            if len(request.data) < 4:
+                raise _added(AddedStatus.DATA_SIZE_ERROR)
+            (count,) = struct.unpack_from("<i", request.data)
+            if not 1 <= count <= kind.plural_max:
+                raise _added(AddedStatus.OPERAND_RANGE)
+            numbers = range(first, first + count)
+            if numbers[-1] not in POSITION_NUMBERS:
+                raise _added(AddedStatus.OUTSIDE_THE_DATA)
+            store = self.controller.positions.setdefault(kind.name, {})
+            if request.service == Service.READ_PLURAL:
+                return int32s(count) + b"".join(
+                    int32s(*store.get(n, kind.empty)) for n in numbers
+                )
+            if request.service == Service.WRITE_PLURAL:
+                store.update(zip(numbers, kind.parse(request.data[4:], count=count), strict=True))
                 return b""
             raise HsesError(Status.UNDEFINED_COMMAND)
         return handle
@@ -564,6 +658,12 @@ def _pose_from(values: tuple[int, ...]) -> Pose:
         Radians(math.radians(rx / 1e4)), Radians(math.radians(ry / 1e4)),
         Radians(math.radians(rz / 1e4)),
     )
+
+
+def _position_number(instance: int) -> int:
+    if instance not in POSITION_NUMBERS:
+        raise _added(AddedStatus.INSTANCE_ERROR)
+    return instance
 
 
 def _numbered(kind: Numbered, instance: int) -> int:

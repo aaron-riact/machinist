@@ -185,6 +185,9 @@ class YaskawaController:
     #: Registers and variables by kind ("register", "B", "I", ...), then number;
     #: an unset one reads 0.
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
+    #: Position variables by kind ("P", "BP", "EX"), then number, each its
+    #: data type, form and axes as the protocol carries them; unset ones read 0.
+    positions: dict[str, dict[int, tuple[int, ...]]] = field(default_factory=dict)
 
     # --- status -----------------------------------------------------------
 

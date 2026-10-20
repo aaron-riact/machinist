@@ -443,3 +443,45 @@ def test_plural_b_variables_count_in_twos(yrc: YaskawaRobot) -> None:
 def test_plural_variables_stop_at_the_last_number(yrc: YaskawaRobot) -> None:
     answer = _ask(yrc, 0x303, 98, 0, 0x33, struct.pack("<i", 3))
     assert answer.added_status == AddedStatus.OUTSIDE_THE_DATA
+
+
+#: A P variable in base coordinates: type 16, form 4, tool 2, user 0, extended form 0,
+#: X Y Z Rx Ry Rz and two unused axes.
+P_BASE = (16, 4, 2, 0, 0, 1_000_000, 0, 500_000, 1_800_000, 0, 0, 0, 0)
+
+
+def test_p_variable_write_and_read(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x7F, 127, 0, SET_ALL, struct.pack("<13i", *P_BASE)).status is Status.OK
+    assert _ints(_ask(yrc, 0x7F, 127, 0, GET_ALL)) == P_BASE
+    assert _ints(_ask(yrc, 0x7F, 3, 0, GET_ALL)) == (0,) * 13
+
+
+def test_p_variables_are_written_whole(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x7F, 1, 1, SET_SINGLE, struct.pack("<i", 16))
+    assert answer.status is Status.UNDEFINED_COMMAND
+
+
+@pytest.mark.parametrize(
+    ("instance", "record", "added_status"),
+    [
+        (128, P_BASE, AddedStatus.INSTANCE_ERROR),
+        (1, (20, *P_BASE[1:]), AddedStatus.OPERAND_RANGE),
+        (1, P_BASE[:12], AddedStatus.DATA_SIZE_ERROR),
+    ],
+)
+def test_a_bad_p_variable_is_refused(yrc: YaskawaRobot, instance: int,
+                                     record: tuple[int, ...], added_status: AddedStatus) -> None:
+    data = struct.pack(f"<{len(record)}i", *record)
+    assert _ask(yrc, 0x7F, instance, 0, SET_ALL, data).added_status == added_status
+
+
+def test_plural_p_variables(yrc: YaskawaRobot) -> None:
+    pulse = (0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 0, 0)
+    data = struct.pack("<i26i", 2, *P_BASE, *pulse)
+    assert _ask(yrc, 0x307, 10, 0, 0x34, data).status is Status.OK
+    assert _ints(_ask(yrc, 0x307, 10, 0, 0x33, struct.pack("<i", 2))) == (2, *P_BASE, *pulse)
+
+
+def test_plural_p_variables_stop_at_9(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x307, 0, 0, 0x33, struct.pack("<i", 10))
+    assert answer.added_status == AddedStatus.OPERAND_RANGE
