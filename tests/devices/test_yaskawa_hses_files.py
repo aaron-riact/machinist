@@ -150,11 +150,19 @@ def test_the_file_port_takes_no_robot_control(host: socket.socket) -> None:
 
 
 def test_the_controller_holds_the_files_ymconnect_reads(yrc: YaskawaRobot) -> None:
+    """In a DX200 backup's layout: what YMConnect parses is where it looks."""
     files = yrc.controller.files
-    assert b"//SERVO POWER\r\nR1 " in files["SYSTEM.SYS"]
+    system = files["SYSTEM.SYS"].split(b"\r\n")
+    assert system[0] == b"/SYSTEM 7"
+    assert b"//SYSTEM NO : YAS2.80.00-00" in system
+    robot = system[system.index(b"//ROBOT NAME") + 1]
+    assert robot.startswith(b"R1 : YR-UP50N-A00")
+    assert robot.endswith(b"0011_1111")
+    assert system[system.index(b"//SERVO POWER") + 2].startswith(b"R1    : ")
     assert files["TOOL.CND"].count(b"//TOOL ") == 64
-    rs022 = files["RS.PRM"].split(b"\r\n")[4].split(b",")[2]
-    assert rs022 == b"1"
+    rs = files["RS.PRM"].split(b"\r\n")
+    assert (rs[0], len(rs)) == (b"//RS YA", 102)  # header, 100 lines, then the last CR LF
+    assert rs[3].split(b",")[2] == b"1"  # RS022
 
 
 def test_a_list_of_jobs_leaves_out_the_system_files(host: socket.socket) -> None:
