@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+import threading
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum, IntFlag, auto
@@ -120,6 +123,11 @@ class ControllerProfile:
     #: Whether HSES takes the commands YRC1000 and newer controllers add (YMConnect
     #: calls them its UAPI): system parameters, and more not emulated yet.
     yrc1000_commands: bool = False
+    #: How many move commands may wait behind the one running; None for no limit.
+    #: The YRC1000 manual (11.1.3) takes one and holds its answer until it starts;
+    #: the NX100 and DX200 manuals say nothing. On the NX100 many could be sent
+    #: without meeting a limit, as remembered from a real one, so it has none.
+    move_buffer: int | None = 1
 
     @property
     def last_user_coordinate(self) -> int:
@@ -140,6 +148,7 @@ CONTROLLERS: dict[str, ControllerProfile] = {
         rotation_decimals=2,
         max_tool=23,
         user_frames=24,
+        move_buffer=None,
         network_inputs=range(22010, 23288),
     ),
     "dx200": ControllerProfile(
@@ -325,6 +334,13 @@ class YaskawaController:
     )
     #: The user frames taught, by number (1 to profile.user_frames).
     user_frames: dict[int, UserFrame] = field(default_factory=dict)
+    #: How many moves may wait behind the one running; None for no limit.
+    move_buffer: int | None = 1
+    #: Reports what the controller does that a host would not see, by kind and
+    #: details (the device's log-only notes).
+    note: Callable[..., None] = field(default=lambda kind, **details: None, repr=False)
+    _buffered: deque[tuple[str, Callable[[], None]]] = field(default_factory=deque, repr=False)
+    _motion_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
     #: When the controller's power came on: when the device was made.
@@ -333,6 +349,7 @@ class YaskawaController:
     def __post_init__(self) -> None:
         for name, content in self._system_files().items():
             self.files.setdefault(name, content)
+        self.arm.on_move_finished(self._start_buffered)
 
     def _system_files(self) -> dict[str, bytes]:
         """The controller files YMConnect reads when it connects, in the layout of
@@ -396,7 +413,10 @@ class YaskawaController:
     def status(self) -> tuple[Status1, Status2]:
         view = self.arm.state.view
         data1 = Status1.COMMAND_REMOTE | self.mode | self.cycle
-        if view.moving:
+        waiting = bool(self._buffered) and view.servo_on and not (
+            view.estopped or view.faulted or self.hold
+        )
+        if view.moving or waiting:
             data1 |= Status1.RUNNING
         data2 = Status2(0)
         if view.servo_on and not view.estopped:
@@ -449,12 +469,16 @@ class YaskawaController:
                 raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
             self.arm.set_servo(True)
         else:
+            with self._motion_lock:
+                self._drop_buffered("servo off")
             self.arm.stop()
             self.arm.set_servo(False)
 
     def set_hold(self, on: bool) -> None:
         self.hold = on
         if on:
+            with self._motion_lock:
+                self._drop_buffered("hold")
             self.arm.stop()
 
     def reset_alarm(self) -> None:
@@ -553,21 +577,40 @@ class YaskawaController:
     def move_joints(self, target: Joints, speed_percent: float) -> None:
         """Joint-space move at *speed_percent* of each joint's top speed."""
         self._check_can_move()
-        self.arm.movej(target, duration=self._joint_move_seconds(target, speed_percent))
+        self._run_or_buffer("joint move", lambda: self.arm.movej(
+            target, duration=self._joint_move_seconds(target, speed_percent)
+        ))
 
     def move_joints_to_pose(self, target: Pose, speed_percent: float) -> None:
-        """Joint-space move to the joints that put the arm at *target*."""
-        self.move_joints(self.arm.inverse(target), speed_percent)
+        """Joint-space move to the joints that put the arm at *target*, found when the
+        move starts."""
+        self._check_can_move()
+
+        def start() -> None:
+            joints = self.arm.inverse(target)
+            self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed_percent))
+        self._run_or_buffer("joint move", start)
 
     def step_linear(self, step: NDArray[np.float64], *, in_tool: bool,
                     selection: SpeedSelection, speed: float) -> None:
-        """Straight-line move by *step* from where the arm is: in the tool's own frame,
-        or along and about the base axes."""
-        self.move_linear(stepped(self.arm.state.view.pose, step, in_tool=in_tool), selection, speed)
+        """Straight-line move by *step* from where the arm is when the move starts: in
+        the tool's own frame, or along and about the base axes."""
+        self._check_can_move()
+        self._run_or_buffer("straight step", lambda: self._start_linear(
+            stepped(self.arm.state.view.pose, step, in_tool=in_tool), selection, speed
+        ))
 
     def move_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
         """Straight-line move, *speed* in mm/s (V) or degrees/s (VR)."""
         self._check_can_move()
+        self._run_or_buffer("straight move", lambda: self._start_linear(target, selection, speed))
+
+    @property
+    def buffered_moves(self) -> int:
+        """How many moves wait behind the one running."""
+        return len(self._buffered)
+
+    def _start_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
         start = pose_to_mat(self.arm.state.view.pose)
         end = pose_to_mat(target)
         if selection is SpeedSelection.V:
@@ -580,6 +623,46 @@ class YaskawaController:
                            follows_speed_factor=False)
         except NoLinearPath as exc:
             raise CommandRefusedError(Refusal.NO_LINEAR_PATH, str(exc)) from exc
+
+    def _run_or_buffer(self, label: str, start: Callable[[], None]) -> None:
+        """Start a move now if the arm is still, or put it in the buffer to start when
+        the moves before it end; refused when the buffer is full."""
+        with self._motion_lock:
+            if not self.arm.state.view.moving:
+                if self._buffered:
+                    # The arm stopped without finishing (a stop, a fault): a real
+                    # controller would have dropped what waited.
+                    self._drop_buffered("the arm stopped before they started")
+                start()
+                return
+            if self.move_buffer is not None and len(self._buffered) >= self.move_buffer:
+                raise CommandRefusedError(
+                    Refusal.MOVING, f"{len(self._buffered)} moves already wait"
+                )
+            self._buffered.append((label, start))
+            self.note("move_buffered", move=label, waiting=len(self._buffered))
+
+    def _start_buffered(self) -> None:
+        """The arm finished a move: start the next one waiting, if it still can."""
+        with self._motion_lock:
+            if not self._buffered:
+                return
+            # Started before it leaves the buffer, so the status never sees the
+            # arm still with nothing waiting in between.
+            label, start = self._buffered[0]
+            try:
+                self._check_can_move()
+                start()
+            except CommandRefusedError as exc:
+                self._drop_buffered(str(exc))
+                return
+            self._buffered.popleft()
+            self.note("move_from_buffer", move=label, waiting=len(self._buffered))
+
+    def _drop_buffered(self, reason: str) -> None:
+        if self._buffered:
+            self.note("move_buffer_dropped", moves=len(self._buffered), reason=reason)
+        self._buffered.clear()
 
     def read_io(self, signals: list[int]) -> list[int]:
         """The bytes whose first signals are *signals*."""

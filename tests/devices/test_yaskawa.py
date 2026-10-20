@@ -655,6 +655,75 @@ def test_pmovj_moves_to_pulses(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "RPOSC", "0,0").endswith(b",0,3\r")  # the move's tool
 
 
+#: Two joint moves, each about half a second at 50 %: to zero, then S to 10 degrees.
+TO_ZERO = "50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+S_TO_10 = "50, 14166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+
+
+def _wait_all_moves(robot: YaskawaRobot) -> None:
+    deadline = time.monotonic() + 5
+    while robot.arm.state.view.moving or robot.controller.buffered_moves:
+        assert time.monotonic() < deadline, "the moves did not finish"
+        time.sleep(0.02)
+
+
+def test_a_move_sent_while_moving_runs_after(dx200: YaskawaRobot) -> None:
+    assert _answer(dx200, "PMOVJ", TO_ZERO) == b"0000\r\n"
+    assert _answer(dx200, "PMOVJ", S_TO_10) == b"0000\r\n"
+    assert dx200.controller.buffered_moves == 1
+    _wait_all_moves(dx200)
+    assert _answer(dx200, "RPOSJ") == b"14166,0,0,0,0,0,0,0,0,0,0,0\r"
+
+
+def test_rstats_shows_running_until_the_buffered_move_ends(dx200: YaskawaRobot) -> None:
+    _answer(dx200, "PMOVJ", TO_ZERO)
+    _answer(dx200, "PMOVJ", S_TO_10)
+    while dx200.controller.buffered_moves:
+        assert _answer(dx200, "RSTATS").startswith(b"202,")  # running
+    _wait_all_moves(dx200)
+    assert _answer(dx200, "RSTATS").startswith(b"194,")
+
+
+def test_a_dx200_takes_one_move_behind_the_running_one(dx200: YaskawaRobot) -> None:
+    """The YRC1000 manual (11.1.3) accepts a single command while moving."""
+    _answer(dx200, "PMOVJ", TO_ZERO)
+    _answer(dx200, "PMOVJ", S_TO_10)
+    assert _answer(dx200, "PMOVJ", TO_ZERO) == b"ERROR:PMOVJ is not successful (2010).\r\n"
+
+
+def test_an_nx100_takes_many_moves_behind_the_running_one(motoman: YaskawaRobot) -> None:
+    for move in (TO_ZERO, S_TO_10, TO_ZERO, S_TO_10):
+        assert _answer(motoman, "PMOVJ", move) == b"0000\r\n"
+    assert motoman.controller.buffered_moves == 3
+    _wait_all_moves(motoman)
+    assert _answer(motoman, "RPOSJ") == b"14166,0,0,0,0,0,0,0,0,0,0,0\r"
+
+
+def test_the_move_buffer_is_configurable() -> None:
+    options = YaskawaOptions(controller="nx100", start_joints_deg=START, move_buffer=0,
+                             **UP50N_AXES)
+    for robot in _running(options):
+        _answer(robot, "PMOVJ", TO_ZERO)
+        assert _answer(robot, "PMOVJ", S_TO_10) == b"ERROR:PMOVJ is not successful (2010).\r\n"
+
+
+def test_hold_drops_the_buffered_moves(dx200: YaskawaRobot) -> None:
+    _answer(dx200, "PMOVJ", TO_ZERO)
+    _answer(dx200, "PMOVJ", S_TO_10)
+    _answer(dx200, "HOLD", "1")
+    assert dx200.controller.buffered_moves == 0
+    assert not dx200.arm.state.view.moving
+
+
+def test_a_buffered_step_starts_where_the_move_before_ends(up50n: YaskawaRobot) -> None:
+    """Two IMOV steps of 10 mm along base Y, the second sent while the first runs."""
+    step = "0, 50, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(up50n, "IMOV", step) == b"0000\r\n"
+    assert _answer(up50n, "IMOV", step) == b"0000\r\n"
+    _wait_all_moves(up50n)
+    assert _same_pose(_answer(up50n, "RPOSC", "0,0"), (1170, 20, 805, 180, 0, 180))
+
+
 def test_pmovj_takes_as_long_as_the_slowest_joint(motoman: YaskawaRobot) -> None:
     """T turns 90 degrees at 350 degrees/s; at 100 % that is the longest joint."""
     joints = "14166, 38908, -59831, 0, 36653, 0"

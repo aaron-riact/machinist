@@ -61,6 +61,10 @@ class YaskawaOptions(ArmOptions):
     #: that does nothing. The emulator cannot run INFORM: selecting a job and
     #: starting it work, and it finishes as soon as it starts.
     jobs: tuple[str, ...] = ()
+    #: How many move commands may wait behind the one running: a count, or
+    #: "unlimited". Unset takes the controller's (the NX100 none, the DX200 and
+    #: YRC1000 one).
+    move_buffer: int | Literal["unlimited"] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -88,6 +92,12 @@ class YaskawaOptions(ArmOptions):
             raise ValueError(f"protocols lists one twice: {list(self.protocols)}")
         if "hses" in self.protocols and self.controller == "nx100":
             raise ValueError("the NX100 has no HSES")
+        return self
+
+    @model_validator(mode="after")
+    def _move_buffer_counts_moves(self) -> YaskawaOptions:
+        if isinstance(self.move_buffer, int) and self.move_buffer < 0:
+            raise ValueError(f"move_buffer {self.move_buffer} is negative")
         return self
 
     @model_validator(mode="after")
@@ -140,6 +150,8 @@ class YaskawaRobot(Device, HasArm):
             ladder_copies=dict(options.ladder_copies),
             files={name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
+            move_buffer=_move_buffer(options),
+            note=self.emit,
         )
         if "ethernet_server" in self.protocols:
             self.add_service(LineServer(
@@ -171,6 +183,12 @@ class _TracingSession:
         if reply is not None:
             self.device.emit("tx", reply=reply if isinstance(reply, str) else list(reply))
         return reply
+
+
+def _move_buffer(options: YaskawaOptions) -> int | None:
+    if options.move_buffer is None:
+        return CONTROLLERS[options.controller].move_buffer
+    return None if options.move_buffer == "unlimited" else options.move_buffer
 
 
 @register("yaskawa", default_port=MOTOMAN_PORT, options=YaskawaOptions)
