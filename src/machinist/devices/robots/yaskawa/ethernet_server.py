@@ -34,6 +34,7 @@ from ....transport.line_server import Hangup, Reply
 from .controller import (
     CYCLES,
     MODES,
+    POSITION_NUMBERS,
     STANDARD_VARIABLES,
     CommandRefusedError,
     Refusal,
@@ -61,6 +62,15 @@ ALARM_SLOTS = 4
 NUMBER_VARIABLES = {0: "B", 1: "I", 2: "D", 3: "R"}
 REAL_VARIABLE = "R"
 STRING_VARIABLE = 7
+#: Variable types 4 to 6: P, BP and EX, kept as HSES carries them (3.3.16-3.3.18):
+#: P as data type, form, tool, user coordinate, extended form and eight axes;
+#: BP and EX as data type and eight axes. A data type is 0 for pulses, or 16
+#: base, 17 robot, 18 user or 19 tool coordinates, Cartesian axes in µm and
+#: 0.0001 degrees. The Ethernet server shows six axes, and P alone has a tool.
+POSITION_VARIABLES = {4: "P", 5: "BP", 6: "EX"}
+ROBOT_POSITION = "P"
+POSITION_FIELDS = {"P": 13, "BP": 9, "EX": 9}
+PULSE_DATA, BASE_DATA, ROBOT_DATA, USER_DATA, TOOL_DATA = 0, 16, 17, 18, 19
 #: RJDIR starts a new line after every 20 job names. The manual does not say
 #: which line feed; the emulator uses CR, the end of every answer line.
 JOB_NAMES_PER_LINE = 20
@@ -210,11 +220,39 @@ class EthernetServer:
         variable_type, number = _parse_ints(data, count=2)
         if variable_type == STRING_VARIABLE:
             return self.controller.string(_variable_number(number)).decode("ascii", "replace")
+        if variable_type in POSITION_VARIABLES:
+            return ",".join(self._position_fields(POSITION_VARIABLES[variable_type], number))
         if variable_type not in NUMBER_VARIABLES:
             raise CommandRefusedError(Refusal.BAD_DATA, f"variable type {variable_type}")
         kind = NUMBER_VARIABLES[variable_type]
         value = self.controller.variables.get(kind, {}).get(_variable_number(number), 0)
         return f"{value:.7g}" if kind == REAL_VARIABLE else str(int(value))
+
+    def _position_fields(self, kind: str, number: int) -> list[str]:
+        """A position variable as SAVEV answers it: 0 and six pulses, or 1, the
+        coordinate, X Y Z (mm) Rx Ry Rz (degrees) and the type; then the tool."""
+        if number not in POSITION_NUMBERS:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"position variable {number}")
+        record = self.controller.positions.get(kind, {}).get(
+            number, (0,) * POSITION_FIELDS[kind]
+        )
+        if kind == ROBOT_POSITION:
+            data_type, form, tool, user, _, *axes = record
+        else:
+            (data_type, *axes), form, tool, user = record, 0, 0, 0
+        if data_type == PULSE_DATA:
+            return ["0", *(str(a) for a in axes[:6]), str(tool)]
+        coordinate = {
+            BASE_DATA: BASE_COORDINATE, ROBOT_DATA: ROBOT_COORDINATE, USER_DATA: user + 1,
+            TOOL_DATA: self.controller.profile.tool_coordinate,
+        }
+        decimals = self.controller.profile.rotation_decimals
+        return [
+            "1", str(coordinate[data_type]),
+            *(f"{a / 1000:.3f}" for a in axes[:3]),
+            *(f"{a / 10000:.{decimals}f}" for a in axes[3:6]),
+            str(form), str(tool),
+        ]
 
     def _svon(self, data: str) -> None:
         self.controller.set_servo(_parse_switch(data))

@@ -439,6 +439,40 @@ def test_savev_reads_a_number_variable(
     assert _answer(motoman, "SAVEV", f"{variable_type},7") == answer + b"\r"
 
 
+def test_savev_reads_a_p_variable_in_pulses(motoman: YaskawaRobot) -> None:
+    motoman.controller.positions["P"] = {5: (0, 0, 3, 0, 0, 1, 2, 3, 4, 5, 6, 0, 0)}
+    assert _answer(motoman, "SAVEV", "4,5") == b"0,1,2,3,4,5,6,3\r"
+
+
+def test_savev_reads_a_p_variable_in_base_coordinates(motoman: YaskawaRobot) -> None:
+    record = (16, 4, 2, 0, 0, 1000500, -2000, 300000, 1800000, 0, -900000, 0, 0)
+    motoman.controller.positions["P"] = {5: record}
+    assert _answer(motoman, "SAVEV", "4,5") == (
+        b"1,0,1000.500,-2.000,300.000,180.00,0.00,-90.00,4,2\r"
+    )
+
+
+def test_savev_reads_a_p_variable_in_a_user_frame(motoman: YaskawaRobot) -> None:
+    """HSES keeps user frame 3 as data type 18, user 3; the Ethernet server calls it 4."""
+    motoman.controller.positions["P"] = {5: (18, 0, 0, 3, *([0] * 9))}
+    assert _answer(motoman, "SAVEV", "4,5").startswith(b"1,4,")
+
+
+def test_savev_reads_a_p_variable_in_the_tool_frame(motoman: YaskawaRobot) -> None:
+    """The NX100 numbers the tool frame 26, after its 24 user frames."""
+    motoman.controller.positions["P"] = {5: (19, *([0] * 12))}
+    assert _answer(motoman, "SAVEV", "4,5").startswith(b"1,26,")
+
+
+def test_savev_reads_a_bp_variable_with_tool_0(motoman: YaskawaRobot) -> None:
+    motoman.controller.positions["BP"] = {1: (0, 10, 20, 0, 0, 0, 0, 0, 0)}
+    assert _answer(motoman, "SAVEV", "5,1") == b"0,10,20,0,0,0,0,0\r"
+
+
+def test_savev_reads_an_unset_position_variable_as_pulses(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "SAVEV", "6,127") == b"0,0,0,0,0,0,0,0\r"
+
+
 def test_savev_reads_an_unset_variable_as_0(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "SAVEV", "1,99") == b"0\r"
 
@@ -448,7 +482,7 @@ def test_savev_reads_a_string_variable(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "SAVEV", "7,3") == b"HELLO\r"
 
 
-@pytest.mark.parametrize("data", ["0,100", "8,0", "0", "x,1"])
+@pytest.mark.parametrize("data", ["0,100", "4,128", "8,0", "0", "x,1"])
 def test_savev_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> None:
     assert _answer(motoman, "SAVEV", data) == b"ERROR:SAVEV is not successful (5200).\r\n"
 
