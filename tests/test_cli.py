@@ -19,6 +19,7 @@ def test_kinds_lists_all_devices() -> None:
     for kind in (
         "ur_dashboard",
         "motoman_nx100",
+        "yaskawa",
         "dobot_dashboard",
         "fanuc_r30ib",
         "haas_ngc",

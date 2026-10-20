@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from machinist.core.capabilities import HasFlange, HasIO, HasPrograms, HasRegisters
+from machinist.devices.gateways.modbus_rtu import ModbusRtuGatewayDevice
 from machinist.devices.grippers.onrobot_3fg25 import OnRobot3FG25
 from machinist.devices.grippers.onrobot_rg import OnRobotRG
 from machinist.devices.grippers.pneumatic import PneumaticGripper
@@ -19,9 +20,8 @@ from machinist.devices.robots.arm import HasArm
 from machinist.devices.robots.dobot import DobotDashboard
 from machinist.devices.robots.fanuc import FanucFocasRobot, FanucKarelServer
 from machinist.devices.robots.generic import RobotDevice
-from machinist.devices.robots.yaskawa import MotomanNX100
-from machinist.devices.gateways.modbus_rtu import ModbusRtuGatewayDevice
 from machinist.devices.robots.ur import URDashboardServer
+from machinist.devices.robots.yaskawa import YaskawaRobot
 
 ALL = {HasArm, HasFlange, HasIO, HasMachineState, HasPrograms, HasRegisters}
 
@@ -30,7 +30,7 @@ EXPECTED = {
     FanucKarelServer: {HasArm, HasIO},
     FanucFocasRobot: {HasArm, HasIO},
     RobotDevice: {HasArm},
-    MotomanNX100: {HasArm},
+    YaskawaRobot: {HasArm},
     URDashboardServer: {HasArm, HasFlange},
     HaasNGC: {HasMachineState, HasPrograms},
     MazakSinumerik840D: {HasMachineState, HasIO},

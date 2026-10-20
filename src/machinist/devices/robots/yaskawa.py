@@ -24,6 +24,7 @@ socket; with ``Keep-Alive:<n>`` it answers *n* (``-1``: no limit).
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
@@ -35,17 +36,18 @@ from pydantic import Field, model_validator
 
 from ...core.device import Device
 from ...core.events import EventBus
-from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...kinematics.api import Joints, Pose
 from ...kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ...kinematics.units import Meters, Radians
 from ...transport.framing import CR
-from ...transport.line_server import Hangup, Reply, SessionHandler
+from ...transport.line_server import Hangup, LineServer, Reply, SessionHandler
 from .arm import ArmOptions, HasArm, NoLinearPath, RobotArm, arm_from_options
 
 MOTOMAN_PORT = 80
+#: Where the High-Speed Ethernet Server (HSES) listens, over UDP.
+HSES_PORT = 10040
 #: The reply to a START request the controller cannot accept, before it closes.
 START_ERROR = "NG: HTTP Error Response"
 NORMAL_ANSWER = "0000"
@@ -144,14 +146,21 @@ CONTROLLERS: dict[str, ControllerProfile] = {
 CONTROLLERS["yrc1000"] = CONTROLLERS["dx200"]
 
 
-class MotomanOptions(ArmOptions):
-    """The ``motoman_nx100`` block: an arm, its controller, and how its joints count pulses."""
+Protocol = Literal["ethernet_server", "hses"]
+
+
+class YaskawaOptions(ArmOptions):
+    """The ``yaskawa`` block: the arm, its controller, and the protocols it serves."""
 
     #: Which controller generation answers: nx100, dx200 or yrc1000.
-    controller: Literal["nx100", "dx200", "yrc1000"] = "nx100"
+    controller: Literal["nx100", "dx200", "yrc1000"]
     #: The arm, from :data:`ROBOTS`. It supplies urdf, pulses_per_degree and
     #: max_joint_speed_deg_s wherever the scene does not give them.
     robot: str | None = None
+    #: What the controller serves: the text Ethernet server on the device's
+    #: port (TCP 80 by default), and HSES on hses_port (UDP).
+    protocols: tuple[Protocol, ...] = ("ethernet_server",)
+    hses_port: int = HSES_PORT
 
     #: Encoder pulses per degree of each joint, in joint order.
     pulses_per_degree: tuple[float, ...]
@@ -167,9 +176,11 @@ class MotomanOptions(ArmOptions):
     @model_validator(mode="before")
     @classmethod
     def _fill_in_the_robot(cls, raw: Any) -> Any:
-        if not isinstance(raw, dict) or raw.get("robot") is None:
+        if not isinstance(raw, dict):
             return raw
-        name = raw["robot"]
+        name = raw.get("robot", cls.model_fields["robot"].default)
+        if name is None:
+            return raw
         if name not in ROBOTS:
             raise ValueError(f"unknown robot {name!r}; known: {', '.join(sorted(ROBOTS))}")
         arm = ROBOTS[name]
@@ -181,7 +192,17 @@ class MotomanOptions(ArmOptions):
         }
 
     @model_validator(mode="after")
-    def _ladder_copies_name_bytes(self) -> MotomanOptions:
+    def _protocols_the_controller_has(self) -> YaskawaOptions:
+        if not self.protocols:
+            raise ValueError("protocols is empty; the controller would serve nothing")
+        if len(set(self.protocols)) != len(self.protocols):
+            raise ValueError(f"protocols lists one twice: {list(self.protocols)}")
+        if "hses" in self.protocols and self.controller == "nx100":
+            raise ValueError("the NX100 has no HSES")
+        return self
+
+    @model_validator(mode="after")
+    def _ladder_copies_name_bytes(self) -> YaskawaOptions:
         network_inputs = CONTROLLERS[self.controller].network_inputs
         for source, target in self.ladder_copies.items():
             if source not in network_inputs:
@@ -192,12 +213,19 @@ class MotomanOptions(ArmOptions):
         return self
 
     @model_validator(mode="after")
-    def _one_value_per_joint(self) -> MotomanOptions:
+    def _one_value_per_joint(self) -> YaskawaOptions:
         for name in ("pulses_per_degree", "max_joint_speed_deg_s"):
             values = getattr(self, name)
             if len(values) != self.joint_count:
                 raise ValueError(f"{len(values)} {name} for {self.joint_count} joints")
         return self
+
+
+class MotomanNX100Options(YaskawaOptions):
+    """The ``motoman_nx100`` block: a ``yaskawa`` block for an NX100 with a UP50N."""
+
+    controller: Literal["nx100", "dx200", "yrc1000"] = "nx100"
+    robot: str | None = "up50n"
 
 
 class InterpreterMessage(IntEnum):
@@ -677,17 +705,20 @@ def _parse_keep_alive(word: str) -> int | None:
     return n if n == -1 or 2 <= n <= MAX_KEEP_ALIVE else None
 
 
-class MotomanNX100(LineServerDevice, HasArm):
-    kind = "motoman_nx100"
+class YaskawaRobot(Device, HasArm):
+    """A Yaskawa arm and controller, serving the protocols its options name."""
+
+    kind = "yaskawa"
     DEFAULT_PORT = MOTOMAN_PORT
-    FRAMER = CR
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: MotomanOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: YaskawaOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
+        self.protocols = options.protocols
+        self.hses_port = options.hses_port
         self.controller = EthernetServerController(
             arm=self.arm,
             profile=CONTROLLERS[options.controller],
@@ -695,16 +726,28 @@ class MotomanNX100(LineServerDevice, HasArm):
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             ladder_copies=dict(options.ladder_copies),
         )
+        if "ethernet_server" in self.protocols:
+            self.add_service(LineServer(
+                endpoint.host, endpoint.port, session_factory=self.make_session, framer=CR,
+            ))
 
     def make_session(self) -> SessionHandler:
         return _TracingSession(self, _Session(controller=self.controller))
+
+    def _serve(self, stop: threading.Event) -> None:
+        if "hses" in self.protocols:
+            self.emit(
+                "warning",
+                message=f"HSES is not implemented yet; nothing listens on UDP {self.hses_port}",
+            )
+        stop.wait()
 
 
 @dataclass(slots=True)
 class _TracingSession:
     """Thin wrapper that surfaces rx/tx events on the bus."""
 
-    device: LineServerDevice
+    device: Device
     inner: SessionHandler
 
     def handle(self, message: str) -> Reply:
@@ -715,6 +758,13 @@ class _TracingSession:
         return reply
 
 
-@register("motoman_nx100", default_port=MOTOMAN_PORT, options=MotomanOptions)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: MotomanOptions) -> Device:
-    return MotomanNX100(name, endpoint, bus, options)
+@register("yaskawa", default_port=MOTOMAN_PORT, options=YaskawaOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: YaskawaOptions) -> Device:
+    return YaskawaRobot(name, endpoint, bus, options)
+
+
+@register("motoman_nx100", default_port=MOTOMAN_PORT, options=MotomanNX100Options)
+def _nx100_factory(
+    name: str, endpoint: Endpoint, bus: EventBus, options: MotomanNX100Options
+) -> Device:
+    return YaskawaRobot(name, endpoint, bus, options)
