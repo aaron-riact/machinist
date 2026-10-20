@@ -395,8 +395,12 @@ def test_ladder_copies_follow_the_controllers_network_inputs() -> None:
         YaskawaOptions(controller="dx200", ladder_copies={22010: 30040}, **UP50N_AXES)
 
 
-def test_the_yrc1000_takes_the_dx200s_values_until_checked() -> None:
-    assert CONTROLLERS["yrc1000"] == CONTROLLERS["dx200"]
+def test_the_yrc1000_names_itself_yr_and_otherwise_takes_the_dx200s_values() -> None:
+    yrc1000, dx200 = CONTROLLERS["yrc1000"], CONTROLLERS["dx200"]
+    assert yrc1000.server_name == "OK: YR Information Server (1.00)"
+    assert (yrc1000.rotation_decimals, yrc1000.max_tool, yrc1000.user_frames,
+            yrc1000.network_inputs) == (dx200.rotation_decimals, dx200.max_tool,
+                                        dx200.user_frames, dx200.network_inputs)
 
 
 # --- the robot catalog ---------------------------------------------------------

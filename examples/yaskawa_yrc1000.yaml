@@ -7,10 +7,10 @@
 #
 # Port 80 needs root, unless net.ipv4.ip_unprivileged_port_start allows it.
 #
-# The YRC1000 profile takes the DX200's values (START reply, 4 decimals, 64
-# tools and user frames, network inputs #27010-#29567) until a real YRC1000
-# has been checked. The arm is the UP50N until the cell's own is in the
-# catalog.
+# The YRC1000 profile names itself "YR Information Server" and otherwise
+# takes the DX200's values (4 decimals, 64 tools and user frames, network
+# inputs #27010-#29567) until a real YRC1000 has been checked. The arm is the
+# UP50N until the cell's own is in the catalog.
 
 devices:
   - name: yrc1000

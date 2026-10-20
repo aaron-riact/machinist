@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum, IntFlag, auto
 from pathlib import Path
@@ -107,8 +107,7 @@ class ControllerProfile:
 
 
 #: The controllers by name. NX100 and DX200 follow their Ethernet server
-#: manuals; the YRC1000 has not been checked against one, so it takes the
-#: DX200's values until a real controller says otherwise.
+#: manuals; no YRC1000 manual is at hand, so it follows the DX200 (below).
 CONTROLLERS: dict[str, ControllerProfile] = {
     "nx100": ControllerProfile(
         server_name="OK: NX Information Server (3.00)",
@@ -125,7 +124,13 @@ CONTROLLERS: dict[str, ControllerProfile] = {
         network_inputs=range(27010, 29568),
     ),
 }
-CONTROLLERS["yrc1000"] = CONTROLLERS["dx200"]
+#: The YRC1000 names itself YR, as the NX100 says NX and the DX200 DX; the one
+#: YRC1000 client of the Ethernet server found (HslCommunication) expects
+#: "YR Information Server". MotoROS2 confirms its network inputs are the
+#: DX200's. The rest takes the DX200's values until a controller says otherwise.
+CONTROLLERS["yrc1000"] = replace(
+    CONTROLLERS["dx200"], server_name="OK: YR Information Server (1.00)"
+)
 
 
 class Refusal(Enum):
