@@ -25,6 +25,9 @@ MOTOMAN_PORT = 80
 #: control, and file control next to it.
 HSES_PORT = 10040
 HSES_FILE_PORT = 10041
+#: The pause between the OK line and the answer, while the controller runs the
+#: command. Clients that read the two with separate recvs rely on it.
+ES_LINE_GAP_SECONDS = 0.01
 
 
 Protocol = Literal["ethernet_server", "hses"]
@@ -141,6 +144,7 @@ class YaskawaRobot(Device, HasArm):
         if "ethernet_server" in self.protocols:
             self.add_service(LineServer(
                 endpoint.host, endpoint.port, session_factory=self.make_session, framer=CR,
+                line_gap_seconds=ES_LINE_GAP_SECONDS,
             ))
         if "hses" in self.protocols:
             hses = HighSpeedEthernetServer(self.controller)

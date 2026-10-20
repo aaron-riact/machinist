@@ -499,3 +499,13 @@ def test_command_data_may_end_with_cr_lf_counted_in_the_size(motoman: YaskawaRob
     )
     assert b"OK: RPOSC\r\n174.533," in received
     assert received.endswith(b"OK: RSTATS\r\n194,64\r")
+
+
+def test_the_ok_line_and_the_answer_arrive_apart(motoman: YaskawaRobot) -> None:
+    """MotomanConnector reads the OK line and the answer with one recv each."""
+    with _connect(motoman) as s:
+        s.sendall(b"CONNECT Robot_access Keep-Alive:-1\r\n")
+        assert s.recv(1024).startswith(b"OK: NX Information Server")
+        s.sendall(b"HOSTCTRL_REQUEST RSTATS 0\r\n")
+        assert s.recv(1024) == b"OK: RSTATS\r\n"
+        assert s.recv(1024) == b"194,64\r"
