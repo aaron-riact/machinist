@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import socket
 import threading
+import time
 from collections.abc import Callable, Iterable
 from typing import Protocol
 
@@ -74,7 +75,13 @@ class LineServer(Service):
         *,
         session_factory: SessionFactory,
         framer: Framer | None = None,
+        line_gap_seconds: float = 0.0,
     ) -> None:
+        """*line_gap_seconds* > 0 sends each line of a reply as its own segment,
+        that long after the one before, as a device does that works between
+        them; a client that reads each line with its own recv then gets them
+        apart. 0 sends a reply in one write."""
+        self._line_gap = line_gap_seconds
         self._host = host
         self._port = port
         self._framer: Framer = framer or TerminatorFramer()
@@ -119,6 +126,8 @@ class LineServer(Service):
 
     def _serve_client(self, client: socket.socket) -> None:
         client.settimeout(0.25)
+        if self._line_gap > 0:
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         session = self._make_session()
         buf = bytearray()
         try:
@@ -142,6 +151,11 @@ class LineServer(Service):
         if reply is None:
             return False
         lines = (reply,) if isinstance(reply, str) else tuple(reply)
-        out = b"".join(self._framer.encode(line) for line in lines)
-        client.sendall(out)
+        if self._line_gap > 0:
+            for i, line in enumerate(lines):
+                if i:
+                    time.sleep(self._line_gap)
+                client.sendall(self._framer.encode(line))
+        else:
+            client.sendall(b"".join(self._framer.encode(line) for line in lines))
         return isinstance(reply, Hangup)
