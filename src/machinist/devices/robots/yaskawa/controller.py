@@ -355,6 +355,10 @@ class YaskawaController:
         """S variable *number*'s text, without the NULs that pad it."""
         return self.strings.get(number, b"").split(b"\0", 1)[0]
 
+    def set_string(self, number: int, value: bytes) -> None:
+        """Set S variable *number*, padding *value* with NULs to its size."""
+        self.strings[number] = value.ljust(STRING_SIZE, b"\0")
+
     # --- status -----------------------------------------------------------
 
     def status(self) -> tuple[Status1, Status2]:

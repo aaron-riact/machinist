@@ -680,7 +680,7 @@ class HighSpeedEthernetServer:
 
     def _set_string(self, number: int, value: bytes) -> None:
         """A 16-byte write replaces the whole string, so its last 16 bytes clear."""
-        self.controller.strings[number] = value.ljust(STRING_SIZE, b"\0")
+        self.controller.set_string(number, value)
 
     # --- 3.3.20 Hold / servo on/off (0x83) -------------------------------------
 

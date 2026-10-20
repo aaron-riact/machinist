@@ -24,6 +24,7 @@ socket; with ``Keep-Alive:<n>`` it answers *n* (``-1``: no limit).
 from __future__ import annotations
 
 import math
+import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -36,6 +37,7 @@ from .controller import (
     MODES,
     POSITION_NUMBERS,
     STANDARD_VARIABLES,
+    STRING_SIZE,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
@@ -60,6 +62,8 @@ ALARM_SLOTS = 4
 #: controller keeps them under; 7 is S. The manual gives no format for a real
 #: value; the emulator answers it to float precision, 7 significant digits.
 NUMBER_VARIABLES = {0: "B", 1: "I", 2: "D", 3: "R"}
+#: The integers B, I and D variables hold.
+INTEGER_RANGES = {"B": range(256), "I": range(-(2**15), 2**15), "D": range(-(2**31), 2**31)}
 REAL_VARIABLE = "R"
 STRING_VARIABLE = 7
 #: Variable types 4 to 6: P, BP and EX, kept as HSES carries them (3.3.16-3.3.18):
@@ -140,6 +144,7 @@ class EthernetServer:
             "RJDIR": self._rjdir,
             "RGROUP": self._rgroup,
             "SAVEV": self._savev,
+            "LOADV": self._loadv,
             "SVON": self._svon,
             "HOLD": self._hold,
             "RESET": self._reset,
@@ -227,6 +232,21 @@ class EthernetServer:
         kind = NUMBER_VARIABLES[variable_type]
         value = self.controller.variables.get(kind, {}).get(_variable_number(number), 0)
         return f"{value:.7g}" if kind == REAL_VARIABLE else str(int(value))
+
+    def _loadv(self, data: str) -> None:
+        """A variable's type and number, then its value."""
+        variable_type, number, value = _parse_variable_write(data)
+        if variable_type == STRING_VARIABLE:
+            text = value.encode("ascii", errors="replace")
+            if len(text) > STRING_SIZE:
+                raise CommandRefusedError(Refusal.BAD_DATA, f"{len(text)}-byte string")
+            self.controller.set_string(_variable_number(number), text)
+            return
+        if variable_type not in NUMBER_VARIABLES:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"variable type {variable_type}")
+        kind = NUMBER_VARIABLES[variable_type]
+        number = _variable_number(number)
+        self.controller.variables.setdefault(kind, {})[number] = _variable_value(kind, value)
 
     def _position_fields(self, kind: str, number: int) -> list[str]:
         """A position variable as SAVEV answers it: 0 and six pulses, or 1, the
@@ -405,6 +425,30 @@ class EthernetServer:
         if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
             return
         self.controller.check_user_frame(coordinate - 1)
+
+
+def _parse_variable_write(data: str) -> tuple[int, int, str]:
+    """LOADV's type and number, then the rest: a value, which may hold commas."""
+    parts = data.split(",", 2)
+    if len(parts) != 3:
+        raise CommandRefusedError(Refusal.BAD_DATA, f"{len(parts)} fields")
+    variable_type, number = _parse_ints(",".join(parts[:2]), count=2)
+    return variable_type, number, parts[2]
+
+
+def _variable_value(kind: str, text: str) -> float:
+    """A B, I, D or R variable's value; an R value is rounded to a 32-bit float."""
+    value: float
+    try:
+        if kind == REAL_VARIABLE:
+            value = float(struct.unpack("<f", struct.pack("<f", float(text)))[0])
+        else:
+            value = int(text)
+    except (ValueError, OverflowError) as exc:
+        raise CommandRefusedError(Refusal.BAD_DATA, f"{kind} value {text!r}") from exc
+    if not math.isfinite(value) or (kind != REAL_VARIABLE and value not in INTEGER_RANGES[kind]):
+        raise CommandRefusedError(Refusal.BAD_DATA, f"{kind} value {value}")
+    return value
 
 
 def _variable_number(number: int) -> int:

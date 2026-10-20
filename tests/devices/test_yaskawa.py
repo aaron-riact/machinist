@@ -487,6 +487,37 @@ def test_savev_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> No
     assert _answer(motoman, "SAVEV", data) == b"ERROR:SAVEV is not successful (5200).\r\n"
 
 
+@pytest.mark.parametrize(
+    ("data", "kind", "value"),
+    [("0,7,200", "B", 200), ("1,7,-1234", "I", -1234), ("2,7,-123456789", "D", -123456789),
+     ("3,7,1.5", "R", 1.5)],
+)
+def test_loadv_writes_a_number_variable(
+    motoman: YaskawaRobot, data: str, kind: str, value: float
+) -> None:
+    assert _answer(motoman, "LOADV", data) == b"0000\r\n"
+    assert motoman.controller.variables[kind][7] == value
+
+
+def test_loadv_then_savev_reads_back(motoman: YaskawaRobot) -> None:
+    _answer(motoman, "LOADV", "3,1,0.1")
+    assert _answer(motoman, "SAVEV", "3,1") == b"0.1\r"
+
+
+def test_loadv_writes_a_string_with_commas(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "LOADV", "7,3,A,B C") == b"0000\r\n"
+    assert _answer(motoman, "SAVEV", "7,3") == b"A,B C\r"
+
+
+@pytest.mark.parametrize(
+    "data", ["0,7,256", "1,7,32768", "2,7,2147483648", "3,7,x", "3,7,inf", "3,7,nan",
+             "0,100,1", "8,0,1", "0,7",
+             "7,0," + "X" * 33],
+)
+def test_loadv_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> None:
+    assert _answer(motoman, "LOADV", data) == b"ERROR:LOADV is not successful (5200).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:
