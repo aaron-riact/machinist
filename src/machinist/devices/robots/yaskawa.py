@@ -27,7 +27,8 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import Field, model_validator
@@ -60,14 +61,34 @@ FAULT_ALARM = 4000
 #: RALARM answers an error and four alarms, each a code and its data.
 ALARM_SLOTS = 4
 
-#: Encoder pulses per degree of each YR-UP50N axis (S, L, U, R, B, T): 4096
-#: pulses per motor turn through each gear ratio, except L, whose ratio did
-#: not match the arm and is measured from its pulse limits. The riact Motoman
-#: driver converts with the same values.
-UP50N_PULSES_PER_DEGREE = (1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627)
-#: The YR-UP50N's maximum joint speeds in degrees per second (S, L, U, R, B, T),
-#: from its specification sheet.
-UP50N_MAX_JOINT_SPEED = (170.0, 170.0, 170.0, 250.0, 250.0, 350.0)
+
+
+@dataclass(frozen=True, slots=True)
+class YaskawaArm:
+    """What a scene gets by naming a Yaskawa arm."""
+
+    #: The arm's kinematic chain, rooted at the controller's robot base frame.
+    urdf: Path
+    #: Encoder pulses per degree of each axis (S, L, U, R, B, T).
+    pulses_per_degree: tuple[float, ...]
+    #: Each axis's top speed in degrees per second.
+    max_joint_speed_deg_s: tuple[float, ...]
+
+
+_URDF_DIR = Path(__file__).parent / "urdf"
+
+#: The arms by name.
+ROBOTS: dict[str, YaskawaArm] = {
+    # Pulses: 4096 per motor turn through each gear ratio, except L, whose
+    # ratio did not match the arm and is measured from its pulse limits; the
+    # riact Motoman driver converts with the same values. Speeds: the
+    # specification sheet.
+    "up50n": YaskawaArm(
+        urdf=_URDF_DIR / "yr_up50n.urdf",
+        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        max_joint_speed_deg_s=(170.0, 170.0, 170.0, 250.0, 250.0, 350.0),
+    ),
+}
 #: Joint speed in percent of the maximum, and linear speed in mm/s or degrees/s.
 MIN_JOINT_SPEED, MAX_JOINT_SPEED_PERCENT, MIN_LINEAR_SPEED = 0.01, 100.0, 0.1
 #: A move takes at least this long, so a move to where the arm is still runs.
@@ -128,17 +149,36 @@ class MotomanOptions(ArmOptions):
 
     #: Which controller generation answers: nx100, dx200 or yrc1000.
     controller: Literal["nx100", "dx200", "yrc1000"] = "nx100"
+    #: The arm, from :data:`ROBOTS`. It supplies urdf, pulses_per_degree and
+    #: max_joint_speed_deg_s wherever the scene does not give them.
+    robot: str | None = None
 
     #: Encoder pulses per degree of each joint, in joint order.
-    pulses_per_degree: tuple[float, ...] = UP50N_PULSES_PER_DEGREE
+    pulses_per_degree: tuple[float, ...]
     #: Each joint's top speed in degrees per second, which 100 % of a joint
     #: move's speed means.
-    max_joint_speed_deg_s: tuple[float, ...] = UP50N_MAX_JOINT_SPEED
+    max_joint_speed_deg_s: tuple[float, ...]
 
     #: What the cell's ladder copies: each network-input byte to another
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
     #: Signal numbers name the first signal of each byte.
     ladder_copies: dict[int, int] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_in_the_robot(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict) or raw.get("robot") is None:
+            return raw
+        name = raw["robot"]
+        if name not in ROBOTS:
+            raise ValueError(f"unknown robot {name!r}; known: {', '.join(sorted(ROBOTS))}")
+        arm = ROBOTS[name]
+        return {
+            "urdf": str(arm.urdf),
+            "pulses_per_degree": arm.pulses_per_degree,
+            "max_joint_speed_deg_s": arm.max_joint_speed_deg_s,
+            **raw,
+        }
 
     @model_validator(mode="after")
     def _ladder_copies_name_bytes(self) -> MotomanOptions:

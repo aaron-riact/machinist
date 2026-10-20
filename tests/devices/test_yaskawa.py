@@ -13,9 +13,17 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.robots.yaskawa import CONTROLLERS, MotomanNX100, MotomanOptions
+from machinist.devices.robots.yaskawa import CONTROLLERS, ROBOTS, MotomanNX100, MotomanOptions
 
 from ..conftest import free_port, wait_running
+
+#: The UP50N's pulse ratios and speeds, without its URDF: with no kinematics the
+#: arm's pose is its joint values, which keeps the expected answers readable.
+UP50N_AXES = {
+    "pulses_per_degree": ROBOTS["up50n"].pulses_per_degree,
+    "max_joint_speed_deg_s": ROBOTS["up50n"].max_joint_speed_deg_s,
+}
+START = (10, 20, -30, 0, 45, -90)
 
 
 def _running(options: MotomanOptions) -> Iterator[MotomanNX100]:
@@ -30,14 +38,12 @@ def _running(options: MotomanOptions) -> Iterator[MotomanNX100]:
 
 @pytest.fixture
 def motoman() -> Iterator[MotomanNX100]:
-    yield from _running(MotomanOptions(start_joints_deg=(10, 20, -30, 0, 45, -90)))
+    yield from _running(MotomanOptions(start_joints_deg=START, **UP50N_AXES))
 
 
 @pytest.fixture
 def dx200() -> Iterator[MotomanNX100]:
-    yield from _running(
-        MotomanOptions(controller="dx200", start_joints_deg=(10, 20, -30, 0, 45, -90))
-    )
+    yield from _running(MotomanOptions(controller="dx200", start_joints_deg=START, **UP50N_AXES))
 
 
 def _connect(motoman: MotomanNX100) -> socket.socket:
@@ -143,7 +149,7 @@ def test_rposj_answers_twelve_axes_in_pulses(motoman: MotomanNX100) -> None:
 
 def test_pulses_per_degree_needs_one_ratio_per_joint() -> None:
     with pytest.raises(ValueError, match="2 pulses_per_degree for 6 joints"):
-        MotomanOptions(pulses_per_degree=(1.0, 2.0))
+        MotomanOptions(pulses_per_degree=(1.0, 2.0), max_joint_speed_deg_s=(1.0,) * 6)
 
 
 def test_rposc_answers_mm_degrees_form_and_tool(motoman: MotomanNX100) -> None:
@@ -324,7 +330,7 @@ def test_io_with_bad_data_is_an_error(motoman: MotomanNX100, command: str, data:
 
 
 def test_the_ladder_copies_a_network_input_byte() -> None:
-    options = MotomanOptions(ladder_copies={22010: 30040})
+    options = MotomanOptions(ladder_copies={22010: 30040}, **UP50N_AXES)
     m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
     m.start()
     try:
@@ -338,7 +344,7 @@ def test_the_ladder_copies_a_network_input_byte() -> None:
 @pytest.mark.parametrize("copies", [{20010: 30040}, {22011: 30040}, {22010: 30041}])
 def test_ladder_copies_name_network_input_bytes(copies: dict[int, int]) -> None:
     with pytest.raises(ValueError, match=r"ladder copies|first signal"):
-        MotomanOptions(ladder_copies=copies)
+        MotomanOptions(ladder_copies=copies, **UP50N_AXES)
 
 
 # --- DX200 (HW1481823): what differs from the NX100 -------------------------
@@ -381,10 +387,45 @@ def test_dx200_network_inputs_start_at_27010(dx200: MotomanNX100) -> None:
 
 
 def test_ladder_copies_follow_the_controllers_network_inputs() -> None:
-    MotomanOptions(controller="dx200", ladder_copies={27010: 30040})
+    MotomanOptions(controller="dx200", ladder_copies={27010: 30040}, **UP50N_AXES)
     with pytest.raises(ValueError, match="not a network input"):
-        MotomanOptions(controller="dx200", ladder_copies={22010: 30040})
+        MotomanOptions(controller="dx200", ladder_copies={22010: 30040}, **UP50N_AXES)
 
 
 def test_the_yrc1000_takes_the_dx200s_values_until_checked() -> None:
     assert CONTROLLERS["yrc1000"] == CONTROLLERS["dx200"]
+
+
+# --- the robot catalog ---------------------------------------------------------
+
+
+def test_naming_a_robot_fills_in_its_urdf_pulses_and_speeds() -> None:
+    options = MotomanOptions(robot="up50n")
+    assert options.urdf == str(ROBOTS["up50n"].urdf)
+    assert options.pulses_per_degree == ROBOTS["up50n"].pulses_per_degree
+    assert options.max_joint_speed_deg_s == ROBOTS["up50n"].max_joint_speed_deg_s
+
+
+def test_a_scene_overrides_what_the_robot_fills_in() -> None:
+    options = MotomanOptions(robot="up50n", max_joint_speed_deg_s=(1.0,) * 6)
+    assert options.max_joint_speed_deg_s == (1.0,) * 6
+    assert options.pulses_per_degree == ROBOTS["up50n"].pulses_per_degree
+
+
+def test_an_unknown_robot_is_refused() -> None:
+    with pytest.raises(ValueError, match="unknown robot 'up5o'; known: up50n"):
+        MotomanOptions(robot="up5o")
+
+
+def test_without_a_robot_the_scene_gives_the_axes() -> None:
+    with pytest.raises(ValueError, match="pulses_per_degree"):
+        MotomanOptions()
+
+
+def test_the_up50n_reports_its_flange_where_the_urdf_puts_it() -> None:
+    """At the zero position the flange is 1345 mm out and 980 mm up, Z along base X."""
+    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), EventBus(),
+                     MotomanOptions(robot="up50n"))
+    x, y, z, rx, ry, rz = m.arm.state.view.pose
+    assert (x, y, z) == pytest.approx((1.345, 0.0, 0.980))
+    assert (rx, ry, rz) == pytest.approx((0.0, 1.5707963, 0.0), abs=1e-6)

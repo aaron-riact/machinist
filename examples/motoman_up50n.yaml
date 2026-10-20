@@ -15,7 +15,7 @@ devices:
   - name: up50n
     kind: motoman_nx100
     options:
-      urdf: examples/yr_up50n.urdf
+      robot: up50n
       # The flange pointing down, in front of the robot.
       start_joints_deg: [0, 0, 0, 0, -90, 0]
       ladder_copies:
