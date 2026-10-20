@@ -170,12 +170,12 @@ def test_rposc_with_external_axes_adds_six(motoman: YaskawaRobot) -> None:
 
 
 def test_rposc_in_an_undefined_user_frame_is_an_error(motoman: YaskawaRobot) -> None:
-    assert _answer(motoman, "RPOSC", "2,0") == b"ERROR:RPOSC is not successful (9002).\r\n"
+    assert _answer(motoman, "RPOSC", "2,0") == b"ERROR:RPOSC is not successful (3350).\r\n"
 
 
 @pytest.mark.parametrize("data", ["26,0", "0,2", "0", "a,b"])
 def test_rposc_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> None:
-    assert _answer(motoman, "RPOSC", data) == b"ERROR:RPOSC is not successful (9001).\r\n"
+    assert _answer(motoman, "RPOSC", data) == b"ERROR:RPOSC is not successful (5200).\r\n"
 
 
 def test_ralarm_answers_no_error_and_no_alarm(motoman: YaskawaRobot) -> None:
@@ -203,7 +203,7 @@ def test_svon_switches_the_servo(motoman: YaskawaRobot) -> None:
 
 def test_svon_during_an_emergency_stop_is_an_error(motoman: YaskawaRobot) -> None:
     motoman.arm.estop()
-    assert _answer(motoman, "SVON", "1") == b"ERROR:SVON is not successful (9003).\r\n"
+    assert _answer(motoman, "SVON", "1") == b"ERROR:SVON is not successful (3450).\r\n"
 
 
 def test_hold_shows_in_rstats_until_released(motoman: YaskawaRobot) -> None:
@@ -215,7 +215,7 @@ def test_hold_shows_in_rstats_until_released(motoman: YaskawaRobot) -> None:
 
 @pytest.mark.parametrize("command", ["SVON", "HOLD"])
 def test_a_switch_takes_only_0_or_1(motoman: YaskawaRobot, command: str) -> None:
-    error = f"ERROR:{command} is not successful (9001).\r\n"
+    error = f"ERROR:{command} is not successful (5200).\r\n"
     assert _answer(motoman, command, "2") == error.encode()
 
 
@@ -251,9 +251,9 @@ def test_pmovj_takes_as_long_as_the_slowest_joint(motoman: YaskawaRobot) -> None
 @pytest.mark.parametrize(
     ("data", "code"),
     [
-        ("0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0", 9001),  # speed below 0.01 %
-        ("10, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0", 9001),  # tool 24
-        ("10, 0, 0, 0, 0, 0, 0, 0", 9001),  # too few fields
+        ("0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0", 5200),  # speed below 0.01 %
+        ("10, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0", 5200),  # tool 24
+        ("10, 0, 0, 0, 0, 0, 0, 0", 5200),  # too few fields
     ],
 )
 def test_pmovj_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str, code: int) -> None:
@@ -264,20 +264,20 @@ def test_pmovj_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str, code:
 def test_a_move_while_servo_is_off_is_an_error(motoman: YaskawaRobot) -> None:
     motoman.arm.set_servo(False)
     move = "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
-    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (9004).\r\n"
+    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (2070).\r\n"
 
 
 def test_a_move_while_held_is_an_error(motoman: YaskawaRobot) -> None:
     motoman.controller.hold = True
     move = "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
-    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (9005).\r\n"
+    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (2050).\r\n"
 
 
 def test_pmovl_takes_speed_selection_and_speed(motoman: YaskawaRobot) -> None:
     move = "0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
     assert _answer(motoman, "PMOVL", move) == b"0000\r\n"
     bad = "2, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
-    assert _answer(motoman, "PMOVL", bad) == b"ERROR:PMOVL is not successful (9001).\r\n"
+    assert _answer(motoman, "PMOVL", bad) == b"ERROR:PMOVL is not successful (5200).\r\n"
 
 
 def test_movj_moves_to_a_pose_and_records_its_form_and_tool(motoman: YaskawaRobot) -> None:
@@ -293,7 +293,7 @@ def test_movl_moves_to_a_pose(motoman: YaskawaRobot) -> None:
 
 def test_movl_in_a_user_frame_is_an_error(motoman: YaskawaRobot) -> None:
     move = "0, 250, 2, 100, 200, 300, 10, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0"
-    assert _answer(motoman, "MOVL", move) == b"ERROR:MOVL is not successful (9002).\r\n"
+    assert _answer(motoman, "MOVL", move) == b"ERROR:MOVL is not successful (3350).\r\n"
 
 
 @pytest.mark.parametrize("coordinate", [0, 26])
@@ -314,7 +314,7 @@ def test_ioread_of_unset_signals_reads_zero(motoman: YaskawaRobot) -> None:
 
 
 def test_iowrite_outside_the_network_inputs_is_an_error(motoman: YaskawaRobot) -> None:
-    error = b"ERROR:IOWRITE is not successful (9007).\r\n"
+    error = b"ERROR:IOWRITE is not successful (2110).\r\n"
     assert _answer(motoman, "IOWRITE", "30040,8,1") == error
 
 
@@ -328,7 +328,7 @@ def test_iowrite_outside_the_network_inputs_is_an_error(motoman: YaskawaRobot) -
     ],
 )
 def test_io_with_bad_data_is_an_error(motoman: YaskawaRobot, command: str, data: str) -> None:
-    error = f"ERROR:{command} is not successful (9001).\r\n"
+    error = f"ERROR:{command} is not successful (5200).\r\n"
     assert _answer(motoman, command, data) == error.encode()
 
 
@@ -367,11 +367,11 @@ def test_dx200_answers_rotation_to_4_decimals(dx200: YaskawaRobot) -> None:
 @pytest.mark.parametrize(("tool", "answer"), [(63, b"0000\r\n"), (64, None)])
 def test_dx200_has_64_tools(dx200: YaskawaRobot, tool: int, answer: bytes | None) -> None:
     move = f"10, 14166, 38908, -59831, 0, 36653, -37676, {tool}, 0, 0, 0, 0, 0, 0"
-    expected = answer or b"ERROR:PMOVJ is not successful (9001).\r\n"
+    expected = answer or b"ERROR:PMOVJ is not successful (5200).\r\n"
     assert _answer(dx200, "PMOVJ", move) == expected
 
 
-@pytest.mark.parametrize(("coordinate", "code"), [(65, 9002), (66, 9001)])
+@pytest.mark.parametrize(("coordinate", "code"), [(65, 3350), (66, 5200)])
 def test_dx200_has_64_user_frames(dx200: YaskawaRobot, coordinate: int, code: int) -> None:
     error = f"ERROR:RPOSC is not successful ({code}).\r\n"
     assert _answer(dx200, "RPOSC", f"{coordinate},0") == error.encode()
@@ -385,7 +385,7 @@ def test_dx200_steps_in_the_tool_coordinate_66(dx200: YaskawaRobot) -> None:
 def test_dx200_network_inputs_start_at_27010(dx200: YaskawaRobot) -> None:
     assert _answer(dx200, "IOWRITE", "27010,24,63,0,25") == b"0000\r\n"
     assert _answer(dx200, "IOREAD", "27010,24") == b"63,0,25\r"
-    error = b"ERROR:IOWRITE is not successful (9007).\r\n"
+    error = b"ERROR:IOWRITE is not successful (2110).\r\n"
     assert _answer(dx200, "IOWRITE", "22010,8,1") == error
 
 

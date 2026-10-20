@@ -59,20 +59,23 @@ SIGNALS_PER_BYTE = 8
 
 
 #: The code in an Ethernet server ``ERROR:<Command> is not successful (<code>).``
-#: answer. The manual leaves the list to the Data Transmission manual
-#: (RE-CKI-A445), which is not at hand, so these codes are stand-ins that only
-#: name why a command failed.
+#: answer: the controller's interpreter message. The YRC1000 manual names some
+#: (11.1.1: 2010 manipulator operating, 2020-2050 hold, 2060 alarm or error, 2080
+#: incorrect mode, 2100 no command remote); the rest are the same numbers HSES
+#: answers as added status (YMConnect's table: 2070 servo off, 3350 user
+#: coordinate not taught, 4040 no such job, ...). A move with no straight path has
+#: no code: a real controller takes it and stops with an alarm, so 9006 stands in.
 INTERPRETER_MESSAGES: dict[Refusal, int] = {
-    Refusal.BAD_DATA: 9001,
-    Refusal.UNDEFINED_USER_FRAME: 9002,
-    Refusal.EMERGENCY_STOP: 9003,
-    Refusal.SERVO_OFF: 9004,
-    Refusal.HELD: 9005,
+    Refusal.BAD_DATA: 5200,  # data over range
+    Refusal.UNDEFINED_USER_FRAME: 3350,
+    Refusal.EMERGENCY_STOP: 3450,  # servo power cannot be turned on
+    Refusal.SERVO_OFF: 2070,
+    Refusal.HELD: 2050,  # command hold
     Refusal.NO_LINEAR_PATH: 9006,
-    Refusal.NOT_WRITABLE: 9007,
-    Refusal.BAD_TOOL: 9001,
-    Refusal.NO_SUCH_JOB: 9008,
-    Refusal.NO_EXECUTING_JOB: 9009,
+    Refusal.NOT_WRITABLE: 2110,  # this data cannot be accessed
+    Refusal.BAD_TOOL: 5200,
+    Refusal.NO_SUCH_JOB: 4040,
+    Refusal.NO_EXECUTING_JOB: 4060,
 }
 
 
