@@ -394,6 +394,25 @@ def test_wuframe_teaches_a_user_frame_in_teach_mode(motoman: YaskawaRobot) -> No
     ]
 
 
+def test_ruframe_reads_a_taught_frame_back(motoman: YaskawaRobot) -> None:
+    _answer(motoman, "MODE", "1")
+    _answer(motoman, "WUFRAME", FRAME_1)
+    assert _answer(motoman, "RUFRAME", "2") == (
+        b"1000.000,0.000,0.000,0.00,0.00,0.00,0,"
+        b"1000.000,100.000,0.000,0.00,0.00,0.00,0,"
+        b"900.000,0.000,0.000,0.00,0.00,0.00,0,3,0,0,0,0,0,0\r"
+    )
+
+
+def test_ruframe_of_a_frame_not_taught_is_an_error(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "RUFRAME", "2") == b"ERROR:RUFRAME is not successful (3350).\r\n"
+
+
+@pytest.mark.parametrize("data", ["1", "26", "x"])
+def test_ruframe_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> None:
+    assert _answer(motoman, "RUFRAME", data) == b"ERROR:RUFRAME is not successful (5200).\r\n"
+
+
 def test_wuframe_in_play_mode_is_an_error(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "WUFRAME", FRAME_1) == b"ERROR:WUFRAME is not successful (2080).\r\n"
 

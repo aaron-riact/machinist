@@ -145,6 +145,7 @@ class EthernetServer:
             "RJSEQ": self._rjseq,
             "RJDIR": self._rjdir,
             "RGROUP": self._rgroup,
+            "RUFRAME": self._ruframe,
             "SAVEV": self._savev,
             "LOADV": self._loadv,
             "SVON": self._svon,
@@ -186,11 +187,8 @@ class EthernetServer:
         self._check_coordinate(coordinate)
         if external not in (0, 1):
             raise CommandRefusedError(Refusal.BAD_DATA, f"external axis flag {external}")
-        decimals = self.controller.profile.rotation_decimals
-        x, y, z, rx, ry, rz = self.controller.arm.state.view.pose
         fields = [
-            *(f"{m * 1000:.3f}" for m in (x, y, z)),
-            *(f"{math.degrees(r):.{decimals}f}" for r in (rx, ry, rz)),
+            *self._pose_fields(self.controller.arm.state.view.pose),
             str(self.controller.form),
             str(self.controller.tool),
         ]
@@ -222,6 +220,27 @@ class EthernetServer:
         """The robots and stations commands act on, and the task: always R1 and the
         master task, as the cell has nothing else."""
         return f"{R1_GROUP},{NO_STATIONS},{MASTER_TASK}"
+
+    def _ruframe(self, data: str) -> str:
+        """A taught user frame, by coordinate No.: ORG, XX and XY in base coordinates
+        (X Y Z in mm, Rx Ry Rz in degrees, the type), the tool and six external axes."""
+        (coordinate,) = _parse_ints(data, count=1)
+        frame = self.controller.taught_user_frame(coordinate - 1)
+        points = (frame.org, frame.xx, frame.xy)
+        fields = [
+            field for point, form in zip(points, frame.types, strict=True)
+            for field in (*self._pose_fields(point), str(form))
+        ]
+        return ",".join([*fields, str(frame.tool), *(str(p) for p in frame.external)])
+
+    def _pose_fields(self, pose: Pose) -> list[str]:
+        """X Y Z in mm (3 decimals), Rx Ry Rz in degrees (the controller's decimals)."""
+        decimals = self.controller.profile.rotation_decimals
+        x, y, z, rx, ry, rz = pose
+        return [
+            *(f"{m * 1000:.3f}" for m in (x, y, z)),
+            *(f"{math.degrees(r):.{decimals}f}" for r in (rx, ry, rz)),
+        ]
 
     def _savev(self, data: str) -> str:
         """A variable's value, by its type and number."""

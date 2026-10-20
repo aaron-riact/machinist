@@ -532,6 +532,16 @@ class YaskawaController:
             )
         raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
 
+    def taught_user_frame(self, number: int) -> UserFrame:
+        """User frame *number* as taught; one not taught is refused."""
+        if not 1 <= number <= self.profile.user_frames:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
+        if number not in self.user_frames:
+            raise CommandRefusedError(
+                Refusal.UNDEFINED_USER_FRAME, f"user frame {number} is not defined"
+            )
+        return self.user_frames[number]
+
     def teach_user_frame(self, number: int, frame: UserFrame) -> None:
         """Teach user frame *number*; in teach mode only, and not while the arm moves.
         Points that do not span a plane cannot set a frame."""
