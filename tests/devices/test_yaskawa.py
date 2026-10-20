@@ -223,6 +223,18 @@ def test_cancel_answers_normally(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "CANCEL") == b"0000\r\n"
 
 
+@pytest.mark.parametrize(("cycle", "rstats"), [("1", b"193,64\r"), ("2", b"194,64\r"),
+                                               ("3", b"196,64\r")])
+def test_cycle_selects_step_one_cycle_or_auto(motoman: YaskawaRobot, cycle: str,
+                                              rstats: bytes) -> None:
+    assert _answer(motoman, "CYCLE", cycle) == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == rstats
+
+
+def test_cycle_takes_only_1_to_3(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "CYCLE", "4") == b"ERROR:CYCLE is not successful (5200).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:

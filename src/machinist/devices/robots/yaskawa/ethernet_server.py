@@ -32,6 +32,7 @@ from ....kinematics.dh_backend import pose_to_mat
 from ....kinematics.units import Meters, Radians
 from ....transport.line_server import Hangup, Reply
 from .controller import (
+    CYCLES,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
@@ -104,6 +105,7 @@ class EthernetServer:
             "HOLD": self._hold,
             "RESET": self._reset,
             "CANCEL": self._cancel,
+            "CYCLE": self._cycle,
             "PMOVJ": self._pmovj,
             "PMOVL": self._pmovl,
             "MOVJ": self._movj,
@@ -154,6 +156,13 @@ class EthernetServer:
 
     def _cancel(self, data: str) -> None:
         self.controller.cancel_error()
+
+    def _cycle(self, data: str) -> None:
+        """1 step, 2 one cycle, 3 auto."""
+        (cycle,) = _parse_ints(data, count=1)
+        if cycle not in CYCLES:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"cycle {cycle}")
+        self.controller.cycle = CYCLES[cycle]
 
     def _pmovj(self, data: str) -> None:
         """Speed (%), six pulses, tool, six external axes."""

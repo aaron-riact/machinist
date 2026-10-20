@@ -36,11 +36,11 @@ from ....transport.yaskawa_hses import (
 )
 from .controller import (
     ALARM_TIME_FORMAT,
+    CYCLES,
     Alarm,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
-    Status1,
     YaskawaController,
     stepped,
 )
@@ -270,8 +270,6 @@ MANAGEMENT_TIMES = (
 )
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
-#: The cycles 0x84 switches to (3.3.21).
-CYCLES = {1: Status1.STEP, 2: Status1.ONE_CYCLE, 3: Status1.AUTO}
 #: An alarm's data shown as a decimal number (3.3.1, alarm type 1).
 ALARM_TYPE_DECIMAL = 1
 #: The name a faulted arm's alarm shows; the arm does not know the cause.

@@ -188,6 +188,10 @@ class Status1(IntFlag):
     COMMAND_REMOTE = 0x80
 
 
+#: The cycles both servers number 1 step, 2 one cycle, 3 auto (CYCLE, HSES 0x84).
+CYCLES = {1: Status1.STEP, 2: Status1.ONE_CYCLE, 3: Status1.AUTO}
+
+
 class Status2(IntFlag):
     """RSTATS Data-2: holds, alarm, error and servo."""
 
