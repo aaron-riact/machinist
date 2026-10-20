@@ -692,6 +692,42 @@ def test_r1_is_in_the_first_motion_slot(yrc: YaskawaRobot) -> None:
     assert slots == [(1,), (0,), (0,), (0,)]
 
 
+def _read_cartesian(robot: YaskawaRobot, frame: int, tool: int = 0,
+               group: tuple[int, int] = (0, 0)) -> Answer:
+    return _ask(robot, 0x33D, 0, 0, GET_ALL, struct.pack("<2i2Hi", *group, frame, tool, 0))
+
+
+def test_a_yrc1000_reads_r1_in_base_coordinates(yrc: YaskawaRobot) -> None:
+    """0x33D answers as 0x75 does, in YMConnect's layout: type 2 (base), user frame,
+    tool, form, a reserved word, then the axes."""
+    answer = struct.unpack("<i2h2I8i", _read_cartesian(yrc, frame=0).data)
+    base = _ints(_ask(yrc, 0x75, 101, 0, GET_ALL))
+    assert answer[:5] == (2, 0, 0, 0, 0)
+    assert answer[5:] == base[5:]
+
+
+def test_the_robot_frame_names_its_own_type(yrc: YaskawaRobot) -> None:
+    assert struct.unpack_from("<i", _read_cartesian(yrc, frame=1).data) == (3,)
+
+
+def test_the_answer_names_the_tool_asked_for(yrc: YaskawaRobot) -> None:
+    assert struct.unpack_from("<h", _read_cartesian(yrc, frame=0, tool=5).data, 6) == (5,)
+
+
+def test_a_cartesian_read_in_a_user_frame_is_refused_untaught(yrc: YaskawaRobot) -> None:
+    """User frame 1 goes as frame 2; the emulator teaches no user frames."""
+    assert _read_cartesian(yrc, frame=2).added_status == AddedStatus.USER_COORDINATE_NOT_TAUGHT
+
+
+def test_a_cartesian_read_of_a_missing_group_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _read_cartesian(yrc, frame=0, group=(0, 1))
+    assert answer.added_status == AddedStatus.CONTROL_GROUP_ERROR
+
+
+def test_a_cartesian_read_with_a_bad_tool_is_refused(yrc: YaskawaRobot) -> None:
+    assert _read_cartesian(yrc, frame=0, tool=64).added_status == AddedStatus.TOOL_NUMBER_ERROR
+
+
 def test_a_dx200_has_no_system_parameter_read() -> None:
     options = YaskawaOptions(controller="dx200", robot="up50n", protocols=("hses",),
                              hses_port=free_port(), hses_file_port=free_port())

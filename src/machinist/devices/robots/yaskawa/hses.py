@@ -97,6 +97,12 @@ R1_PULSE, R1_CARTESIAN = 1, 101
 AXIS_ELEMENTS = 8
 PULSE_AXES = ("S", "L", "U", "R", "B", "T")
 CARTESIAN_AXES = ("X", "Y", "Z", "Rx", "Ry", "Rz")
+#: The Cartesian position read (0x33D) as YMConnect sends and reads it: the group
+#: kind (0 robots, 1 bases, 2 stations), the frame (base, robot, or user frame n
+#: as n + 1), and the coordinate type the answer names (2 base, 3 robot, 4 user).
+ROBOT_GROUPS = 0
+BASE_FRAME, ROBOT_FRAME = 0, 1
+UAPI_BASE, UAPI_ROBOT = 2, 3
 #: A position's data type (3.3.6): pulses, or base coordinates.
 PULSE_DATA, BASE_COORDINATE_DATA = 0, 16
 #: The IO instances (3.3.9): a signal's number / 10, by the kind of signal.
@@ -380,8 +386,31 @@ class HighSpeedEthernetServer:
         """Commands YRC1000 and newer controllers add, which the DX200 manual does not
         have; their formats are as YMConnect, Yaskawa's own client, sends and reads them."""
         return {
+            0x33D: self._cartesian_position,
             0x39C: self._system_parameter,
         }
+
+    # --- Cartesian position reading (0x33D, YRC1000 and newer) -------------------
+
+    def _cartesian_position(self, request: Request) -> bytes:
+        """A control group's position in the base, robot or a user frame, with a
+        tool. In: group kind, index, frame and tool. Out: coordinate type, user
+        frame, tool, form, a reserved word and eight axes in µm and 0.0001 degrees.
+        The emulated arm has no tool files, so every tool reads the same position."""
+        if request.service != Service.GET_ALL:
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        if len(request.data) != 16:
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        kind, index, frame, tool, _ = struct.unpack("<2i2Hi", request.data)
+        if (kind, index) != (ROBOT_GROUPS, 0):
+            raise _added(AddedStatus.CONTROL_GROUP_ERROR)
+        self.controller.check_tool(tool)
+        if frame not in (BASE_FRAME, ROBOT_FRAME):
+            self.controller.check_user_frame(frame - 1)
+        coordinate = UAPI_BASE if frame == BASE_FRAME else UAPI_ROBOT
+        axes = _micrometres_and_ten_thousandths(self.controller.arm.state.view.pose)
+        return struct.pack("<i2h2I8i", coordinate, 0, tool, self.controller.form, 0,
+                           *_pad(axes, AXIS_ELEMENTS, 0))
 
     # --- System parameter reading (0x39C, YRC1000 and newer) ---------------------
 
