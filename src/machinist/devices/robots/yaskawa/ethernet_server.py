@@ -34,6 +34,7 @@ from ....transport.line_server import Hangup, Reply
 from .controller import (
     CYCLES,
     MODES,
+    STANDARD_VARIABLES,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
@@ -54,6 +55,12 @@ BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 ALARM_SLOTS = 4
 
 
+#: SAVEV and LOADV variable types 0 to 3: B, I, D and R, by the kind the
+#: controller keeps them under; 7 is S. The manual gives no format for a real
+#: value; the emulator answers it to float precision, 7 significant digits.
+NUMBER_VARIABLES = {0: "B", 1: "I", 2: "D", 3: "R"}
+REAL_VARIABLE = "R"
+STRING_VARIABLE = 7
 #: RJDIR starts a new line after every 20 job names. The manual does not say
 #: which line feed; the emulator uses CR, the end of every answer line.
 JOB_NAMES_PER_LINE = 20
@@ -122,6 +129,7 @@ class EthernetServer:
             "RJSEQ": self._rjseq,
             "RJDIR": self._rjdir,
             "RGROUP": self._rgroup,
+            "SAVEV": self._savev,
             "SVON": self._svon,
             "HOLD": self._hold,
             "RESET": self._reset,
@@ -196,6 +204,17 @@ class EthernetServer:
         """The robots and stations commands act on, and the task: always R1 and the
         master task, as the cell has nothing else."""
         return f"{R1_GROUP},{NO_STATIONS},{MASTER_TASK}"
+
+    def _savev(self, data: str) -> str:
+        """A variable's value, by its type and number."""
+        variable_type, number = _parse_ints(data, count=2)
+        if variable_type == STRING_VARIABLE:
+            return self.controller.string(_variable_number(number)).decode("ascii", "replace")
+        if variable_type not in NUMBER_VARIABLES:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"variable type {variable_type}")
+        kind = NUMBER_VARIABLES[variable_type]
+        value = self.controller.variables.get(kind, {}).get(_variable_number(number), 0)
+        return f"{value:.7g}" if kind == REAL_VARIABLE else str(int(value))
 
     def _svon(self, data: str) -> None:
         self.controller.set_servo(_parse_switch(data))
@@ -348,6 +367,12 @@ class EthernetServer:
         if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
             return
         self.controller.check_user_frame(coordinate - 1)
+
+
+def _variable_number(number: int) -> int:
+    if number not in STANDARD_VARIABLES:
+        raise CommandRefusedError(Refusal.BAD_DATA, f"variable {number}")
+    return number
 
 
 def _joint_speed(value: float) -> float:

@@ -351,6 +351,10 @@ class YaskawaController:
             "//MOVING TIME", f"TOTAL : {no_time}", f"R1    : {no_time}",
         )
 
+    def string(self, number: int) -> bytes:
+        """S variable *number*'s text, without the NULs that pad it."""
+        return self.strings.get(number, b"").split(b"\0", 1)[0]
+
     # --- status -----------------------------------------------------------
 
     def status(self) -> tuple[Status1, Status2]:

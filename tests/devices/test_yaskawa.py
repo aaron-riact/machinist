@@ -427,6 +427,32 @@ def test_ctask_needs_independent_control(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "CTASK", "0") == b"ERROR:CTASK is not successful (4490).\r\n"
 
 
+@pytest.mark.parametrize(
+    ("variable_type", "kind", "value", "answer"),
+    [(0, "B", 200, b"200"), (1, "I", -1234, b"-1234"), (2, "D", -123456789, b"-123456789"),
+     (3, "R", 1.5, b"1.5")],
+)
+def test_savev_reads_a_number_variable(
+    motoman: YaskawaRobot, variable_type: int, kind: str, value: float, answer: bytes
+) -> None:
+    motoman.controller.variables[kind] = {7: value}
+    assert _answer(motoman, "SAVEV", f"{variable_type},7") == answer + b"\r"
+
+
+def test_savev_reads_an_unset_variable_as_0(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "SAVEV", "1,99") == b"0\r"
+
+
+def test_savev_reads_a_string_variable(motoman: YaskawaRobot) -> None:
+    motoman.controller.strings[3] = b"HELLO".ljust(32, b"\0")
+    assert _answer(motoman, "SAVEV", "7,3") == b"HELLO\r"
+
+
+@pytest.mark.parametrize("data", ["0,100", "8,0", "0", "x,1"])
+def test_savev_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> None:
+    assert _answer(motoman, "SAVEV", data) == b"ERROR:SAVEV is not successful (5200).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:
