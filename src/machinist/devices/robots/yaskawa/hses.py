@@ -157,6 +157,14 @@ class Numbered:
 
 #: Registers (3.3.10, 3.3.28): 0 to 999, of which 0 to 559 are writable.
 REGISTERS = Numbered("register", "H", range(1000), range(560), plural_max=237)
+#: Variables B, I, D and R (3.3.11-3.3.14, 3.3.29-3.3.32), 0 to 99 as the
+#: standard setting has them; extended variables are an option not emulated.
+#: A plural B command counts in twos.
+STANDARD_VARIABLES = range(100)
+BYTE_VARIABLES = Numbered("B", "B", STANDARD_VARIABLES, None, plural_max=474, plural_step=2)
+INTEGER_VARIABLES = Numbered("I", "h", STANDARD_VARIABLES, None, plural_max=237)
+DOUBLE_VARIABLES = Numbered("D", "i", STANDARD_VARIABLES, None, plural_max=118)
+REAL_VARIABLES = Numbered("R", "f", STANDARD_VARIABLES, None, plural_max=118)
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -230,6 +238,10 @@ class HighSpeedEthernetServer:
             0x77: self._zero_per_axis,
             0x78: self._io,
             0x79: self._single(REGISTERS),
+            0x7A: self._single(BYTE_VARIABLES),
+            0x7B: self._single(INTEGER_VARIABLES),
+            0x7C: self._single(DOUBLE_VARIABLES),
+            0x7D: self._single(REAL_VARIABLES),
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
@@ -238,6 +250,10 @@ class HighSpeedEthernetServer:
             0x8B: self._move_pulse,
             0x300: self._plural_io,
             0x301: self._plural(REGISTERS),
+            0x302: self._plural(BYTE_VARIABLES),
+            0x303: self._plural(INTEGER_VARIABLES),
+            0x304: self._plural(DOUBLE_VARIABLES),
+            0x305: self._plural(REAL_VARIABLES),
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------

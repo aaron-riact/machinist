@@ -406,3 +406,40 @@ def test_plural_registers_stop_at_237(yrc: YaskawaRobot) -> None:
 def test_a_register_value_of_the_wrong_size_is_refused(yrc: YaskawaRobot) -> None:
     answer = _ask(yrc, 0x79, 7, 1, SET_SINGLE, struct.pack("<i", 1))
     assert answer.added_status == AddedStatus.DATA_SIZE_ERROR
+
+
+@pytest.mark.parametrize(
+    ("command", "fmt", "value"),
+    [(0x7A, "<B", 200), (0x7B, "<h", -1234), (0x7C, "<i", -123_456_789), (0x7D, "<f", 1.5)],
+)
+def test_variable_write_and_read(yrc: YaskawaRobot, command: int, fmt: str,
+                                 value: float) -> None:
+    assert _ask(yrc, command, 99, 1, SET_SINGLE, struct.pack(fmt, value)).status is Status.OK
+    assert struct.unpack(fmt, _ask(yrc, command, 99, 1, GET_SINGLE).data) == (value,)
+    assert _ask(yrc, command, 100, 1, GET_SINGLE).added_status == AddedStatus.INSTANCE_ERROR
+
+
+def test_variables_of_each_kind_are_their_own(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x7B, 5, 1, SET_SINGLE, struct.pack("<h", 7))
+    assert _ask(yrc, 0x7C, 5, 1, GET_SINGLE).data == struct.pack("<i", 0)
+
+
+@pytest.mark.parametrize(
+    ("command", "fmt"), [(0x302, "B"), (0x303, "h"), (0x304, "i"), (0x305, "f")]
+)
+def test_plural_variables(yrc: YaskawaRobot, command: int, fmt: str) -> None:
+    values = struct.pack(f"<2{fmt}", 1, 2)
+    assert _ask(yrc, command, 3, 0, 0x34, struct.pack("<i", 2) + values).status is Status.OK
+    assert _ask(yrc, command, 3, 0, 0x33, struct.pack("<i", 2)).data == (
+        struct.pack("<i", 2) + values
+    )
+
+
+def test_plural_b_variables_count_in_twos(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x302, 0, 0, 0x33, struct.pack("<i", 3))
+    assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+def test_plural_variables_stop_at_the_last_number(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x303, 98, 0, 0x33, struct.pack("<i", 3))
+    assert answer.added_status == AddedStatus.OUTSIDE_THE_DATA
