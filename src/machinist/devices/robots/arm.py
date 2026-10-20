@@ -74,6 +74,8 @@ class ArmOptions(Options):
     backend: str | None = None
     dh_params: DHParams | None = None
     urdf: str | None = None
+    #: The URDF link the arm's pose is of; needed when the URDF ends in several.
+    tip_link: str | None = None
     #: The joints the arm starts at, in degrees. Left out means all zero, or
     #: the vendor's default where a vendor robot has one.
     start_joints_deg: tuple[float, ...] | None = None
@@ -700,6 +702,7 @@ def _kinematics_options(options: ArmOptions) -> KinematicsOptions:
         backend=options.backend,
         dh=options.dh_params,
         urdf_path=Path(options.urdf) if options.urdf else None,
+        tip_link=options.tip_link,
     )
 
 
