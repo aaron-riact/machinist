@@ -1,9 +1,13 @@
 """The Yaskawa Ethernet server (NX100, DX200, YRC1000).
 
 References: *NX100 Options Instructions for Ethernet Server Function*
-(HW0483202), in the repository as ``NX100_http_network_command.pdf``, and
-the DX200's (HW1481823). The two describe the same protocol; what differs
-between controllers is in :data:`CONTROLLERS`.
+(HW0483202), in the repository as ``NX100_http_network_command.pdf``, the
+DX200's (HW1481823) and the YRC1000's Ethernet function manual (HW1483358,
+chapter 8). All three describe the same 35 commands, every one of which the
+emulator answers but JWAIT, which they list only to say the Ethernet server
+does not support it. What differs between controllers is in
+:data:`CONTROLLERS`. Which command works in which state (teach or play mode,
+moving, alarm) follows the YRC1000 manual's interlock table (11.1.1).
 
 The controller serves on TCP port 80 but the protocol is **not** HTTP. A
 session runs::
