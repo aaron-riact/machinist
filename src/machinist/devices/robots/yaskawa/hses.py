@@ -84,6 +84,23 @@ PULSE_AXES = ("S", "L", "U", "R", "B", "T")
 CARTESIAN_AXES = ("X", "Y", "Z", "Rx", "Ry", "Rz")
 #: A position's data type (3.3.6): pulses, or base coordinates.
 PULSE_DATA, BASE_COORDINATE_DATA = 0, 16
+#: The IO instances (3.3.9): a signal's number / 10, by the kind of signal.
+IO_INSTANCES = (
+    range(1, 513),  # robot user inputs
+    range(1001, 1513),  # robot user outputs
+    range(2001, 2513),  # external inputs
+    range(2701, 2957),  # network inputs, the only writable ones
+    range(3001, 3513),  # external outputs
+    range(3701, 3957),  # network outputs
+    range(4001, 4161),  # robot system inputs
+    range(5001, 5301),  # robot system outputs
+    range(6001, 6065),  # interface panel inputs
+    range(7001, 8000),  # auxiliary relays
+    range(8001, 8129),  # robot control status signals
+    range(8201, 8221),  # pseudo inputs
+)
+#: The most IO bytes one plural command carries (3.3.27).
+MAX_PLURAL_IO = 474
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -153,9 +170,11 @@ class HighSpeedEthernetServer:
             0x72: self._status,
             0x74: self._axis_configuration,
             0x75: self._position,
+            0x78: self._io,
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
+            0x300: self._plural_io,
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
@@ -196,6 +215,48 @@ class HighSpeedEthernetServer:
         values = [data_type, self.controller.form, self.controller.tool, 0, 0,
                   *_pad(axes, AXIS_ELEMENTS, 0)]
         return _read(request, [int32s(v) for v in values])
+
+    # --- 3.3.9 I/O data reading / writing (0x78) --------------------------------
+
+    def _io(self, request: Request) -> bytes:
+        """One IO byte, the instance its first signal's number / 10. Network inputs
+        are the only ones a host may write."""
+        signal = _io_signal(request.instance)
+        if request.attribute != 1:
+            raise _added(AddedStatus.ATTRIBUTE_ERROR)
+        if request.service == Service.GET_SINGLE:
+            return bytes(self.controller.read_io([signal]))
+        if request.service == Service.SET_SINGLE:
+            if len(request.data) != 1:
+                raise _added(AddedStatus.DATA_SIZE_ERROR)
+            self.controller.write_network_inputs([signal], list(request.data))
+            return b""
+        raise HsesError(Status.UNDEFINED_COMMAND)
+
+    # --- 3.3.27 Plural I/O data reading / writing (0x300) -----------------------
+
+    def _plural_io(self, request: Request) -> bytes:
+        """A count of IO bytes (even, at most 474) from the instance's byte on."""
+        start = _io_signal(request.instance)
+        if request.attribute != 0:
+            raise _added(AddedStatus.ATTRIBUTE_ERROR)
+        if len(request.data) < 4:
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        (count,) = struct.unpack_from("<i", request.data)
+        if count <= 0 or count % 2 or count > MAX_PLURAL_IO:
+            raise _added(AddedStatus.OPERAND_RANGE)
+        signals = [start + 10 * i for i in range(count)]
+        if not all(_known_io_signal(signal) for signal in signals):
+            raise _added(AddedStatus.OUTSIDE_THE_DATA)
+        if request.service == Service.READ_PLURAL:
+            return int32s(count) + bytes(self.controller.read_io(signals))
+        if request.service == Service.WRITE_PLURAL:
+            values = request.data[4:]
+            if len(values) != count:
+                raise _added(AddedStatus.DATA_SIZE_ERROR)
+            self.controller.write_network_inputs(signals, list(values))
+            return b""
+        raise HsesError(Status.UNDEFINED_COMMAND)
 
     # --- 3.3.20 Hold / servo on/off (0x83) -------------------------------------
 
@@ -263,6 +324,17 @@ def _micrometres_and_ten_thousandths(pose: Pose) -> list[int]:
     x, y, z, rx, ry, rz = pose
     position = [round(m * 1e6) for m in (x, y, z)]
     return position + [round(math.degrees(r) * 1e4) for r in (rx, ry, rz)]
+
+
+def _known_io_signal(signal: int) -> bool:
+    return any(signal // 10 in instances for instances in IO_INSTANCES)
+
+
+def _io_signal(instance: int) -> int:
+    """The number of the first signal of the IO byte an instance names."""
+    if not any(instance in instances for instances in IO_INSTANCES):
+        raise _added(AddedStatus.INSTANCE_ERROR)
+    return instance * 10
 
 
 def _write(request: Request, *, count: int) -> tuple[int, ...]:

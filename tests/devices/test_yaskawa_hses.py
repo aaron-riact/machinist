@@ -211,3 +211,41 @@ def test_position_of_one_axis(yrc: YaskawaRobot) -> None:
 def test_position_of_a_group_the_cell_lacks_is_refused(yrc: YaskawaRobot) -> None:
     answer = _ask(yrc, 0x75, 2, 0, GET_ALL)
     assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.INSTANCE_ERROR)
+
+
+def test_io_write_and_read_one_network_input_byte(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x78, 2701, 1, SET_SINGLE, b"\x05").status is Status.OK
+    assert _ask(yrc, 0x78, 2701, 1, GET_SINGLE).data == b"\x05"
+
+
+def test_io_write_outside_the_network_inputs_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x78, 3004, 1, SET_SINGLE, b"\x01")
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.OUTSIDE_THE_DATA)
+
+
+def test_io_of_an_unknown_signal_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x78, 9001, 1, GET_SINGLE)
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.INSTANCE_ERROR)
+
+
+def test_plural_io_writes_and_reads_bytes(yrc: YaskawaRobot) -> None:
+    write = _ask(yrc, 0x300, 2701, 0, 0x34, struct.pack("<i", 4) + b"\x3f\x00\x19\x01")
+    assert write.status is Status.OK
+    read = _ask(yrc, 0x300, 2701, 0, 0x33, struct.pack("<i", 4))
+    assert read.data == struct.pack("<i", 4) + b"\x3f\x00\x19\x01"
+
+
+@pytest.mark.parametrize("count", [3, 0, 476])
+def test_plural_io_counts_in_twos_up_to_474(yrc: YaskawaRobot, count: int) -> None:
+    answer = _ask(yrc, 0x300, 2701, 0, 0x33, struct.pack("<i", count))
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.OPERAND_RANGE)
+
+
+def test_hses_io_and_the_ethernet_servers_io_are_the_same_signals(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x78, 2701, 1, SET_SINGLE, b"\x2a")
+    with socket.create_connection(("127.0.0.1", yrc.endpoint.port), timeout=2) as s:
+        s.sendall(b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST IOREAD 8\r\n27010,8\r")
+        received = b""
+        while chunk := s.recv(1024):
+            received += chunk
+    assert received.endswith(b"OK: IOREAD\r\n42\r")
