@@ -28,6 +28,9 @@ import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ....kinematics.api import Pose
 from ....kinematics.dh_backend import pose_to_mat
 from ....kinematics.units import Meters, Radians
@@ -43,7 +46,10 @@ from .controller import (
     SpeedSelection,
     UserFrame,
     YaskawaController,
+    frame_step,
+    from_frame,
     stepped,
+    to_frame,
 )
 
 #: The reply to a START request the controller cannot accept, before it closes.
@@ -184,11 +190,11 @@ class EthernetServer:
 
     def _rposc(self, data: str) -> str:
         coordinate, external = _parse_ints(data, count=2)
-        self._check_coordinate(coordinate)
+        frame = self._frame(coordinate)
         if external not in (0, 1):
             raise CommandRefusedError(Refusal.BAD_DATA, f"external axis flag {external}")
         fields = [
-            *self._pose_fields(self.controller.arm.state.view.pose),
+            *self._pose_fields(to_frame(frame, self.controller.arm.state.view.pose)),
             str(self.controller.form),
             str(self.controller.tool),
         ]
@@ -410,8 +416,7 @@ class EthernetServer:
         """Speed (%), coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
         values = _parse_numbers(data, count=16)
         speed = _joint_speed(values[0])
-        self._check_coordinate(_integer(values[1]))
-        target = _pose(values[2:8])
+        target = from_frame(self._frame(_integer(values[1])), _pose(values[2:8]))
         self.controller.form = _integer(values[8])
         self.controller.tool = self.controller.check_tool(_integer(values[9]))
         self.controller.move_joints(self.controller.arm.inverse(target), speed)
@@ -420,8 +425,7 @@ class EthernetServer:
         """Speed selection, speed, coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
         values = _parse_numbers(data, count=17)
         selection, speed = _linear_speed(values[0], values[1])
-        self._check_coordinate(_integer(values[2]))
-        target = _pose(values[3:9])
+        target = from_frame(self._frame(_integer(values[2])), _pose(values[3:9]))
         self.controller.form = _integer(values[9])
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
         self.controller.move_linear(target, selection, speed)
@@ -431,15 +435,16 @@ class EthernetServer:
         six external axes.
 
         In the base or robot coordinate the step moves the tool along and turns it
-        about the base axes; in the tool coordinate, along and about its own.
+        about the base axes; in a user frame, about that frame's axes; in the tool
+        coordinate, along and about its own.
         """
         values = _parse_numbers(data, count=17)
         selection, speed = _linear_speed(values[0], values[1])
         coordinate = _integer(values[2])
         in_tool = coordinate == self.controller.profile.tool_coordinate
-        if not in_tool:
-            self._check_coordinate(coordinate)
         step = pose_to_mat(_pose(values[3:9]))
+        if not in_tool:
+            step = frame_step(self._frame(coordinate), step)
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
         here = self.controller.arm.state.view.pose
         self.controller.move_linear(stepped(here, step, in_tool=in_tool), selection, speed)
@@ -501,11 +506,12 @@ class EthernetServer:
             raise CommandRefusedError(Refusal.BAD_DATA, f"{len(bytes_)} bytes for {count} signals")
         self.controller.write_network_inputs(signals, bytes_)
 
-    def _check_coordinate(self, coordinate: int) -> None:
-        """Base and robot coordinates are one frame here (no base axis); user frames follow."""
+    def _frame(self, coordinate: int) -> NDArray[np.float64]:
+        """The coordinate's frame in base coordinates. Base and robot coordinates are
+        one frame here (no base axis); user frames follow, refused until taught."""
         if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
-            return
-        self.controller.check_user_frame(coordinate - 1)
+            return np.eye(4)
+        return self.controller.user_frame_transform(coordinate - 1)
 
 
 def _parse_variable_write(data: str) -> tuple[int, int, str]:

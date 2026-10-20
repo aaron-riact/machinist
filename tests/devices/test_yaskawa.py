@@ -5,16 +5,19 @@ The byte strings follow the manual's transmission examples (section 3.3).
 
 from __future__ import annotations
 
+import math
 import socket
 import time
 from collections.abc import Iterator
 
+import numpy as np
 import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.registry import default_registry
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import CONTROLLERS, ROBOTS, YaskawaOptions, YaskawaRobot
+from machinist.kinematics.dh_backend import pose_to_mat
 
 from ..conftest import free_port, wait_running
 
@@ -46,6 +49,13 @@ def motoman() -> Iterator[YaskawaRobot]:
 def with_jobs() -> Iterator[YaskawaRobot]:
     yield from _running(YaskawaOptions(controller="nx100", start_joints_deg=START,
                                        jobs=("MAIN", "PICK"), **UP50N_AXES))
+
+
+@pytest.fixture
+def up50n() -> Iterator[YaskawaRobot]:
+    """A DX200 with the UP50N's kinematics, at X 1170, Z 805 mm, the tool pointing down."""
+    yield from _running(YaskawaOptions(controller="dx200", robot="up50n",
+                                       start_joints_deg=(0, 0, 0, 0, -90, 0)))
 
 
 @pytest.fixture
@@ -686,6 +696,50 @@ def test_movl_in_a_user_frame_is_an_error(motoman: YaskawaRobot) -> None:
 def test_imov_steps_in_base_or_tool_coordinates(motoman: YaskawaRobot, coordinate: int) -> None:
     step = f"0, 100, {coordinate}, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
     assert _answer(motoman, "IMOV", step) == b"0000\r\n"
+
+
+def _teach(motoman: YaskawaRobot, frame: str) -> None:
+    _answer(motoman, "MODE", "1")
+    assert _answer(motoman, "WUFRAME", frame) == b"0000\r\n"
+    _answer(motoman, "MODE", "2")
+
+
+def test_rposc_reads_the_pose_in_a_taught_user_frame(motoman: YaskawaRobot) -> None:
+    """A frame 100 mm along base X, not turned: the pose shifts by 100 mm."""
+    _teach(motoman, "2, 100,0,0,0,0,0,0, 200,0,0,0,0,0,0, 100,100,0,0,0,0,0, 0, 0,0,0,0,0,0")
+    assert _answer(motoman, "RPOSC", "2,0") == (
+        b"74.533,349.066,-523.599,0.00,45.00,-90.00,0,0\r"
+    )
+
+
+def _same_pose(answer: bytes, expected: tuple[float, ...]) -> bool:
+    """Whether RPOSC's X Y Z (mm) and Rx Ry Rz (degrees) are *expected*: to 0.1 mm, as
+    the arm's inverse kinematics lands within hundredths, and the angles compared as
+    the rotation they make."""
+    got = [float(v) for v in answer.split(b",")[:6]]
+    a, b = (pose_to_mat((*(v / 1000 for v in p[:3]), *(math.radians(v) for v in p[3:])))
+            for p in (got, expected))
+    return bool(np.allclose(a[:3, 3], b[:3, 3], atol=1e-4)
+                and np.allclose(a[:3, :3], b[:3, :3], atol=1e-4))
+
+
+def test_movl_in_a_taught_user_frame_moves_in_that_frame(up50n: YaskawaRobot) -> None:
+    """FRAME_1 is turned 90 degrees about Z: its X is base Y, its Y base -X. The arm
+    starts at X 1170, Z 805, tool down."""
+    _teach(up50n, FRAME_1)
+    move = "0, 500, 2, 50, -100, 805, 180, 0, 90, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(up50n, "MOVL", move) == b"0000\r\n"
+    _wait_idle(up50n)
+    assert _same_pose(_answer(up50n, "RPOSC", "0,0"), (1100, 50, 805, 180, 0, 180))
+    assert _same_pose(_answer(up50n, "RPOSC", "2,0"), (50, -100, 805, 180, 0, 90))
+
+
+def test_imov_in_a_taught_user_frame_steps_along_its_axes(up50n: YaskawaRobot) -> None:
+    _teach(up50n, FRAME_1)
+    step = "0, 100, 2, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(up50n, "IMOV", step) == b"0000\r\n"
+    _wait_idle(up50n)
+    assert _same_pose(_answer(up50n, "RPOSC", "0,0"), (1170, 10, 805, 180, 0, 180))
 
 
 def test_iowrite_then_ioread_as_in_the_manual(motoman: YaskawaRobot) -> None:

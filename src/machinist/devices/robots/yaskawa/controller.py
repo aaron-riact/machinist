@@ -542,6 +542,10 @@ class YaskawaController:
             )
         return self.user_frames[number]
 
+    def user_frame_transform(self, number: int) -> NDArray[np.float64]:
+        """Taught user frame *number* in base coordinates, as a 4x4 transform."""
+        return self.taught_user_frame(number).transform()
+
     def teach_user_frame(self, number: int, frame: UserFrame) -> None:
         """Teach user frame *number*; in teach mode only, and not while the arm moves.
         Points that do not span a plane cannot set a frame."""
@@ -615,6 +619,23 @@ class YaskawaController:
             for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
         )
         return max(seconds, MIN_MOVE_SECONDS)
+
+
+def to_frame(frame: NDArray[np.float64], pose: Pose) -> Pose:
+    """*pose*, in base coordinates, as seen in *frame*."""
+    return _mat_to_pose(np.linalg.inv(frame) @ pose_to_mat(pose))
+
+
+def from_frame(frame: NDArray[np.float64], pose: Pose) -> Pose:
+    """*pose*, given in *frame*, in base coordinates."""
+    return _mat_to_pose(frame @ pose_to_mat(pose))
+
+
+def frame_step(frame: NDArray[np.float64], step: NDArray[np.float64]) -> NDArray[np.float64]:
+    """*step*, along and about *frame*'s axes, as a step along and about the base's."""
+    turn = np.eye(4)
+    turn[:3, :3] = frame[:3, :3]
+    return turn @ step @ turn.T
 
 
 def stepped(pose: Pose, step: NDArray[np.float64], *, in_tool: bool) -> Pose:
