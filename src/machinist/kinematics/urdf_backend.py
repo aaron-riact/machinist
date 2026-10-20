@@ -140,6 +140,13 @@ def _walk_chain(
     return chain, pending
 
 
+def end_link(urdf_path: str | Path) -> str:
+    """The URDF's only end link; raises if it ends in none or several."""
+    root = ET.parse(urdf_path).getroot()
+    links = [str(elem.get("name")) for elem in root.findall("link")]
+    return _end_link(urdf_path, links, [_parse_joint(elem) for elem in root.findall("joint")])
+
+
 def _end_link(urdf_path: str | Path, links: list[str], joints: list[dict[str, Any]]) -> str:
     """The URDF's only end link: one that a joint leads to and none leaves."""
     parents = {j["parent"] for j in joints}

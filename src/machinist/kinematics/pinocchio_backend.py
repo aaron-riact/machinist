@@ -15,6 +15,7 @@ import numpy as np
 
 from .api import Joints, Kinematics, Pose, RobotModel
 from .units import Meters, Radians
+from .urdf_backend import end_link
 
 
 @dataclass(slots=True)
@@ -33,12 +34,16 @@ class PinocchioKinematics(Kinematics):
         self._pin = pin
         if model.urdf_path is not None:
             self._model = pin.buildModelFromUrdf(str(model.urdf_path))
+            tip = model.tip_link if model.tip_link is not None else end_link(model.urdf_path)
+            if not self._model.existFrame(tip):
+                raise ValueError(f"{model.urdf_path} has no link {tip!r}")
+            self._ee_frame = self._model.getFrameId(tip)
         elif model.dh is not None:
             self._model = _model_from_dh(pin, model)
+            self._ee_frame = self._model.nframes - 1  # the tool0 frame it ends with
         else:
             raise ValueError("PinocchioKinematics needs a urdf_path or DH params")
         self._data = self._model.createData()
-        self._ee_frame = self._model.nframes - 1
         self.joint_count = self._model.nq
 
     # ----- forward ---------------------------------------------------
