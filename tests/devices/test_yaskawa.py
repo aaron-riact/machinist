@@ -284,6 +284,34 @@ def test_rjseq_without_an_executing_job_reads_no_name(motoman: YaskawaRobot) -> 
     assert _answer(motoman, "RJSEQ") == b",0,0\r"
 
 
+def test_rjdir_lists_every_job(with_jobs: YaskawaRobot) -> None:
+    assert _answer(with_jobs, "RJDIR", "*") == b"MAIN,PICK\r"
+
+
+def test_rjdir_lists_the_jobs_a_parent_calls(with_jobs: YaskawaRobot) -> None:
+    files = with_jobs.controller.files
+    files["MAIN.JBI"] = b"/JOB\r\nNOP\r\nCALL JOB:PICK\r\nJUMP JOB:PLACE\r\nEND\r\n"
+    files["PLACE.JBI"] = b"/JOB\r\nNOP\r\nCALL JOB:HOME\r\nEND\r\n"
+    files["HOME.JBI"] = b"/JOB\r\nNOP\r\nEND\r\n"
+    assert _answer(with_jobs, "RJDIR", "MAIN") == b"PICK,PLACE,HOME\r"
+
+
+def test_rjdir_of_a_job_that_calls_none_is_empty(with_jobs: YaskawaRobot) -> None:
+    assert _answer(with_jobs, "RJDIR", "PICK") == b"\r"
+
+
+def test_rjdir_with_a_missing_child_is_an_error(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.files["MAIN.JBI"] = b"/JOB\r\nNOP\r\nCALL JOB:GONE\r\nEND\r\n"
+    assert _answer(with_jobs, "RJDIR", "MAIN") == b"ERROR:RJDIR is not successful (4040).\r\n"
+
+
+def test_rjdir_starts_a_line_every_20_names(with_jobs: YaskawaRobot) -> None:
+    for n in range(19):
+        with_jobs.controller.files[f"J{n:02d}.JBI"] = b""
+    lines = _answer(with_jobs, "RJDIR", "*").split(b"\r")
+    assert [len(line.split(b",")) for line in lines] == [20, 1, 1]
+
+
 def test_start_runs_the_executing_job(with_jobs: YaskawaRobot) -> None:
     with_jobs.controller.select_job("PICK", 3)
     assert _answer(with_jobs, "START") == b"0000\r\n"

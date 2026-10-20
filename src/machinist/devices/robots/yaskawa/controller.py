@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum, IntFlag, auto
@@ -38,6 +39,8 @@ ALARM_HISTORY = 100
 
 #: A job's file name ends in this.
 JOB_SUFFIX = ".JBI"
+#: A job another job calls or jumps to, in its INFORM: CALL JOB:PICK, JUMP JOB:PLACE.
+JOB_REFERENCE = re.compile(r"\b(?:CALL|JUMP) JOB:(\S+)")
 
 
 def empty_job(name: str) -> bytes:
@@ -418,6 +421,22 @@ class YaskawaController:
         return frozenset(
             name.removesuffix(JOB_SUFFIX) for name in self.files if name.endswith(JOB_SUFFIX)
         )
+
+    def related_jobs(self, parent: str) -> list[str]:
+        """The jobs *parent* calls or jumps to, and theirs in turn, in the order
+        they first appear; *parent* itself is left out."""
+        found: list[str] = []
+        pending = [parent]
+        while pending:
+            name = pending.pop(0)
+            if name not in self.jobs:
+                raise CommandRefusedError(Refusal.NO_SUCH_JOB, f"no job {name!r}")
+            text = self.files[name + JOB_SUFFIX].decode("ascii", errors="replace")
+            for child in JOB_REFERENCE.findall(text):
+                if child != parent and child not in found:
+                    found.append(child)
+                    pending.append(child)
+        return found
 
     def select_job(self, name: str, line: int = 0, *, master_of_task: int | None = None) -> None:
         """Set the executing job (and its line), or a task's master job; not while

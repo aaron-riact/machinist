@@ -54,6 +54,10 @@ BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 ALARM_SLOTS = 4
 
 
+#: RJDIR starts a new line after every 20 job names. The manual does not say
+#: which line feed; the emulator uses CR, the end of every answer line.
+JOB_NAMES_PER_LINE = 20
+ALL_JOBS = "*"
 #: The task SETMJ sets the master job of: CTASK selects none other here.
 MASTER_TASK = 0
 #: The last line JSEQ can set.
@@ -111,6 +115,7 @@ class EthernetServer:
             "RPOSC": self._rposc,
             "RALARM": self._ralarm,
             "RJSEQ": self._rjseq,
+            "RJDIR": self._rjdir,
             "SVON": self._svon,
             "HOLD": self._hold,
             "RESET": self._reset,
@@ -165,6 +170,16 @@ class EthernetServer:
         """The executing job's name, line and step. The emulator keeps no steps, so
         the step reads 0, as in HSES 0x73."""
         return f"{self.controller.executing_job},{self.controller.executing_line},0"
+
+    def _rjdir(self, data: str) -> str:
+        """Every job's name (``*``), or the names of the jobs a parent job calls."""
+        parent = data.strip()
+        names = sorted(self.controller.jobs) if parent == ALL_JOBS else (
+            self.controller.related_jobs(parent)
+        )
+        per_line = JOB_NAMES_PER_LINE
+        lines = [names[i : i + per_line] for i in range(0, len(names), per_line)]
+        return "\r".join(",".join(line) for line in lines)
 
     def _svon(self, data: str) -> None:
         self.controller.set_servo(_parse_switch(data))
