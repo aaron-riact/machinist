@@ -1,0 +1,23 @@
+# A Motoman YR-UP50N on an NX100, served the way its Ethernet server
+# function (HW0483202) serves it: TCP port 80, CONNECT Robot_access, then
+# HOSTCTRL_REQUEST commands.
+#
+# Run with:
+#   uv run machinist run examples/motoman_up50n.yaml
+#
+# Port 80 needs root, unless net.ipv4.ip_unprivileged_port_start allows it.
+#
+# The riact Motoman driver sets its digital outputs through the network
+# inputs and reads them back as outputs, as the ladder of riact's cell maps
+# them: DO1-DO8 at #22010 show at #30040, DO11-DO18 at #22020 at #30010.
+
+devices:
+  - name: up50n
+    kind: motoman_nx100
+    options:
+      urdf: examples/yr_up50n.urdf
+      # The flange pointing down, in front of the robot.
+      start_joints_deg: [0, 0, 0, 0, -90, 0]
+      ladder_copies:
+        22010: 30040
+        22020: 30010
