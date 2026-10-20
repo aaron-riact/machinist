@@ -260,3 +260,25 @@ def test_pmovl_takes_speed_selection_and_speed(motoman: MotomanNX100) -> None:
     assert _answer(motoman, "PMOVL", move) == b"0000\r\n"
     bad = "2, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
     assert _answer(motoman, "PMOVL", bad) == b"ERROR:PMOVL is not successful (9001).\r\n"
+
+
+def test_movj_moves_to_a_pose_and_records_its_form_and_tool(motoman: MotomanNX100) -> None:
+    move = "50, 0, 100, 200, 300, 10, 20, 30, 4, 5, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "MOVJ", move) == b"0000\r\n"
+    assert _answer(motoman, "RPOSC", "0,0").endswith(b",4,5\r")
+
+
+def test_movl_moves_to_a_pose(motoman: MotomanNX100) -> None:
+    move = "0, 250, 0, 100, 200, 300, 10, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "MOVL", move) == b"0000\r\n"
+
+
+def test_movl_in_a_user_frame_is_an_error(motoman: MotomanNX100) -> None:
+    move = "0, 250, 2, 100, 200, 300, 10, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "MOVL", move) == b"ERROR:MOVL is not successful (9002).\r\n"
+
+
+@pytest.mark.parametrize("coordinate", [0, 26])
+def test_imov_steps_in_base_or_tool_coordinates(motoman: MotomanNX100, coordinate: int) -> None:
+    step = f"0, 100, {coordinate}, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "IMOV", step) == b"0000\r\n"

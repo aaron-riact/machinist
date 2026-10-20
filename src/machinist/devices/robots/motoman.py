@@ -35,8 +35,8 @@ from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...kinematics.api import Joints, Pose
-from ...kinematics.dh_backend import pose_to_mat
-from ...kinematics.units import Radians
+from ...kinematics.dh_backend import _mat_to_pose, pose_to_mat
+from ...kinematics.units import Meters, Radians
 from ...transport.framing import CR
 from ...transport.line_server import Hangup, Reply, SessionHandler
 from .arm import ArmOptions, HasArm, NoLinearPath, RobotArm, arm_from_options
@@ -52,6 +52,8 @@ AXES_ON_THE_WIRE = 12
 EXTERNAL_AXES = 6
 #: Coordinate numbers: base, robot, then user frames 1 to 24 as 2 to 25.
 BASE_COORDINATE, ROBOT_COORDINATE, LAST_USER_COORDINATE = 0, 1, 25
+#: IMOV may also step in the tool's own frame.
+TOOL_COORDINATE = 26
 #: The alarm RALARM reports while the arm is faulted. A real controller names
 #: the cause; the arm only knows that it faulted, so this is a stand-in.
 FAULT_ALARM = 4000
@@ -176,6 +178,9 @@ class NX100Controller:
             "CANCEL": self._cancel,
             "PMOVJ": self._pmovj,
             "PMOVL": self._pmovl,
+            "MOVJ": self._movj,
+            "MOVL": self._movl,
+            "IMOV": self._imov,
         }
         return commands.get(name)
 
@@ -261,6 +266,49 @@ class NX100Controller:
         self.tool = _tool(values[8])
         self._move_linear(target, selection, speed)
 
+    def _movj(self, data: str) -> None:
+        """Speed (%), coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
+        values = _parse_numbers(data, count=16)
+        speed = _joint_speed(values[0])
+        _check_coordinate(_integer(values[1]))
+        target = _pose(values[2:8])
+        self.form, self.tool = _integer(values[8]), _tool(values[9])
+        self._check_can_move()
+        joints = self.arm.inverse(target)
+        self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed))
+
+    def _movl(self, data: str) -> None:
+        """Speed selection, speed, coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
+        values = _parse_numbers(data, count=17)
+        selection, speed = _linear_speed(values[0], values[1])
+        _check_coordinate(_integer(values[2]))
+        target = _pose(values[3:9])
+        self.form, self.tool = _integer(values[9]), _tool(values[10])
+        self._move_linear(target, selection, speed)
+
+    def _imov(self, data: str) -> None:
+        """Speed selection, speed, coordinate, the step in X Y Z Rx Ry Rz, reserved, tool,
+        six external axes.
+
+        In the base or robot coordinate the step moves the tool along and turns it
+        about the base axes; in the tool coordinate, along and about its own.
+        """
+        values = _parse_numbers(data, count=17)
+        selection, speed = _linear_speed(values[0], values[1])
+        coordinate = _integer(values[2])
+        if coordinate != TOOL_COORDINATE:
+            _check_coordinate(coordinate)
+        step = pose_to_mat(_pose(values[3:9]))
+        self.tool = _tool(values[10])
+        here = pose_to_mat(self.arm.state.view.pose)
+        if coordinate == TOOL_COORDINATE:
+            there = here @ step
+        else:
+            there = np.eye(4)
+            there[:3, :3] = step[:3, :3] @ here[:3, :3]
+            there[:3, 3] = here[:3, 3] + step[:3, 3]
+        self._move_linear(_mat_to_pose(there), selection, speed)
+
     def _joints(self, pulses: list[float]) -> Joints:
         robot_pulses = pulses[: len(self.pulses_per_degree)]
         return tuple(
@@ -324,10 +372,26 @@ def _linear_speed(selection: float, speed: float) -> tuple[SpeedSelection, float
     return SpeedSelection(int(selection)), speed
 
 
-def _tool(value: float) -> int:
-    if value != int(value) or not 0 <= value <= MAX_TOOL:
-        raise CommandError(InterpreterMessage.BAD_DATA, f"tool {value}")
+def _pose(values: list[float]) -> Pose:
+    """X, Y, Z in mm and Rx, Ry, Rz in degrees → metres and radians."""
+    x, y, z, rx, ry, rz = values
+    return (
+        Meters(x / 1000), Meters(y / 1000), Meters(z / 1000),
+        Radians(math.radians(rx)), Radians(math.radians(ry)), Radians(math.radians(rz)),
+    )
+
+
+def _integer(value: float) -> int:
+    if value != int(value):
+        raise CommandError(InterpreterMessage.BAD_DATA, f"not an integer: {value}")
     return int(value)
+
+
+def _tool(value: float) -> int:
+    tool = _integer(value)
+    if not 0 <= tool <= MAX_TOOL:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"tool {tool}")
+    return tool
 
 
 def _parse_numbers(data: str, *, count: int) -> list[float]:
