@@ -559,3 +559,14 @@ def test_alarm_history_of_other_kinds_is_empty(yrc: YaskawaRobot) -> None:
     yrc.arm.fault()
     assert _ask(yrc, 0x71, 1001, 0, GET_ALL).data == bytes(60)
     assert _ask(yrc, 0x71, 101, 0, GET_ALL).added_status == AddedStatus.INSTANCE_ERROR
+
+
+@pytest.mark.parametrize("command", [0x30A, 0x30B])
+def test_alarms_with_sub_codes_add_three_strings(yrc: YaskawaRobot, command: int) -> None:
+    """3.3.37: the alarm read's 60 bytes, then 16 + 96 + 96 bytes of sub code text."""
+    yrc.arm.fault()
+    answer = _ask(yrc, command, 1, 0, GET_ALL)
+    assert len(answer.data) == 268
+    assert struct.unpack("<i", answer.data[:4]) == (4000,)
+    assert answer.data[60:] == bytes(208)
+    assert _ask(yrc, command, 1, 7, GET_SINGLE).data == bytes(96)

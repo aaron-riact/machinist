@@ -326,6 +326,8 @@ class HighSpeedEthernetServer:
             0x307: self._plural_positions(ROBOT_POSITIONS),
             0x308: self._plural_positions(BASE_POSITIONS),
             0x309: self._plural_positions(EXTERNAL_POSITIONS),
+            0x30A: self._alarm_with_sub_codes,
+            0x30B: self._alarm_history_with_sub_codes,
             0x30C: self._plural_strings(32),
         }
 
@@ -349,6 +351,24 @@ class HighSpeedEthernetServer:
         history = self.controller.alarm_history if instance in MAJOR_FAILURES else []
         nth = instance % 1000
         return _read(request, _alarm_fields(history[nth - 1] if nth <= len(history) else None))
+
+    # --- 3.3.37, 3.3.38 Alarms with sub code strings (0x30A, 0x30B) --------------
+
+    def _alarm_with_sub_codes(self, request: Request) -> bytes:
+        """As the alarm read, then the sub code's additional information (16
+        characters), its text (96) and which of those characters show reversed (96)."""
+        newest = _instance(request, 1, 2, 3, 4)
+        alarms = self.controller.alarms()
+        alarm = alarms[newest - 1] if newest <= len(alarms) else None
+        return _read(request, [*_alarm_fields(alarm), *_SUB_CODE_FIELDS])
+
+    def _alarm_history_with_sub_codes(self, request: Request) -> bytes:
+        instance = _instance(request, *ALARM_HISTORY_INSTANCES)
+        self.controller.alarms()
+        history = self.controller.alarm_history if instance in MAJOR_FAILURES else []
+        nth = instance % 1000
+        alarm = history[nth - 1] if nth <= len(history) else None
+        return _read(request, [*_alarm_fields(alarm), *_SUB_CODE_FIELDS])
 
     # --- 3.3.5 Axis configuration information reading (0x74) ---------------------
 
@@ -790,6 +810,10 @@ def _alarm_fields(alarm: Alarm | None) -> list[bytes]:
         int32s(alarm.code), int32s(alarm.data), int32s(ALARM_TYPE_DECIMAL),
         text(16, alarm.time), text(32, FAULT_ALARM_NAME),
     ]
+
+
+#: A stand-in alarm has no sub code, so its sub code strings are empty.
+_SUB_CODE_FIELDS = (text(16), text(96), text(96))
 
 
 def _write(request: Request, *, count: int) -> tuple[int, ...]:
