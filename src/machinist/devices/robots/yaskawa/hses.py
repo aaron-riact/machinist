@@ -114,10 +114,10 @@ IO_INSTANCES = (
     range(8001, 8129),  # robot control status signals
     range(8201, 8221),  # pseudo inputs
 )
-#: An IO write carries its byte alone, or as the low byte of a 32-bit word: the
-#: manual draws the data as a 32-bit row, and moto-hses, verified on a
-#: YRC1000micro, sends four bytes where other clients send one.
-IO_WRITE_SIZES = (1, 4)
+#: An IO write carries its byte alone or followed by zeros: the manual draws
+#: the data as a 32-bit row; moto-hses, verified on a YRC1000micro, sends four
+#: bytes, YMConnect, Yaskawa's own client, eight, and others one.
+IO_WRITE_SIZES = (1, 4, 8)
 #: A single register, variable or IO value is addressed with attribute 1, as
 #: the manual says, or 0, as moto-hses sends for variables on a real
 #: YRC1000micro.

@@ -690,3 +690,9 @@ def test_a_dx200_has_no_system_parameter_read() -> None:
         assert answer.status is Status.UNDEFINED_COMMAND
     finally:
         m.stop()
+
+
+def test_an_io_write_may_carry_its_byte_in_8_bytes(yrc: YaskawaRobot) -> None:
+    """YMConnect sends the IO byte and seven zeros."""
+    assert _ask(yrc, 0x78, 2701, 1, SET_SINGLE, b"\x05" + bytes(7)).status is Status.OK
+    assert _ask(yrc, 0x78, 2701, 1, GET_SINGLE).data == b"\x05"
