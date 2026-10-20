@@ -438,6 +438,18 @@ class YaskawaController:
                     pending.append(child)
         return found
 
+    def delete_jobs(self, name: str | None) -> None:
+        """Delete job *name*, or every job for None; in teach mode only, and not while
+        the arm moves. A deleted job stops being executing or a master job."""
+        self._check_can_edit()
+        if name is not None and name not in self.jobs:
+            raise CommandRefusedError(Refusal.NO_SUCH_JOB, f"no job {name!r}")
+        for job in [name] if name is not None else sorted(self.jobs):
+            del self.files[job + JOB_SUFFIX]
+            if self.executing_job == job:
+                self.executing_job, self.executing_line = "", 0
+            self.master_jobs = {t: j for t, j in self.master_jobs.items() if j != job}
+
     def select_job(self, name: str, line: int = 0, *, master_of_task: int | None = None) -> None:
         """Set the executing job (and its line), or a task's master job; not while
         the arm moves."""
@@ -508,6 +520,13 @@ class YaskawaController:
             self.io[signal] = value
             if signal in self.ladder_copies:
                 self.io[self.ladder_copies[signal]] = value
+
+    def _check_can_edit(self) -> None:
+        """Editing (DELETE, WUFRAME, ...) needs teach mode and a still arm (11.1.1)."""
+        if self.mode is not Status1.TEACH:
+            raise CommandRefusedError(Refusal.WRONG_MODE, "the controller is in play mode")
+        if self.arm.state.view.moving:
+            raise CommandRefusedError(Refusal.MOVING, "the manipulator is operating")
 
     def _check_can_move(self) -> None:
         view = self.arm.state.view

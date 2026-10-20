@@ -334,6 +334,36 @@ def test_start_in_teach_mode_keeps_the_executing_job(with_jobs: YaskawaRobot) ->
     assert _answer(with_jobs, "RJSEQ") == b"PICK,3,0\r"
 
 
+def test_delete_removes_a_job_in_teach_mode(with_jobs: YaskawaRobot) -> None:
+    _answer(with_jobs, "MODE", "1")
+    assert _answer(with_jobs, "DELETE", "PICK") == b"0000\r\n"
+    assert _answer(with_jobs, "RJDIR", "*") == b"MAIN\r"
+
+
+def test_delete_star_removes_every_job(with_jobs: YaskawaRobot) -> None:
+    _answer(with_jobs, "MODE", "1")
+    assert _answer(with_jobs, "DELETE", "*") == b"0000\r\n"
+    assert _answer(with_jobs, "RJDIR", "*") == b"\r"
+    assert "SYSTEM.SYS" in with_jobs.controller.files
+
+
+def test_delete_in_play_mode_is_an_error(with_jobs: YaskawaRobot) -> None:
+    """2080: the interlock table (11.1.1) allows editing in teach mode only."""
+    assert _answer(with_jobs, "DELETE", "PICK") == b"ERROR:DELETE is not successful (2080).\r\n"
+
+
+def test_delete_of_a_job_the_controller_lacks_is_an_error(with_jobs: YaskawaRobot) -> None:
+    _answer(with_jobs, "MODE", "1")
+    assert _answer(with_jobs, "DELETE", "NOPE") == b"ERROR:DELETE is not successful (4040).\r\n"
+
+
+def test_a_deleted_job_no_longer_executes(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.select_job("PICK", 3)
+    _answer(with_jobs, "MODE", "1")
+    _answer(with_jobs, "DELETE", "PICK")
+    assert _answer(with_jobs, "RJSEQ") == b",0,0\r"
+
+
 def test_setmj_sets_the_master_and_executing_job(with_jobs: YaskawaRobot) -> None:
     with_jobs.controller.select_job("PICK", 7)
     assert _answer(with_jobs, "SETMJ", "MAIN") == b"0000\r\n"

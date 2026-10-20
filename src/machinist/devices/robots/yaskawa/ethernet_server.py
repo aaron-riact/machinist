@@ -130,6 +130,7 @@ class EthernetServer:
             "MOVL": self._movl,
             "IMOV": self._imov,
             "START": self._start,
+            "DELETE": self._delete,
             "SETMJ": self._setmj,
             "JSEQ": self._jseq,
             "IOREAD": self._ioread,
@@ -275,6 +276,11 @@ class EthernetServer:
     def _start(self, data: str) -> None:
         """Start the executing job from its line, or the job named from its start."""
         self.controller.start_job(data.strip() or None)
+
+    def _delete(self, data: str) -> None:
+        """Delete the job named, or every job (``*``)."""
+        name = data.strip()
+        self.controller.delete_jobs(None if name == ALL_JOBS else name)
 
     def _setmj(self, data: str) -> None:
         """A job to set as the master job, and at the same time as the executing job."""
