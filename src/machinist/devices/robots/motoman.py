@@ -45,6 +45,9 @@ NORMAL_ANSWER = "0000"
 MAX_KEEP_ALIVE = 32767
 #: Position answers carry this many axes: the robot's six and six external ones.
 AXES_ON_THE_WIRE = 12
+EXTERNAL_AXES = 6
+#: Coordinate numbers: base, robot, then user frames 1 to 24 as 2 to 25.
+BASE_COORDINATE, ROBOT_COORDINATE, LAST_USER_COORDINATE = 0, 1, 25
 
 #: Encoder pulses per degree of each YR-UP50N axis (S, L, U, R, B, T): 4096
 #: pulses per motor turn through each gear ratio, except L, whose ratio did
@@ -77,6 +80,7 @@ class InterpreterMessage(IntEnum):
     """
 
     BAD_DATA = 9001
+    UNDEFINED_USER_FRAME = 9002
 
 
 class Status1(IntFlag):
@@ -121,6 +125,10 @@ class NX100Controller:
     arm: RobotArm
     pulses_per_degree: tuple[float, ...]
     cycle: Status1 = Status1.ONE_CYCLE
+    #: The form (posture) type and tool number of the last move, which RPOSC
+    #: reports. The arm has no tool files, so the tool only travels along.
+    form: int = 0
+    tool: int = 0
 
     def command(self, name: str) -> Command | None:
         """The command called *name*, or None for one the controller does not know.
@@ -132,6 +140,7 @@ class NX100Controller:
         commands: dict[str, Command] = {
             "RSTATS": self._rstats,
             "RPOSJ": self._rposj,
+            "RPOSC": self._rposc,
         }
         return commands.get(name)
 
@@ -154,6 +163,45 @@ class NX100Controller:
             for joint, ratio in zip(self.arm.state.view.joints, self.pulses_per_degree, strict=True)
         ]
         return ",".join(str(p) for p in _pad(pulses, AXES_ON_THE_WIRE))
+
+
+    def _rposc(self, data: str) -> str:
+        coordinate, external = _parse_ints(data, count=2)
+        _check_coordinate(coordinate)
+        if external not in (0, 1):
+            raise CommandError(InterpreterMessage.BAD_DATA, f"external axis flag {external}")
+        x, y, z, rx, ry, rz = self.arm.state.view.pose
+        fields = [
+            *(f"{m * 1000:.3f}" for m in (x, y, z)),
+            *(f"{math.degrees(r):.2f}" for r in (rx, ry, rz)),
+            str(self.form),
+            str(self.tool),
+        ]
+        if external:
+            fields += ["0"] * EXTERNAL_AXES
+        return ",".join(fields)
+
+
+def _check_coordinate(coordinate: int) -> None:
+    """Base and robot coordinates are one frame here (no base axis); user frames are unset."""
+    if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
+        return
+    if ROBOT_COORDINATE < coordinate <= LAST_USER_COORDINATE:
+        raise CommandError(
+            InterpreterMessage.UNDEFINED_USER_FRAME, f"user frame {coordinate - 1} is not defined"
+        )
+    raise CommandError(InterpreterMessage.BAD_DATA, f"coordinate {coordinate}")
+
+
+def _parse_ints(data: str, *, count: int) -> list[int]:
+    """Exactly *count* comma-separated integers."""
+    try:
+        values = [int(part) for part in data.split(",")]
+    except ValueError as exc:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"not integers: {data!r}") from exc
+    if len(values) != count:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields, expected {count}")
+    return values
 
 
 def _pad(values: list[int], count: int) -> list[int]:

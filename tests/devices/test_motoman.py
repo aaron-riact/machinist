@@ -134,3 +134,26 @@ def test_rposj_answers_twelve_axes_in_pulses(motoman: MotomanNX100) -> None:
 def test_pulses_per_degree_needs_one_ratio_per_joint() -> None:
     with pytest.raises(ValueError, match="2 pulses_per_degree for 6 joints"):
         MotomanOptions(pulses_per_degree=(1.0, 2.0))
+
+
+def test_rposc_answers_mm_degrees_form_and_tool(motoman: MotomanNX100) -> None:
+    """X, Y, Z in mm (3 decimals), Rx, Ry, Rz in degrees (2 decimals), type, tool.
+
+    The fixture's arm has no kinematics, so its pose is its joint values.
+    """
+    assert _answer(motoman, "RPOSC", "0, 0") == (
+        b"174.533,349.066,-523.599,0.00,45.00,-90.00,0,0\r"
+    )
+
+
+def test_rposc_with_external_axes_adds_six(motoman: MotomanNX100) -> None:
+    assert _answer(motoman, "RPOSC", "1,1").endswith(b",0,0,0,0,0,0,0,0\r")
+
+
+def test_rposc_in_an_undefined_user_frame_is_an_error(motoman: MotomanNX100) -> None:
+    assert _answer(motoman, "RPOSC", "2,0") == b"ERROR:RPOSC is not successful (9002).\r\n"
+
+
+@pytest.mark.parametrize("data", ["26,0", "0,2", "0", "a,b"])
+def test_rposc_with_bad_data_is_an_error(motoman: MotomanNX100, data: str) -> None:
+    assert _answer(motoman, "RPOSC", data) == b"ERROR:RPOSC is not successful (9001).\r\n"
