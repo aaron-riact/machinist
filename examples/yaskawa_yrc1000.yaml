@@ -1,5 +1,6 @@
 # A Yaskawa arm on a YRC1000, serving the text Ethernet server on TCP port 80
-# and the High-Speed Ethernet Server (HSES) on UDP port 10040.
+# and the High-Speed Ethernet Server (HSES): robot control on UDP port 10040,
+# file control on 10041.
 #
 # Run with:
 #   uv run machinist run examples/yaskawa_yrc1000.yaml
@@ -19,4 +20,8 @@ devices:
       robot: up50n
       protocols: [ethernet_server, hses]
       # hses_port: 10040
+      # hses_file_port: 10041
+      # Jobs the controller holds, as NAME.JBI files that do nothing; the
+      # emulator cannot run INFORM, so a started job finishes at once.
+      jobs: [MAIN]
       start_joints_deg: [0, 0, 0, 0, -90, 0]
