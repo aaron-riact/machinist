@@ -72,6 +72,7 @@ ADDED_STATUS: dict[Refusal, AddedStatus] = {
     Refusal.NO_EXECUTING_JOB: AddedStatus.NO_EXECUTING_JOB,
     Refusal.WRONG_MODE: AddedStatus.INCORRECT_MODE,
     Refusal.MOVING: AddedStatus.MANIPULATOR_OPERATING,
+    Refusal.BAD_GROUP: AddedStatus.CONTROL_GROUP_ERROR,
 }
 
 

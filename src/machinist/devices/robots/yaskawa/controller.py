@@ -178,6 +178,7 @@ class Refusal(Enum):
     NO_EXECUTING_JOB = auto()
     WRONG_MODE = auto()
     MOVING = auto()
+    BAD_GROUP = auto()
 
 
 class Status1(IntFlag):

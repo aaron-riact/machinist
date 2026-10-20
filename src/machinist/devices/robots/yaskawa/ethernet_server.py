@@ -93,6 +93,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.NO_EXECUTING_JOB: 4060,
     Refusal.WRONG_MODE: 2080,
     Refusal.MOVING: 2010,  # manipulator operating
+    Refusal.BAD_GROUP: 3370,  # incorrect control group
 }
 
 
@@ -125,6 +126,7 @@ class EthernetServer:
             "RESET": self._reset,
             "CANCEL": self._cancel,
             "HLOCK": self._hlock,
+            "CGROUP": self._cgroup,
             "MODE": self._mode,
             "MDSP": self._mdsp,
             "CYCLE": self._cycle,
@@ -212,6 +214,13 @@ class EthernetServer:
         if len(data.encode()) > PENDANT_MESSAGE_BYTES:
             raise CommandRefusedError(Refusal.BAD_DATA, f"{len(data.encode())}-byte message")
         self.controller.pendant_message = data
+
+    def _cgroup(self, data: str) -> None:
+        """The robot and station for commands to act on, a bit for each. A group the
+        cell lacks cannot be chosen, so R1 and no station is the only choice."""
+        robots, stations = _parse_ints(data, count=2)
+        if (robots, stations) != (R1_GROUP, NO_STATIONS):
+            raise CommandRefusedError(Refusal.BAD_GROUP, f"robots {robots}, stations {stations}")
 
     def _mode(self, data: str) -> None:
         """1 teach, 2 play. A real controller takes MODE only when its external mode

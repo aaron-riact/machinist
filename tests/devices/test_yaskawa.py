@@ -399,6 +399,15 @@ def test_rgroup_reads_r1_and_the_master_task(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "RGROUP") == b"1,0,0\r"
 
 
+def test_cgroup_takes_r1(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "CGROUP", "1,0") == b"0000\r\n"
+
+
+@pytest.mark.parametrize("data", ["2,0", "3,0", "1,1"])
+def test_cgroup_of_a_group_the_cell_lacks_is_an_error(motoman: YaskawaRobot, data: str) -> None:
+    assert _answer(motoman, "CGROUP", data) == b"ERROR:CGROUP is not successful (3370).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:
