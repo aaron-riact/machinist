@@ -608,7 +608,7 @@ def test_select_a_job_and_read_it_back(yrc: YaskawaRobot) -> None:
     assert _ask(yrc, 0x87, 1, 0, SET_ALL, _job("PICK", 12)).status is Status.OK
     data = _ask(yrc, 0x73, 1, 0, GET_ALL).data
     assert data[:32].rstrip(b"\0") == b"PICK"
-    assert struct.unpack("<3i", data[32:]) == (12, 0, 100)
+    assert struct.unpack("<3i", data[32:]) == (12, 0, 10_000)  # 100.00 %
 
 
 def test_selecting_a_job_the_controller_lacks_is_refused(yrc: YaskawaRobot) -> None:

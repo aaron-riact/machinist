@@ -242,8 +242,9 @@ ALARM_HISTORY_INSTANCES = tuple(
 #: Tasks (3.3.4): the master task is instance 1, sub tasks 1 to 15 follow.
 MASTER_TASK = 1
 TASKS = range(1, 17)
-#: The speed override a job runs at, in percent; the emulator has no override.
-SPEED_OVERRIDE_PERCENT = 100
+#: The speed override a job runs at, in hundredths of a percent: YMConnect, Yaskawa's
+#: own client, divides it by 100. The emulator has no override, so it is 100 %.
+SPEED_OVERRIDE = 10_000
 #: Job select instances (3.3.24): the executing job, or task 0 to 15's master job.
 EXECUTING_JOB = 1
 MASTER_JOB_INSTANCES = range(10, 26)
@@ -690,7 +691,7 @@ class HighSpeedEthernetServer:
         if task == MASTER_TASK:
             name, line = self.controller.executing_job, self.controller.executing_line
         return _read(request, [
-            text(32, name), int32s(line), int32s(0), int32s(SPEED_OVERRIDE_PERCENT),
+            text(32, name), int32s(line), int32s(0), int32s(SPEED_OVERRIDE),
         ])
 
     # --- 3.3.23 Start-up (job start) (0x86) ----------------------------------
