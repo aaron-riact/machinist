@@ -70,6 +70,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.HELD: 9005,
     Refusal.NO_LINEAR_PATH: 9006,
     Refusal.NOT_WRITABLE: 9007,
+    Refusal.BAD_TOOL: 9001,
 }
 
 

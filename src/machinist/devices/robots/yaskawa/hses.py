@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from ....kinematics.api import Pose
+from ....kinematics.dh_backend import pose_to_mat
+from ....kinematics.units import Meters, Radians
 from ....transport.yaskawa_hses import (
     ANSWER_SERVICE,
     AddedStatus,
@@ -31,7 +33,14 @@ from ....transport.yaskawa_hses import (
     parse_request,
     request_id_of,
 )
-from .controller import CommandRefusedError, Refusal, Status1, YaskawaController
+from .controller import (
+    CommandRefusedError,
+    Refusal,
+    SpeedSelection,
+    Status1,
+    YaskawaController,
+    stepped,
+)
 
 
 class Service(IntEnum):
@@ -55,6 +64,7 @@ ADDED_STATUS: dict[Refusal, AddedStatus] = {
     Refusal.HELD: AddedStatus.COMMAND_HOLD,
     Refusal.NO_LINEAR_PATH: AddedStatus.OUTSIDE_THE_DATA,
     Refusal.NOT_WRITABLE: AddedStatus.OUTSIDE_THE_DATA,
+    Refusal.BAD_TOOL: AddedStatus.TOOL_NUMBER_ERROR,
 }
 
 
@@ -101,6 +111,19 @@ IO_INSTANCES = (
 )
 #: The most IO bytes one plural command carries (3.3.27).
 MAX_PLURAL_IO = 474
+class MoveKind(IntEnum):
+    """What a move instruction does, by its instance (3.3.39, 3.3.40)."""
+
+    JOINT = 1
+    STRAIGHT = 2
+    STRAIGHT_INCREMENT = 3
+
+
+#: A move's speed class (3.3.39): percent for a joint move, mm/s or degrees/s
+#: for a straight one, each sent in hundredths or tenths.
+PERCENT, V, VR = 0, 1, 2
+#: A move's operation coordinate (3.3.39).
+BASE_COORDINATE, ROBOT_COORDINATE, USER_COORDINATE, TOOL_COORDINATE = 16, 17, 18, 19
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -174,6 +197,8 @@ class HighSpeedEthernetServer:
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
+            0x8A: self._move_cartesian,
+            0x8B: self._move_pulse,
             0x300: self._plural_io,
         }
 
@@ -285,6 +310,61 @@ class HighSpeedEthernetServer:
         self.controller.cycle = CYCLES[cycle]
         return b""
 
+    # --- 3.3.39 Move instruction, Cartesian (0x8A) -----------------------------
+
+    def _move_cartesian(self, request: Request) -> bytes:
+        """Joint move (instance 1), straight move (2) or straight increment (3) to a
+        pose: groups, speed class and speed, coordinate, X Y Z (µm), Rx Ry Rz
+        (0.0001 degrees), two reserved, form, extended form, tool, user coordinate,
+        then base and station axes."""
+        kind = MoveKind(_instance(request, *MoveKind))
+        values = _move_data(request, count=26)
+        _robot_1_only(values[0], values[1])
+        speed_class, speed = _speed(kind, values[2], values[3])
+        coordinate = values[4]
+        tool = self.controller.check_tool(values[15])
+        self._check_move_coordinate(kind, coordinate, user_frame=values[16])
+        target = _pose_from(values[5:11])
+        if kind is MoveKind.STRAIGHT_INCREMENT:
+            here = self.controller.arm.state.view.pose
+            target = stepped(here, pose_to_mat(target), in_tool=coordinate == TOOL_COORDINATE)
+        self.controller.form, self.controller.tool = values[13], tool
+        if kind is MoveKind.JOINT:
+            self.controller.move_joints(self.controller.arm.inverse(target), speed)
+        else:
+            self.controller.move_linear(target, speed_class, speed)
+        return b""
+
+    # --- 3.3.40 Move instruction, pulse (0x8B) ---------------------------------
+
+    def _move_pulse(self, request: Request) -> bytes:
+        """Joint move (instance 1) or straight move (2) to pulses: groups, speed class
+        and speed, eight robot axes, tool, then base and station axes."""
+        kind = MoveKind(_instance(request, MoveKind.JOINT, MoveKind.STRAIGHT))
+        values = _move_data(request, count=22)
+        _robot_1_only(values[0], values[1])
+        speed_class, speed = _speed(kind, values[2], values[3])
+        target = self.controller.joints_at([float(v) for v in values[4:12]])
+        self.controller.tool = self.controller.check_tool(values[12])
+        if kind is MoveKind.JOINT:
+            self.controller.move_joints(target, speed)
+        else:
+            self.controller.move_linear(self.controller.arm.forward(target), speed_class, speed)
+        return b""
+
+    def _check_move_coordinate(self, kind: MoveKind, coordinate: int, *, user_frame: int) -> None:
+        """Base and robot coordinates are one frame; no user frame is taught; the tool
+        coordinate only makes sense for a step."""
+        if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
+            return
+        if coordinate == USER_COORDINATE:
+            if not 1 <= user_frame <= self.controller.profile.user_frames:
+                raise _added(AddedStatus.USER_NUMBER_ERROR)
+            raise _added(AddedStatus.USER_COORDINATE_NOT_TAUGHT)
+        if coordinate == TOOL_COORDINATE and kind is MoveKind.STRAIGHT_INCREMENT:
+            return
+        raise _added(AddedStatus.COORDINATE_SYSTEM_ERROR)
+
     # --- 3.3.19 Alarm reset / error cancel (0x82) ------------------------------
 
     def _reset_or_cancel(self, request: Request) -> bytes:
@@ -324,6 +404,47 @@ def _micrometres_and_ten_thousandths(pose: Pose) -> list[int]:
     x, y, z, rx, ry, rz = pose
     position = [round(m * 1e6) for m in (x, y, z)]
     return position + [round(math.degrees(r) * 1e4) for r in (rx, ry, rz)]
+
+
+def _move_data(request: Request, *, count: int) -> tuple[int, ...]:
+    if request.service != Service.SET_ALL:
+        raise HsesError(Status.UNDEFINED_COMMAND)
+    if request.attribute != 1:
+        raise _added(AddedStatus.ATTRIBUTE_ERROR)
+    if len(request.data) != 4 * count:
+        raise _added(AddedStatus.DATA_SIZE_ERROR)
+    return struct.unpack(f"<{count}i", request.data)
+
+
+def _robot_1_only(robot: int, station: int) -> None:
+    """The emulated cell has robot 1 and no stations."""
+    if robot != 1 or station != 0:
+        raise _added(AddedStatus.CONTROL_GROUP_ERROR)
+
+
+def _speed(kind: MoveKind, speed_class: int, value: int) -> tuple[SpeedSelection, float]:
+    """A joint move's speed in percent, or a straight move's selection and speed."""
+    if value <= 0:
+        raise _added(AddedStatus.SPEED_ERROR)
+    if kind is MoveKind.JOINT:
+        if speed_class != PERCENT or value > 10_000:
+            raise _added(AddedStatus.SPEED_ERROR)
+        return SpeedSelection.V, value / 100
+    if speed_class == V:
+        return SpeedSelection.V, value / 10
+    if speed_class == VR:
+        return SpeedSelection.VR, value / 10
+    raise _added(AddedStatus.SPEED_ERROR)
+
+
+def _pose_from(values: tuple[int, ...]) -> Pose:
+    """X Y Z in µm and Rx Ry Rz in 0.0001 degrees → metres and radians."""
+    x, y, z, rx, ry, rz = values
+    return (
+        Meters(x / 1e6), Meters(y / 1e6), Meters(z / 1e6),
+        Radians(math.radians(rx / 1e4)), Radians(math.radians(ry / 1e4)),
+        Radians(math.radians(rz / 1e4)),
+    )
 
 
 def _known_io_signal(signal: int) -> bool:

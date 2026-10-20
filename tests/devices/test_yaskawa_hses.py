@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -249,3 +250,110 @@ def test_hses_io_and_the_ethernet_servers_io_are_the_same_signals(yrc: YaskawaRo
         while chunk := s.recv(1024):
             received += chunk
     assert received.endswith(b"OK: IOREAD\r\n42\r")
+
+
+SET_ALL = 0x02
+#: The fixture's pose: the flange 1170 mm out and 805 mm up, pointing down.
+HOME = (1_170_000, 0, 805_000, 1_800_000, 0, 1_800_000)
+
+
+def _cartesian(kind: int, xyz_rxryrz: tuple[int, ...], *, speed_class: int = 1,
+               speed: int = 5000, coordinate: int = 16, tool: int = 0, user: int = 0,
+               robot: int = 1, station: int = 0) -> bytes:
+    return struct.pack("<26i", robot, station, speed_class, speed, coordinate, *xyz_rxryrz,
+                       0, 0, 0, 0, tool, user, *([0] * 9))
+
+
+def _pulses(pulses: tuple[int, ...], *, speed_class: int = 0, speed: int = 10_000,
+            tool: int = 0) -> bytes:
+    return struct.pack("<22i", 1, 0, speed_class, speed, *pulses, tool, *([0] * 9))
+
+
+def _settle(robot: YaskawaRobot) -> None:
+    deadline = time.monotonic() + 5
+    while robot.arm.state.view.moving:
+        assert time.monotonic() < deadline, "the move did not finish"
+        time.sleep(0.02)
+
+
+def _cartesian_position(robot: YaskawaRobot) -> tuple[int, ...]:
+    return _ints(_ask(robot, 0x75, 101, 0, GET_ALL))[5:11]
+
+
+def test_pulse_joint_move(yrc: YaskawaRobot) -> None:
+    move = _pulses((0, 0, 0, 0, -36654, 0, 0, 0))
+    assert _ask(yrc, 0x8B, 1, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    assert _ints(_ask(yrc, 0x75, 1, 10, GET_SINGLE)) == (-36654,)
+
+
+def test_pulse_straight_move(yrc: YaskawaRobot) -> None:
+    move = _pulses((0, 0, 0, 0, -36654, 0, 0, 0), speed_class=2, speed=900)
+    assert _ask(yrc, 0x8B, 2, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    assert _ints(_ask(yrc, 0x75, 1, 10, GET_SINGLE)) == pytest.approx((-36654,), abs=50)
+
+
+def test_cartesian_straight_move(yrc: YaskawaRobot) -> None:
+    up = (HOME[0], HOME[1], HOME[2] + 100_000, *HOME[3:])
+    assert _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, up)).status is Status.OK
+    _settle(yrc)
+    x, y, z, *_ = _cartesian_position(yrc)
+    assert (x, y, z) == pytest.approx((1_170_000, 0, 905_000), abs=100)
+
+
+def test_cartesian_joint_move(yrc: YaskawaRobot) -> None:
+    out = (HOME[0] + 50_000, *HOME[1:])
+    move = _cartesian(1, out, speed_class=0, speed=5000)
+    assert _ask(yrc, 0x8A, 1, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    assert _cartesian_position(yrc)[0] == pytest.approx(1_220_000, abs=100)
+
+
+@pytest.mark.parametrize(("coordinate", "dz"), [(16, 50_000), (19, -50_000)])
+def test_straight_increment_in_base_or_tool_coordinates(
+    yrc: YaskawaRobot, coordinate: int, dz: int
+) -> None:
+    """The tool points down, so a step along its Z goes down in the base."""
+    step = (0, 0, 50_000, 0, 0, 0)
+    move = _cartesian(3, step, coordinate=coordinate)
+    assert _ask(yrc, 0x8A, 3, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    assert _cartesian_position(yrc)[2] == pytest.approx(805_000 + dz, abs=100)
+
+
+@pytest.mark.parametrize(
+    ("instance", "data", "added_status"),
+    [
+        (2, _cartesian(2, HOME, robot=2), AddedStatus.CONTROL_GROUP_ERROR),
+        (2, _cartesian(2, HOME, station=1), AddedStatus.CONTROL_GROUP_ERROR),
+        (1, _cartesian(1, HOME, speed_class=1), AddedStatus.SPEED_ERROR),
+        (2, _cartesian(2, HOME, speed_class=0), AddedStatus.SPEED_ERROR),
+        (2, _cartesian(2, HOME, speed=0), AddedStatus.SPEED_ERROR),
+        (2, _cartesian(2, HOME, tool=64), AddedStatus.TOOL_NUMBER_ERROR),
+        (2, _cartesian(2, HOME, coordinate=18, user=1), AddedStatus.USER_COORDINATE_NOT_TAUGHT),
+        (2, _cartesian(2, HOME, coordinate=18, user=65), AddedStatus.USER_NUMBER_ERROR),
+        (2, _cartesian(2, HOME, coordinate=19), AddedStatus.COORDINATE_SYSTEM_ERROR),
+        (2, _cartesian(2, HOME)[:-4], AddedStatus.DATA_SIZE_ERROR),
+    ],
+)
+def test_a_cartesian_move_is_refused_with_the_manuals_code(
+    yrc: YaskawaRobot, instance: int, data: bytes, added_status: AddedStatus
+) -> None:
+    answer = _ask(yrc, 0x8A, instance, 1, SET_ALL, data)
+    assert (answer.status, answer.added_status) == (Status.VENDOR, added_status)
+
+
+@pytest.mark.parametrize(
+    ("setup", "added_status"),
+    [("servo_off", AddedStatus.SERVO_OFF), ("hold", AddedStatus.COMMAND_HOLD)],
+)
+def test_no_move_while_servo_is_off_or_held(
+    yrc: YaskawaRobot, setup: str, added_status: AddedStatus
+) -> None:
+    if setup == "servo_off":
+        _set(yrc, 0x83, 2, 2)
+    else:
+        _set(yrc, 0x83, 1, 1)
+    answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
+    assert (answer.status, answer.added_status) == (Status.VENDOR, added_status)

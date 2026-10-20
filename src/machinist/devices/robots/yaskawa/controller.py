@@ -107,6 +107,7 @@ class Refusal(Enum):
     HELD = auto()
     NO_LINEAR_PATH = auto()
     NOT_WRITABLE = auto()
+    BAD_TOOL = auto()
 
 
 class Status1(IntFlag):
@@ -236,7 +237,7 @@ class YaskawaController:
 
     def check_tool(self, tool: int) -> int:
         if not 0 <= tool <= self.profile.max_tool:
-            raise CommandRefusedError(Refusal.BAD_DATA, f"tool {tool}")
+            raise CommandRefusedError(Refusal.BAD_TOOL, f"tool {tool}")
         return tool
 
     def check_user_frame(self, number: int) -> None:
