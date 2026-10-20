@@ -180,6 +180,33 @@ class Refusal(Enum):
     MOVING = auto()
     BAD_GROUP = auto()
     NOT_PERMITTED = auto()
+    FRAME_NOT_SET = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class UserFrame:
+    """A user frame as taught: three points in base coordinates, ORG (its origin),
+    XX (on its X axis) and XY (on its XY plane, Y positive), each with the type
+    (form) the arm had there; the tool taught with; the external axes' pulses."""
+
+    org: Pose
+    xx: Pose
+    xy: Pose
+    types: tuple[int, int, int]
+    tool: int
+    external: tuple[int, ...]
+
+    def transform(self) -> NDArray[np.float64]:
+        """The frame in base coordinates, as a 4x4 transform."""
+        origin, on_x, on_xy = (np.array(p[:3], dtype=float) for p in (self.org, self.xx, self.xy))
+        x = on_x - origin
+        z = np.cross(x, on_xy - origin)
+        if np.linalg.norm(x) < FRAME_POINT_SPACING or np.linalg.norm(z) < FRAME_POINT_SPACING**2:
+            raise CommandRefusedError(Refusal.FRAME_NOT_SET, "the points do not span a plane")
+        x, z = x / np.linalg.norm(x), z / np.linalg.norm(z)
+        frame = np.eye(4)
+        frame[:3, 0], frame[:3, 1], frame[:3, 2], frame[:3, 3] = x, np.cross(z, x), z, origin
+        return frame
 
 
 class Status1(IntFlag):
@@ -201,6 +228,8 @@ class Status1(IntFlag):
 STANDARD_VARIABLES = range(100)
 POSITION_NUMBERS = range(128)
 STRING_SIZE = 32
+#: How far apart a user frame's taught points must be, in metres.
+FRAME_POINT_SPACING = 1e-3
 #: The modes MODE selects: 1 teach, 2 play.
 MODES = {1: Status1.TEACH, 2: Status1.PLAY}
 #: The cycles both servers number 1 step, 2 one cycle, 3 auto (CYCLE, HSES 0x84).
@@ -293,6 +322,8 @@ class YaskawaController:
             (PARAMETER_CONTROL_GROUPS, 0, FIRST_MOTION_SLOT): 1,
         }
     )
+    #: The user frames taught, by number (1 to profile.user_frames).
+    user_frames: dict[int, UserFrame] = field(default_factory=dict)
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
     #: When the controller's power came on: when the device was made.
@@ -493,12 +524,23 @@ class YaskawaController:
         return tool
 
     def check_user_frame(self, number: int) -> None:
-        """User frames exist by number, but none is taught."""
+        """User frames exist by number. Commands do not work in one yet, so even a
+        taught one is refused as not defined."""
         if 1 <= number <= self.profile.user_frames:
             raise CommandRefusedError(
                 Refusal.UNDEFINED_USER_FRAME, f"user frame {number} is not defined"
             )
         raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
+
+    def teach_user_frame(self, number: int, frame: UserFrame) -> None:
+        """Teach user frame *number*; in teach mode only, and not while the arm moves.
+        Points that do not span a plane cannot set a frame."""
+        self._check_can_edit()
+        if not 1 <= number <= self.profile.user_frames:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
+        self.check_tool(frame.tool)
+        frame.transform()
+        self.user_frames[number] = frame
 
     def move_joints(self, target: Joints, speed_percent: float) -> None:
         """Joint-space move at *speed_percent* of each joint's top speed."""

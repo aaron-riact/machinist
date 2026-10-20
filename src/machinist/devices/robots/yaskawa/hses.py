@@ -77,6 +77,7 @@ ADDED_STATUS: dict[Refusal, AddedStatus] = {
     Refusal.MOVING: AddedStatus.MANIPULATOR_OPERATING,
     Refusal.BAD_GROUP: AddedStatus.CONTROL_GROUP_ERROR,
     Refusal.NOT_PERMITTED: AddedStatus.FUNCTION_NOT_PERMITTED,
+    Refusal.FRAME_NOT_SET: AddedStatus.COORDINATE_SYSTEM_CANNOT_BE_SET,
 }
 
 

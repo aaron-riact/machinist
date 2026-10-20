@@ -41,6 +41,7 @@ from .controller import (
     CommandRefusedError,
     Refusal,
     SpeedSelection,
+    UserFrame,
     YaskawaController,
     stepped,
 )
@@ -116,6 +117,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.MOVING: 2010,  # manipulator operating
     Refusal.BAD_GROUP: 3370,  # incorrect control group
     Refusal.NOT_PERMITTED: 4490,  # relative job / independent control not permitted
+    Refusal.FRAME_NOT_SET: 3460,  # coordinate system cannot be set
 }
 
 
@@ -164,6 +166,7 @@ class EthernetServer:
             "DELETE": self._delete,
             "CVTRJ": self._convert_job,
             "CVTSJ": self._convert_job,
+            "WUFRAME": self._wuframe,
             "SETMJ": self._setmj,
             "JSEQ": self._jseq,
             "IOREAD": self._ioread,
@@ -435,6 +438,20 @@ class EthernetServer:
         """CVTRJ (to a relative job) and CVTSJ (to a standard job) need the relative
         job function, an option the emulated controller lacks, so both are refused."""
         raise CommandRefusedError(Refusal.NOT_PERMITTED, "no relative job function")
+
+    def _wuframe(self, data: str) -> None:
+        """A user frame's coordinate No., then ORG, XX and XY in base coordinates (X Y Z
+        in mm, Rx Ry Rz in degrees, the type), the tool and six external axes."""
+        values = _parse_numbers(data, count=29)
+        coordinate = _integer(values[0])
+        points = [values[1 + 7 * i : 8 + 7 * i] for i in range(3)]
+        org, xx, xy = (_pose(p[:6]) for p in points)
+        frame = UserFrame(
+            org=org, xx=xx, xy=xy, types=(_integer(points[0][6]), _integer(points[1][6]),
+                                          _integer(points[2][6])),
+            tool=_integer(values[22]), external=tuple(_integer(v) for v in values[23:29]),
+        )
+        self.controller.teach_user_frame(coordinate - 1, frame)
 
     def _setmj(self, data: str) -> None:
         """A job to set as the master job, and at the same time as the executing job."""

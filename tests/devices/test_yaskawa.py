@@ -379,6 +379,40 @@ def test_job_conversion_needs_the_relative_job_function(
     assert _answer(with_jobs, command, data) == error
 
 
+#: User frame 1 (coordinate 2): its origin at X 1000 mm, its X axis along base Y
+#: and its Y axis along base -X.
+FRAME_1 = ("2, 1000,0,0,0,0,0,0, 1000,100,0,0,0,0,0, 900,0,0,0,0,0,0, 3, 0,0,0,0,0,0")
+
+
+def test_wuframe_teaches_a_user_frame_in_teach_mode(motoman: YaskawaRobot) -> None:
+    _answer(motoman, "MODE", "1")
+    assert _answer(motoman, "WUFRAME", FRAME_1) == b"0000\r\n"
+    frame = motoman.controller.user_frames[1]
+    assert frame.tool == 3
+    assert frame.transform()[:3, :].round(6).tolist() == [
+        [0, -1, 0, 1], [1, 0, 0, 0], [0, 0, 1, 0],
+    ]
+
+
+def test_wuframe_in_play_mode_is_an_error(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "WUFRAME", FRAME_1) == b"ERROR:WUFRAME is not successful (2080).\r\n"
+
+
+def test_wuframe_with_points_on_a_line_is_an_error(motoman: YaskawaRobot) -> None:
+    _answer(motoman, "MODE", "1")
+    on_a_line = FRAME_1.replace("900,0,0", "1000,200,0")
+    error = b"ERROR:WUFRAME is not successful (3460).\r\n"
+    assert _answer(motoman, "WUFRAME", on_a_line) == error
+
+
+@pytest.mark.parametrize("data", [FRAME_1.replace("2,", "26,", 1),  # user frame 25 of 24
+                                  FRAME_1.replace(" 3,", " 24,"),  # tool 24 of 0-23
+                                  "2, 1000"])
+def test_wuframe_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> None:
+    _answer(motoman, "MODE", "1")
+    assert _answer(motoman, "WUFRAME", data) == b"ERROR:WUFRAME is not successful (5200).\r\n"
+
+
 def test_setmj_sets_the_master_and_executing_job(with_jobs: YaskawaRobot) -> None:
     with_jobs.controller.select_job("PICK", 7)
     assert _answer(with_jobs, "SETMJ", "MAIN") == b"0000\r\n"
