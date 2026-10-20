@@ -485,3 +485,26 @@ def test_plural_p_variables(yrc: YaskawaRobot) -> None:
 def test_plural_p_variables_stop_at_9(yrc: YaskawaRobot) -> None:
     answer = _ask(yrc, 0x307, 0, 0, 0x33, struct.pack("<i", 10))
     assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+@pytest.mark.parametrize(("command", "data_type"), [(0x80, 16), (0x81, 0)])
+def test_bp_and_ex_variables_whole_and_by_field(yrc: YaskawaRobot, command: int,
+                                                data_type: int) -> None:
+    record = (data_type, 1, 2, 3, 4, 5, 6, 7, 8)
+    assert _ask(yrc, command, 5, 0, SET_ALL, struct.pack("<9i", *record)).status is Status.OK
+    assert _ints(_ask(yrc, command, 5, 0, GET_ALL)) == record
+    assert _ask(yrc, command, 5, 3, SET_SINGLE, struct.pack("<i", 99)).status is Status.OK
+    assert _ints(_ask(yrc, command, 5, 3, GET_SINGLE)) == (99,)
+    assert _ints(_ask(yrc, command, 5, 0, GET_ALL)) == (data_type, 1, 99, 3, 4, 5, 6, 7, 8)
+
+
+def test_ex_variables_are_pulses_only(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x81, 5, 0, SET_ALL, struct.pack("<9i", 16, *([0] * 8)))
+    assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+@pytest.mark.parametrize("command", [0x308, 0x309])
+def test_plural_bp_and_ex_variables_stop_at_13(yrc: YaskawaRobot, command: int) -> None:
+    assert _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", 13)).status is Status.OK
+    answer = _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", 14))
+    assert answer.added_status == AddedStatus.OPERAND_RANGE

@@ -205,6 +205,15 @@ ROBOT_POSITIONS = PositionKind(
     "P", elements=13, data_types=frozenset({0, 16, 17, 18, 19}), plural_max=9,
     elementwise=False,
 )
+#: BP variables (3.3.17, 3.3.35): data type (pulses or base coordinates) and
+#: eight axes. A single field can be written on its own; the rest keep theirs.
+BASE_POSITIONS = PositionKind(
+    "BP", elements=9, data_types=frozenset({0, 16}), plural_max=13, elementwise=True,
+)
+#: EX variables (3.3.18, 3.3.36): data type (pulses only) and eight axes.
+EXTERNAL_POSITIONS = PositionKind(
+    "EX", elements=9, data_types=frozenset({0}), plural_max=13, elementwise=True,
+)
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -283,6 +292,8 @@ class HighSpeedEthernetServer:
             0x7C: self._single(DOUBLE_VARIABLES),
             0x7D: self._single(REAL_VARIABLES),
             0x7F: self._position_variable(ROBOT_POSITIONS),
+            0x80: self._position_variable(BASE_POSITIONS),
+            0x81: self._position_variable(EXTERNAL_POSITIONS),
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
@@ -296,6 +307,8 @@ class HighSpeedEthernetServer:
             0x304: self._plural(DOUBLE_VARIABLES),
             0x305: self._plural(REAL_VARIABLES),
             0x307: self._plural_positions(ROBOT_POSITIONS),
+            0x308: self._plural_positions(BASE_POSITIONS),
+            0x309: self._plural_positions(EXTERNAL_POSITIONS),
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
