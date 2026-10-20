@@ -707,6 +707,48 @@ def test_the_move_buffer_is_configurable() -> None:
         assert _answer(robot, "PMOVJ", S_TO_10) == b"ERROR:PMOVJ is not successful (2010).\r\n"
 
 
+#: S to 10 degrees at 5 %, about a second.
+S_TO_10_SLOW = "5, 14166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+
+
+def _first_move_done(robot: YaskawaRobot) -> None:
+    deadline = time.monotonic() + 5
+    while robot.controller.buffered_moves:
+        assert time.monotonic() < deadline, "the first move did not finish"
+        time.sleep(0.02)
+
+
+def test_an_nx100_hides_a_buffered_move_from_rstats(motoman: YaskawaRobot) -> None:
+    """The running bit quirk: the bit drops when the first move ends, though the
+    move sent after it still runs."""
+    notes: list[str] = []
+    motoman.controller.note = lambda kind, **details: notes.append(kind)
+    _answer(motoman, "PMOVJ", TO_ZERO)
+    _answer(motoman, "PMOVJ", S_TO_10_SLOW)
+    assert _answer(motoman, "RSTATS").startswith(b"202,")  # the first move shows
+    _first_move_done(motoman)
+    assert motoman.arm.state.view.moving
+    assert _answer(motoman, "RSTATS").startswith(b"194,")  # the second does not
+    assert "quirk" in notes
+
+
+def test_the_running_bit_quirk_can_be_turned_off() -> None:
+    options = YaskawaOptions(controller="nx100", start_joints_deg=START,
+                             running_bit_quirk=False, **UP50N_AXES)
+    for robot in _running(options):
+        _answer(robot, "PMOVJ", TO_ZERO)
+        _answer(robot, "PMOVJ", S_TO_10_SLOW)
+        _first_move_done(robot)
+        assert _answer(robot, "RSTATS").startswith(b"202,")
+
+
+def test_a_dx200_shows_a_buffered_move_in_rstats(dx200: YaskawaRobot) -> None:
+    _answer(dx200, "PMOVJ", TO_ZERO)
+    _answer(dx200, "PMOVJ", S_TO_10_SLOW)
+    _first_move_done(dx200)
+    assert _answer(dx200, "RSTATS").startswith(b"202,")
+
+
 def test_hold_drops_the_buffered_moves(dx200: YaskawaRobot) -> None:
     _answer(dx200, "PMOVJ", TO_ZERO)
     _answer(dx200, "PMOVJ", S_TO_10)

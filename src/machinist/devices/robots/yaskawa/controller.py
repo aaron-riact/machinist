@@ -128,6 +128,12 @@ class ControllerProfile:
     #: the NX100 and DX200 manuals say nothing. On the NX100 many could be sent
     #: without meeting a limit, as remembered from a real one, so it has none.
     move_buffer: int | None = 1
+    #: The NX100's running bit quirk: RSTATS shows running only for the first move
+    #: of a run, not for the moves that start from the buffer after it, so a host
+    #: that waits for the bit to drop believes the moves done after the first one.
+    #: From a real NX100, as remembered; believed fixed on the DX200. No manual or
+    #: public report describes it.
+    running_bit_quirk: bool = False
 
     @property
     def last_user_coordinate(self) -> int:
@@ -149,6 +155,7 @@ CONTROLLERS: dict[str, ControllerProfile] = {
         max_tool=23,
         user_frames=24,
         move_buffer=None,
+        running_bit_quirk=True,
         network_inputs=range(22010, 23288),
     ),
     "dx200": ControllerProfile(
@@ -336,6 +343,12 @@ class YaskawaController:
     user_frames: dict[int, UserFrame] = field(default_factory=dict)
     #: How many moves may wait behind the one running; None for no limit.
     move_buffer: int | None = 1
+    #: Whether RSTATS hides the moves that start from the buffer (the profile's
+    #: running_bit_quirk).
+    running_bit_quirk: bool = False
+    #: Whether the move under way shows in RSTATS: under the quirk, only a move
+    #: that started with the arm still.
+    _move_shows_running: bool = field(default=True, repr=False)
     #: Reports what the controller does that a host would not see, by kind and
     #: details (the device's log-only notes).
     note: Callable[..., None] = field(default=lambda kind, **details: None, repr=False)
@@ -416,7 +429,11 @@ class YaskawaController:
         waiting = bool(self._buffered) and view.servo_on and not (
             view.estopped or view.faulted or self.hold
         )
-        if view.moving or waiting:
+        if self.running_bit_quirk:
+            running = view.moving and self._move_shows_running
+        else:
+            running = view.moving or waiting
+        if running:
             data1 |= Status1.RUNNING
         data2 = Status2(0)
         if view.servo_on and not view.estopped:
@@ -634,6 +651,7 @@ class YaskawaController:
                     # controller would have dropped what waited.
                     self._drop_buffered("the arm stopped before they started")
                 start()
+                self._move_shows_running = True
                 return
             if self.move_buffer is not None and len(self._buffered) >= self.move_buffer:
                 raise CommandRefusedError(
@@ -658,6 +676,10 @@ class YaskawaController:
                 return
             self._buffered.popleft()
             self.note("move_from_buffer", move=label, waiting=len(self._buffered))
+            if self.running_bit_quirk:
+                self._move_shows_running = False
+                self.note("quirk", quirk="running_bit", move=label,
+                          detail="RSTATS shows not running while this buffered move runs")
 
     def _drop_buffered(self, reason: str) -> None:
         if self._buffered:

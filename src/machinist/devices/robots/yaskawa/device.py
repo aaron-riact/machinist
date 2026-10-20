@@ -65,6 +65,10 @@ class YaskawaOptions(ArmOptions):
     #: "unlimited". Unset takes the controller's (the NX100 none, the DX200 and
     #: YRC1000 one).
     move_buffer: int | Literal["unlimited"] | None = None
+    #: The NX100's running bit quirk: RSTATS does not show the moves that start
+    #: from the buffer. Unset takes the controller's (on for the NX100, off for
+    #: the others); each time it hides a move the device notes it.
+    running_bit_quirk: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -151,6 +155,9 @@ class YaskawaRobot(Device, HasArm):
             files={name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
             move_buffer=_move_buffer(options),
+            running_bit_quirk=(CONTROLLERS[options.controller].running_bit_quirk
+                               if options.running_bit_quirk is None
+                               else options.running_bit_quirk),
             note=self.emit,
         )
         if "ethernet_server" in self.protocols:
