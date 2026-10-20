@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 
+import numpy as np
 from pydantic import model_validator
 
 from ...core.device import Device
@@ -33,9 +34,12 @@ from ...core.events import EventBus
 from ...core.line_device import LineServerDevice
 from ...core.registry import register
 from ...core.types import Endpoint
+from ...kinematics.api import Joints, Pose
+from ...kinematics.dh_backend import pose_to_mat
+from ...kinematics.units import Radians
 from ...transport.framing import CR
 from ...transport.line_server import Hangup, Reply, SessionHandler
-from .arm import ArmOptions, HasArm, RobotArm, arm_from_options
+from .arm import ArmOptions, HasArm, NoLinearPath, RobotArm, arm_from_options
 
 MOTOMAN_PORT = 80
 SERVER_NAME = "OK: NX Information Server (3.00)"
@@ -59,6 +63,15 @@ ALARM_SLOTS = 4
 #: not match the arm and is measured from its pulse limits. The riact Motoman
 #: driver converts with the same values.
 UP50N_PULSES_PER_DEGREE = (1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627)
+#: The YR-UP50N's maximum joint speeds in degrees per second (S, L, U, R, B, T),
+#: from its specification sheet.
+UP50N_MAX_JOINT_SPEED = (170.0, 170.0, 170.0, 250.0, 250.0, 350.0)
+#: Tool files 0 to 23.
+MAX_TOOL = 23
+#: Joint speed in percent of the maximum, and linear speed in mm/s or degrees/s.
+MIN_JOINT_SPEED, MAX_JOINT_SPEED_PERCENT, MIN_LINEAR_SPEED = 0.01, 100.0, 0.1
+#: A move takes at least this long, so a move to where the arm is still runs.
+MIN_MOVE_SECONDS = 0.02
 
 
 class MotomanOptions(ArmOptions):
@@ -66,13 +79,16 @@ class MotomanOptions(ArmOptions):
 
     #: Encoder pulses per degree of each joint, in joint order.
     pulses_per_degree: tuple[float, ...] = UP50N_PULSES_PER_DEGREE
+    #: Each joint's top speed in degrees per second, which 100 % of a joint
+    #: move's speed means.
+    max_joint_speed_deg_s: tuple[float, ...] = UP50N_MAX_JOINT_SPEED
 
     @model_validator(mode="after")
-    def _one_ratio_per_joint(self) -> MotomanOptions:
-        if len(self.pulses_per_degree) != self.joint_count:
-            raise ValueError(
-                f"{len(self.pulses_per_degree)} pulses_per_degree for {self.joint_count} joints"
-            )
+    def _one_value_per_joint(self) -> MotomanOptions:
+        for name in ("pulses_per_degree", "max_joint_speed_deg_s"):
+            values = getattr(self, name)
+            if len(values) != self.joint_count:
+                raise ValueError(f"{len(values)} {name} for {self.joint_count} joints")
         return self
 
 
@@ -87,6 +103,9 @@ class InterpreterMessage(IntEnum):
     BAD_DATA = 9001
     UNDEFINED_USER_FRAME = 9002
     EMERGENCY_STOP = 9003
+    SERVO_OFF = 9004
+    HELD = 9005
+    NO_LINEAR_PATH = 9006
 
 
 class Status1(IntFlag):
@@ -130,6 +149,7 @@ class NX100Controller:
 
     arm: RobotArm
     pulses_per_degree: tuple[float, ...]
+    max_joint_speed_deg_s: tuple[float, ...]
     cycle: Status1 = Status1.ONE_CYCLE
     #: The form (posture) type and tool number of the last move, which RPOSC
     #: reports. The arm has no tool files, so the tool only travels along.
@@ -154,6 +174,8 @@ class NX100Controller:
             "HOLD": self._hold,
             "RESET": self._reset,
             "CANCEL": self._cancel,
+            "PMOVJ": self._pmovj,
+            "PMOVL": self._pmovl,
         }
         return commands.get(name)
 
@@ -220,6 +242,103 @@ class NX100Controller:
 
     def _cancel(self, data: str) -> None:
         """Cancels an error. The emulator raises none, so there is nothing to cancel."""
+
+
+    def _pmovj(self, data: str) -> None:
+        """Speed (%), six pulses, tool, six external axes."""
+        values = _parse_numbers(data, count=14)
+        speed = _joint_speed(values[0])
+        target = self._joints(values[1:7])
+        self.tool = _tool(values[7])
+        self._check_can_move()
+        self.arm.movej(target, duration=self._joint_move_seconds(target, speed))
+
+    def _pmovl(self, data: str) -> None:
+        """Speed selection, speed, six pulses, tool, six external axes."""
+        values = _parse_numbers(data, count=15)
+        selection, speed = _linear_speed(values[0], values[1])
+        target = self.arm.forward(self._joints(values[2:8]))
+        self.tool = _tool(values[8])
+        self._move_linear(target, selection, speed)
+
+    def _joints(self, pulses: list[float]) -> Joints:
+        robot_pulses = pulses[: len(self.pulses_per_degree)]
+        return tuple(
+            Radians(math.radians(p / ratio))
+            for p, ratio in zip(robot_pulses, self.pulses_per_degree, strict=True)
+        )
+
+    def _check_can_move(self) -> None:
+        view = self.arm.state.view
+        if view.estopped:
+            raise CommandError(InterpreterMessage.EMERGENCY_STOP, "emergency stop is engaged")
+        if not view.servo_on:
+            raise CommandError(InterpreterMessage.SERVO_OFF, "servo power is off")
+        if self.hold:
+            raise CommandError(InterpreterMessage.HELD, "the controller is held")
+
+    def _joint_move_seconds(self, target: Joints, speed_percent: float) -> float:
+        """The time the slowest joint needs at *speed_percent* of its top speed."""
+        start = self.arm.state.view.joints
+        seconds = max(
+            abs(math.degrees(b - a)) / (top * speed_percent / 100)
+            for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
+        )
+        return max(seconds, MIN_MOVE_SECONDS)
+
+    def _move_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
+        self._check_can_move()
+        start = pose_to_mat(self.arm.state.view.pose)
+        end = pose_to_mat(target)
+        if selection is SpeedSelection.V:
+            travel = float(np.linalg.norm(end[:3, 3] - start[:3, 3])) * 1000
+        else:
+            turn = start[:3, :3].T @ end[:3, :3]
+            travel = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(turn) - 1) / 2))))
+        try:
+            self.arm.movel(target, duration=max(travel / speed, MIN_MOVE_SECONDS),
+                           follows_speed_factor=False)
+        except NoLinearPath as exc:
+            raise CommandError(InterpreterMessage.NO_LINEAR_PATH, str(exc)) from exc
+
+
+class SpeedSelection(IntEnum):
+    """What a linear move's speed limits: V, the tool's travel in mm/s, or VR,
+    its rotation in degrees/s."""
+
+    V = 0
+    VR = 1
+
+
+def _joint_speed(value: float) -> float:
+    if not MIN_JOINT_SPEED <= value <= MAX_JOINT_SPEED_PERCENT:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"joint speed {value} %")
+    return value
+
+
+def _linear_speed(selection: float, speed: float) -> tuple[SpeedSelection, float]:
+    if selection not in (SpeedSelection.V, SpeedSelection.VR):
+        raise CommandError(InterpreterMessage.BAD_DATA, f"speed selection {selection}")
+    if speed < MIN_LINEAR_SPEED:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"linear speed {speed}")
+    return SpeedSelection(int(selection)), speed
+
+
+def _tool(value: float) -> int:
+    if value != int(value) or not 0 <= value <= MAX_TOOL:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"tool {value}")
+    return int(value)
+
+
+def _parse_numbers(data: str, *, count: int) -> list[float]:
+    """Exactly *count* comma-separated numbers."""
+    try:
+        values = [float(part) for part in data.split(",")]
+    except ValueError as exc:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"not numbers: {data!r}") from exc
+    if len(values) != count:
+        raise CommandError(InterpreterMessage.BAD_DATA, f"{len(values)} fields, expected {count}")
+    return values
 
 
 def _parse_switch(data: str) -> bool:
@@ -355,7 +474,9 @@ class MotomanNX100(LineServerDevice, HasArm):
         self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
         self.controller = NX100Controller(
-            arm=self.arm, pulses_per_degree=options.pulses_per_degree
+            arm=self.arm,
+            pulses_per_degree=options.pulses_per_degree,
+            max_joint_speed_deg_s=options.max_joint_speed_deg_s,
         )
 
     def make_session(self) -> SessionHandler:

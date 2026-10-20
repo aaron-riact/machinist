@@ -6,6 +6,7 @@ The byte strings follow the manual's transmission examples (section 3.3).
 from __future__ import annotations
 
 import socket
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -202,3 +203,60 @@ def test_a_switch_takes_only_0_or_1(motoman: MotomanNX100, command: str) -> None
 
 def test_cancel_answers_normally(motoman: MotomanNX100) -> None:
     assert _answer(motoman, "CANCEL") == b"0000\r\n"
+
+
+def _wait_idle(motoman: MotomanNX100) -> None:
+    deadline = time.monotonic() + 5
+    while motoman.arm.state.view.moving:
+        assert time.monotonic() < deadline, "the move did not finish"
+        time.sleep(0.02)
+
+
+def test_pmovj_moves_to_pulses(motoman: MotomanNX100) -> None:
+    target = "100, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "PMOVJ", target) == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"202,64\r"  # running
+    _wait_idle(motoman)
+    assert _answer(motoman, "RPOSJ") == b"0,0,0,0,0,0,0,0,0,0,0,0\r"
+    assert _answer(motoman, "RPOSC", "0,0").endswith(b",0,3\r")  # the move's tool
+
+
+def test_pmovj_takes_as_long_as_the_slowest_joint(motoman: MotomanNX100) -> None:
+    """T turns 90 degrees at 350 degrees/s; at 100 % that is the longest joint."""
+    joints = "14166, 38908, -59831, 0, 36653, 0"
+    started = time.monotonic()
+    _answer(motoman, "PMOVJ", f"100, {joints}, 0, 0, 0, 0, 0, 0, 0")
+    _wait_idle(motoman)
+    assert time.monotonic() - started == pytest.approx(90 / 350, abs=0.1)
+
+
+@pytest.mark.parametrize(
+    ("data", "code"),
+    [
+        ("0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0", 9001),  # speed below 0.01 %
+        ("10, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0", 9001),  # tool 24
+        ("10, 0, 0, 0, 0, 0, 0, 0", 9001),  # too few fields
+    ],
+)
+def test_pmovj_with_bad_data_is_an_error(motoman: MotomanNX100, data: str, code: int) -> None:
+    error = f"ERROR:PMOVJ is not successful ({code}).\r\n"
+    assert _answer(motoman, "PMOVJ", data) == error.encode()
+
+
+def test_a_move_while_servo_is_off_is_an_error(motoman: MotomanNX100) -> None:
+    motoman.arm.set_servo(False)
+    move = "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (9004).\r\n"
+
+
+def test_a_move_while_held_is_an_error(motoman: MotomanNX100) -> None:
+    motoman.controller.hold = True
+    move = "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (9005).\r\n"
+
+
+def test_pmovl_takes_speed_selection_and_speed(motoman: MotomanNX100) -> None:
+    move = "0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "PMOVL", move) == b"0000\r\n"
+    bad = "2, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "PMOVL", bad) == b"ERROR:PMOVL is not successful (9001).\r\n"
