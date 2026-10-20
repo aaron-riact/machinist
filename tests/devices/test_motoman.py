@@ -157,3 +157,48 @@ def test_rposc_in_an_undefined_user_frame_is_an_error(motoman: MotomanNX100) -> 
 @pytest.mark.parametrize("data", ["26,0", "0,2", "0", "a,b"])
 def test_rposc_with_bad_data_is_an_error(motoman: MotomanNX100, data: str) -> None:
     assert _answer(motoman, "RPOSC", data) == b"ERROR:RPOSC is not successful (9001).\r\n"
+
+
+def test_ralarm_answers_no_error_and_no_alarm(motoman: MotomanNX100) -> None:
+    assert _answer(motoman, "RALARM") == b"0,0,0,0,0,0,0,0,0,0\r"
+
+
+def test_ralarm_reports_a_fault_as_an_alarm(motoman: MotomanNX100) -> None:
+    motoman.arm.fault()
+    assert _answer(motoman, "RALARM") == b"0,0,4000,0,0,0,0,0,0,0\r"
+    assert _answer(motoman, "RSTATS") == b"194,80\r"
+
+
+def test_reset_clears_the_alarm(motoman: MotomanNX100) -> None:
+    motoman.arm.fault()
+    assert _answer(motoman, "RESET") == b"0000\r\n"
+    assert _answer(motoman, "RALARM") == b"0,0,0,0,0,0,0,0,0,0\r"
+
+
+def test_svon_switches_the_servo(motoman: MotomanNX100) -> None:
+    assert _answer(motoman, "SVON", "0") == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"194,0\r"
+    assert _answer(motoman, "SVON", "1") == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"194,64\r"
+
+
+def test_svon_during_an_emergency_stop_is_an_error(motoman: MotomanNX100) -> None:
+    motoman.arm.estop()
+    assert _answer(motoman, "SVON", "1") == b"ERROR:SVON is not successful (9003).\r\n"
+
+
+def test_hold_shows_in_rstats_until_released(motoman: MotomanNX100) -> None:
+    assert _answer(motoman, "HOLD", "1") == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"194,72\r"
+    assert _answer(motoman, "HOLD", "0") == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"194,64\r"
+
+
+@pytest.mark.parametrize("command", ["SVON", "HOLD"])
+def test_a_switch_takes_only_0_or_1(motoman: MotomanNX100, command: str) -> None:
+    error = f"ERROR:{command} is not successful (9001).\r\n"
+    assert _answer(motoman, command, "2") == error.encode()
+
+
+def test_cancel_answers_normally(motoman: MotomanNX100) -> None:
+    assert _answer(motoman, "CANCEL") == b"0000\r\n"

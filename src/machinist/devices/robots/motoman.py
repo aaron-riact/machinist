@@ -48,6 +48,11 @@ AXES_ON_THE_WIRE = 12
 EXTERNAL_AXES = 6
 #: Coordinate numbers: base, robot, then user frames 1 to 24 as 2 to 25.
 BASE_COORDINATE, ROBOT_COORDINATE, LAST_USER_COORDINATE = 0, 1, 25
+#: The alarm RALARM reports while the arm is faulted. A real controller names
+#: the cause; the arm only knows that it faulted, so this is a stand-in.
+FAULT_ALARM = 4000
+#: RALARM answers an error and four alarms, each a code and its data.
+ALARM_SLOTS = 4
 
 #: Encoder pulses per degree of each YR-UP50N axis (S, L, U, R, B, T): 4096
 #: pulses per motor turn through each gear ratio, except L, whose ratio did
@@ -81,6 +86,7 @@ class InterpreterMessage(IntEnum):
 
     BAD_DATA = 9001
     UNDEFINED_USER_FRAME = 9002
+    EMERGENCY_STOP = 9003
 
 
 class Status1(IntFlag):
@@ -129,6 +135,8 @@ class NX100Controller:
     #: reports. The arm has no tool files, so the tool only travels along.
     form: int = 0
     tool: int = 0
+    #: HOLD from a command: the arm stops and takes no move until HOLD 0.
+    hold: bool = False
 
     def command(self, name: str) -> Command | None:
         """The command called *name*, or None for one the controller does not know.
@@ -141,6 +149,11 @@ class NX100Controller:
             "RSTATS": self._rstats,
             "RPOSJ": self._rposj,
             "RPOSC": self._rposc,
+            "RALARM": self._ralarm,
+            "SVON": self._svon,
+            "HOLD": self._hold,
+            "RESET": self._reset,
+            "CANCEL": self._cancel,
         }
         return commands.get(name)
 
@@ -154,6 +167,8 @@ class NX100Controller:
             data2 |= Status2.SERVO_ON
         if view.faulted:
             data2 |= Status2.ALARM
+        if self.hold:
+            data2 |= Status2.HOLD_COMMAND
         return f"{int(data1)},{int(data2)}"
 
 
@@ -180,6 +195,39 @@ class NX100Controller:
         if external:
             fields += ["0"] * EXTERNAL_AXES
         return ",".join(fields)
+
+
+    def _ralarm(self, data: str) -> str:
+        alarms = [FAULT_ALARM, 0] if self.arm.state.view.faulted else []
+        return ",".join(str(v) for v in [0, 0, *_pad(alarms, ALARM_SLOTS * 2)])
+
+    def _svon(self, data: str) -> None:
+        if _parse_switch(data):
+            if self.arm.state.view.estopped:
+                raise CommandError(InterpreterMessage.EMERGENCY_STOP, "emergency stop is engaged")
+            self.arm.set_servo(True)
+        else:
+            self.arm.stop()
+            self.arm.set_servo(False)
+
+    def _hold(self, data: str) -> None:
+        self.hold = _parse_switch(data)
+        if self.hold:
+            self.arm.stop()
+
+    def _reset(self, data: str) -> None:
+        self.arm.clear_fault()
+
+    def _cancel(self, data: str) -> None:
+        """Cancels an error. The emulator raises none, so there is nothing to cancel."""
+
+
+def _parse_switch(data: str) -> bool:
+    """``1`` for on, ``0`` for off."""
+    (value,) = _parse_ints(data, count=1)
+    if value not in (0, 1):
+        raise CommandError(InterpreterMessage.BAD_DATA, f"switch {value}")
+    return value == 1
 
 
 def _check_coordinate(coordinate: int) -> None:
