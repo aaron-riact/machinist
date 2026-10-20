@@ -94,6 +94,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.WRONG_MODE: 2080,
     Refusal.MOVING: 2010,  # manipulator operating
     Refusal.BAD_GROUP: 3370,  # incorrect control group
+    Refusal.NOT_PERMITTED: 4490,  # relative job / independent control not permitted
 }
 
 
@@ -127,6 +128,7 @@ class EthernetServer:
             "CANCEL": self._cancel,
             "HLOCK": self._hlock,
             "CGROUP": self._cgroup,
+            "CTASK": self._ctask,
             "MODE": self._mode,
             "MDSP": self._mdsp,
             "CYCLE": self._cycle,
@@ -221,6 +223,11 @@ class EthernetServer:
         robots, stations = _parse_ints(data, count=2)
         if (robots, stations) != (R1_GROUP, NO_STATIONS):
             raise CommandRefusedError(Refusal.BAD_GROUP, f"robots {robots}, stations {stations}")
+
+    def _ctask(self, data: str) -> None:
+        """The task for commands to act on. CTASK is an option that needs independent
+        control, which the emulated controller lacks, so it is always refused."""
+        raise CommandRefusedError(Refusal.NOT_PERMITTED, "no independent control")
 
     def _mode(self, data: str) -> None:
         """1 teach, 2 play. A real controller takes MODE only when its external mode

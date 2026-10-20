@@ -408,6 +408,10 @@ def test_cgroup_of_a_group_the_cell_lacks_is_an_error(motoman: YaskawaRobot, dat
     assert _answer(motoman, "CGROUP", data) == b"ERROR:CGROUP is not successful (3370).\r\n"
 
 
+def test_ctask_needs_independent_control(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "CTASK", "0") == b"ERROR:CTASK is not successful (4490).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:
