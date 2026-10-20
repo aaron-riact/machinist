@@ -647,3 +647,8 @@ def test_robot_control_takes_only_requests(yrc: YaskawaRobot) -> None:
     finally:
         client.close()
     assert answer.added_status == AddedStatus.ACK_ERROR
+
+
+def test_a_named_job_is_a_jbi_file(yrc: YaskawaRobot) -> None:
+    assert yrc.controller.jobs == {"MAIN", "PICK"}
+    assert yrc.controller.files["PICK.JBI"].startswith(b"/JOB\r\n//NAME PICK\r\n")

@@ -29,6 +29,19 @@ ALARM_TIME_FORMAT = "%Y/%m/%d %H:%M"
 ALARM_HISTORY = 100
 
 
+#: A job's file name ends in this.
+JOB_SUFFIX = ".JBI"
+
+
+def empty_job(name: str) -> bytes:
+    """An INFORM job that does nothing, as a stand-in for a job the scene names."""
+    lines = [
+        "/JOB", f"//NAME {name}", "//POS", "///NPOS 0,0,0,0,0,0", "//INST",
+        "///ATTR SC,RW", "///GROUP1 RB1", "NOP", "END",
+    ]
+    return "".join(line + "\r\n" for line in lines).encode("ascii")
+
+
 @dataclass(frozen=True, slots=True)
 class Alarm:
     code: int
@@ -210,9 +223,9 @@ class YaskawaController:
     positions: dict[str, dict[int, tuple[int, ...]]] = field(default_factory=dict)
     #: S variables by number, as their bytes; an unset one is all NULs.
     strings: dict[int, bytes] = field(default_factory=dict)
-    #: The jobs the controller holds, the one it executes and at which line,
-    #: and each task's master job.
-    jobs: frozenset[str] = frozenset()
+    #: The files the controller holds, by name. A job is its NAME.JBI file.
+    files: dict[str, bytes] = field(default_factory=dict)
+    #: The job it executes and at which line, and each task's master job.
     executing_job: str = ""
     executing_line: int = 0
     master_jobs: dict[int, str] = field(default_factory=dict)
@@ -292,6 +305,13 @@ class YaskawaController:
 
     def cancel_error(self) -> None:
         """Cancels an error. The emulator raises none, so there is nothing to cancel."""
+
+    @property
+    def jobs(self) -> frozenset[str]:
+        """The names of the jobs the controller holds: its .JBI files."""
+        return frozenset(
+            name.removesuffix(JOB_SUFFIX) for name in self.files if name.endswith(JOB_SUFFIX)
+        )
 
     def select_job(self, name: str, line: int = 0, *, master_of_task: int | None = None) -> None:
         """Set the executing job (and its line), or a task's master job."""

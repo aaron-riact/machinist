@@ -15,7 +15,7 @@ from ....transport.framing import CR
 from ....transport.line_server import LineServer, Reply, SessionHandler
 from ....transport.message import UdpMessageServer
 from ..arm import ArmOptions, HasArm, arm_from_options
-from .controller import CONTROLLERS, ROBOTS, YaskawaController
+from .controller import CONTROLLERS, JOB_SUFFIX, ROBOTS, YaskawaController, empty_job
 from .ethernet_server import EthernetServer, _Session
 from .hses import HighSpeedEthernetServer
 
@@ -50,9 +50,9 @@ class YaskawaOptions(ArmOptions):
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
     #: Signal numbers name the first signal of each byte.
     ladder_copies: dict[int, int] = Field(default_factory=dict)
-    #: The names of the jobs the controller holds. The emulator cannot run
-    #: INFORM, so a job only has a name: selecting it and starting it work, and
-    #: it finishes as soon as it starts.
+    #: The names of the jobs the controller holds, each as a NAME.JBI file
+    #: that does nothing. The emulator cannot run INFORM: selecting a job and
+    #: starting it work, and it finishes as soon as it starts.
     jobs: tuple[str, ...] = ()
 
     @model_validator(mode="before")
@@ -130,7 +130,7 @@ class YaskawaRobot(Device, HasArm):
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             ladder_copies=dict(options.ladder_copies),
-            jobs=frozenset(options.jobs),
+            files={name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
         )
         if "ethernet_server" in self.protocols:
