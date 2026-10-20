@@ -50,6 +50,10 @@ class YaskawaOptions(ArmOptions):
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
     #: Signal numbers name the first signal of each byte.
     ladder_copies: dict[int, int] = Field(default_factory=dict)
+    #: The names of the jobs the controller holds. The emulator cannot run
+    #: INFORM, so a job only has a name: selecting it and starting it work, and
+    #: it finishes as soon as it starts.
+    jobs: tuple[str, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -126,6 +130,7 @@ class YaskawaRobot(Device, HasArm):
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             ladder_copies=dict(options.ladder_copies),
+            jobs=frozenset(options.jobs),
             model=ROBOTS[options.robot].model if options.robot is not None else "",
         )
         if "ethernet_server" in self.protocols:

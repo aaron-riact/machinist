@@ -71,6 +71,8 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.NO_LINEAR_PATH: 9006,
     Refusal.NOT_WRITABLE: 9007,
     Refusal.BAD_TOOL: 9001,
+    Refusal.NO_SUCH_JOB: 9008,
+    Refusal.NO_EXECUTING_JOB: 9009,
 }
 
 

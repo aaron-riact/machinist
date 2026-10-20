@@ -68,6 +68,8 @@ ADDED_STATUS: dict[Refusal, AddedStatus] = {
     Refusal.NO_LINEAR_PATH: AddedStatus.OUTSIDE_THE_DATA,
     Refusal.NOT_WRITABLE: AddedStatus.OUTSIDE_THE_DATA,
     Refusal.BAD_TOOL: AddedStatus.TOOL_NUMBER_ERROR,
+    Refusal.NO_SUCH_JOB: AddedStatus.NO_SUCH_JOB,
+    Refusal.NO_EXECUTING_JOB: AddedStatus.NO_EXECUTING_JOB,
 }
 
 
@@ -229,6 +231,16 @@ MAJOR_FAILURES = range(1, 101)
 ALARM_HISTORY_INSTANCES = tuple(
     n for start in (1, 1001, 2001, 3001, 4001) for n in range(start, start + 100)
 )
+#: Tasks (3.3.4): the master task is instance 1, sub tasks 1 to 15 follow.
+MASTER_TASK = 1
+TASKS = range(1, 17)
+#: The speed override a job runs at, in percent; the emulator has no override.
+SPEED_OVERRIDE_PERCENT = 100
+#: Job select instances (3.3.24): the executing job, or task 0 to 15's master job.
+EXECUTING_JOB = 1
+MASTER_JOB_INSTANCES = range(10, 26)
+JOB_NAME_FIELD = 32
+MAX_JOB_LINE = 9999
 #: The pendant's remote display takes 30 characters in a 32-byte field (3.3.22).
 PENDANT_CHARACTERS, PENDANT_FIELD = 30, 32
 #: Management time instances (3.3.25): control power, then servo power, playback
@@ -309,6 +321,7 @@ class HighSpeedEthernetServer:
             0x70: self._alarm,
             0x71: self._alarm_history,
             0x72: self._status,
+            0x73: self._executing_job,
             0x74: self._axis_configuration,
             0x75: self._position,
             0x76: self._zero_per_axis,
@@ -327,6 +340,8 @@ class HighSpeedEthernetServer:
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
             0x85: self._pendant_message,
+            0x86: self._start_job,
+            0x87: self._select_job,
             0x88: self._management_time,
             0x89: self._system_information,
             0x8A: self._move_cartesian,
@@ -631,6 +646,47 @@ class HighSpeedEthernetServer:
         if cycle not in CYCLES:
             raise _added(AddedStatus.OPERAND_RANGE)
         self.controller.cycle = CYCLES[cycle]
+        return b""
+
+    # --- 3.3.4 Executing job information reading (0x73) ------------------------
+
+    def _executing_job(self, request: Request) -> bytes:
+        """The master task's (instance 1) or a sub task's (2-16) job name (32
+        characters), line, step and speed override. Only the master task runs."""
+        task = _instance(request, *TASKS)
+        name, line = "", 0
+        if task == MASTER_TASK:
+            name, line = self.controller.executing_job, self.controller.executing_line
+        return _read(request, [
+            text(32, name), int32s(line), int32s(0), int32s(SPEED_OVERRIDE_PERCENT),
+        ])
+
+    # --- 3.3.23 Start-up (job start) (0x86) ----------------------------------
+
+    def _start_job(self, request: Request) -> bytes:
+        _instance(request, 1)
+        _write(request, count=1)
+        self.controller.start_job()
+        return b""
+
+    # --- 3.3.24 Job select (0x87) --------------------------------------------
+
+    def _select_job(self, request: Request) -> bytes:
+        """The executing job (instance 1), name and line, or a task's master job
+        (10 for task 0 to 25 for task 15), name only."""
+        instance = _instance(request, EXECUTING_JOB, *MASTER_JOB_INSTANCES)
+        if request.service != Service.SET_ALL:
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        if len(request.data) != JOB_NAME_FIELD + 4:
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        name = request.data[:JOB_NAME_FIELD].split(b"\0", 1)[0].decode("ascii", "replace")
+        (line,) = struct.unpack_from("<i", request.data, JOB_NAME_FIELD)
+        if instance == EXECUTING_JOB:
+            if not 0 <= line <= MAX_JOB_LINE:
+                raise _added(AddedStatus.OPERAND_RANGE)
+            self.controller.select_job(name, line)
+        else:
+            self.controller.select_job(name, master_of_task=instance - MASTER_JOB_INSTANCES.start)
         return b""
 
     # --- 3.3.22 Character string display to the pendant (0x85) -----------------

@@ -32,7 +32,7 @@ GET_ALL, GET_SINGLE = 0x01, 0x0E
 def yrc() -> Iterator[YaskawaRobot]:
     options = YaskawaOptions(
         controller="yrc1000", robot="up50n", protocols=("ethernet_server", "hses"),
-        hses_port=free_port(), start_joints_deg=(0, 0, 0, 0, -90, 0),
+        hses_port=free_port(), start_joints_deg=(0, 0, 0, 0, -90, 0), jobs=("MAIN", "PICK"),
     )
     m = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
     m.start()
@@ -592,3 +592,47 @@ def test_control_power_time_counts_from_the_start(yrc: YaskawaRobot) -> None:
 def test_other_management_times_show_zero_run(yrc: YaskawaRobot) -> None:
     assert _ask(yrc, 0x88, 211, 2, GET_SINGLE).data == b"000000:00'00"
     assert _ask(yrc, 0x88, 2, 0, GET_ALL).added_status == AddedStatus.INSTANCE_ERROR
+
+
+def _job(name: str, line: int = 0) -> bytes:
+    return name.encode().ljust(32, b"\0") + struct.pack("<i", line)
+
+
+def test_select_a_job_and_read_it_back(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x87, 1, 0, SET_ALL, _job("PICK", 12)).status is Status.OK
+    data = _ask(yrc, 0x73, 1, 0, GET_ALL).data
+    assert data[:32].rstrip(b"\0") == b"PICK"
+    assert struct.unpack("<3i", data[32:]) == (12, 0, 100)
+
+
+def test_selecting_a_job_the_controller_lacks_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x87, 1, 0, SET_ALL, _job("NOPE"))
+    assert answer.added_status == AddedStatus.NO_SUCH_JOB
+
+
+def test_a_master_job_does_not_change_the_executing_job(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x87, 10, 0, SET_ALL, _job("MAIN")).status is Status.OK
+    assert yrc.controller.master_jobs == {0: "MAIN"}
+    assert _ask(yrc, 0x73, 1, 1, GET_SINGLE).data == bytes(32)
+
+
+def test_a_sub_task_runs_no_job(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x87, 1, 0, SET_ALL, _job("PICK"))
+    assert _ask(yrc, 0x73, 2, 1, GET_SINGLE).data == bytes(32)
+
+
+def test_starting_without_an_executing_job_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _set(yrc, 0x86, 1, 1)
+    assert answer.added_status == AddedStatus.NO_EXECUTING_JOB
+
+
+def test_starting_a_job_while_held_is_refused(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x87, 1, 0, SET_ALL, _job("PICK"))
+    _set(yrc, 0x83, 1, 1)
+    assert _set(yrc, 0x86, 1, 1).added_status == AddedStatus.COMMAND_HOLD
+
+
+def test_a_started_job_finishes_at_once(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x87, 1, 0, SET_ALL, _job("PICK"))
+    assert _set(yrc, 0x86, 1, 1).status is Status.OK
+    assert _ints(_ask(yrc, 0x72, 1, 1, GET_SINGLE))[0] & 0x08 == 0  # not running
