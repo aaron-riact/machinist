@@ -147,3 +147,15 @@ def test_an_ack_without_a_transfer_is_refused(host: socket.socket) -> None:
 def test_the_file_port_takes_no_robot_control(host: socket.socket) -> None:
     answer = _send(host, 0x01, division=Division.ROBOT)
     assert answer.status is Status.UNDEFINED_COMMAND
+
+
+def test_the_controller_holds_the_files_ymconnect_reads(yrc: YaskawaRobot) -> None:
+    files = yrc.controller.files
+    assert b"//SERVO POWER\r\nR1 " in files["SYSTEM.SYS"]
+    assert files["TOOL.CND"].count(b"//TOOL ") == 64
+    rs022 = files["RS.PRM"].split(b"\r\n")[4].split(b",")[2]
+    assert rs022 == b"1"
+
+
+def test_a_list_of_jobs_leaves_out_the_system_files(host: socket.socket) -> None:
+    assert _receive(host, LIST, b"*.*")[0] == b"MAIN.JBI\r\nPICK.JBI\r\n"

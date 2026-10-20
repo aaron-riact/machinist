@@ -44,6 +44,14 @@ def empty_job(name: str) -> bytes:
     return "".join(line + "\r\n" for line in lines).encode("ascii")
 
 
+def _lines(*lines: str) -> bytes:
+    return "".join(line + "\r\n" for line in lines).encode("ascii")
+
+
+#: How many RS parameters the stand-in RS.PRM lists, ten to a line.
+RS_PARAMETERS = 100
+
+
 @dataclass(frozen=True, slots=True)
 class Alarm:
     code: int
@@ -258,6 +266,35 @@ class YaskawaController:
     pendant_message: str = ""
     #: When the controller's power came on: when the device was made.
     powered_on: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self) -> None:
+        for name, content in self._system_files().items():
+            self.files.setdefault(name, content)
+
+    def _system_files(self) -> dict[str, bytes]:
+        """Stand-ins for the controller files YMConnect reads when it connects.
+
+        The layouts are not copies of real files: each holds only what
+        YMConnect parses. SYSTEM.SYS names the control groups under
+        //SERVO POWER and //ROBOT NAME; TOOL.CND has one //TOOL section per
+        tool; RS.PRM lists the RS parameters ten to a line after two header
+        lines, YMConnect reading RS022 as the third field of the fifth line.
+        """
+        rs = [self.parameters.get((PARAMETER_RS, 0, n), 0) for n in range(RS_PARAMETERS)]
+        return {
+            "SYSTEM.SYS": _lines(
+                "//SYSTEM", "//SERVO POWER", "R1 : 000000:00'00",
+                "//ROBOT NAME", f"R1 : {self.model}",
+            ),
+            "TOOL.CND": _lines(*(
+                line for tool in range(self.profile.max_tool + 1)
+                for line in (f"//TOOL {tool}", "0.000,0.000,0.000,0.0000,0.0000,0.0000")
+            )),
+            "RS.PRM": _lines(
+                "/RS", "//RS",
+                *(",".join(str(v) for v in rs[i : i + 10]) for i in range(0, RS_PARAMETERS, 10)),
+            ),
+        }
 
     # --- status -----------------------------------------------------------
 
