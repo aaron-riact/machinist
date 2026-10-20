@@ -32,6 +32,8 @@ class YaskawaArm:
     pulses_per_degree: tuple[float, ...]
     #: Each axis's top speed in degrees per second.
     max_joint_speed_deg_s: tuple[float, ...]
+    #: The model name the controller reports (HSES system information).
+    model: str
 
 
 _URDF_DIR = Path(__file__).parent.parent / "urdf"
@@ -46,6 +48,7 @@ ROBOTS: dict[str, YaskawaArm] = {
         urdf=_URDF_DIR / "yr_up50n.urdf",
         pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
         max_joint_speed_deg_s=(170.0, 170.0, 170.0, 250.0, 250.0, 350.0),
+        model="YR-UP50N-A00",
     ),
 }
 
@@ -175,6 +178,8 @@ class YaskawaController:
     #: signals. The emulator has neither, so it is only remembered.
     hlock: bool = False
     ladder_copies: dict[int, int] = field(default_factory=dict)
+    #: The arm's model name, empty when the scene names no arm from the catalog.
+    model: str = ""
     #: Each IO byte by the number of its first signal; an unset byte reads 0.
     io: dict[int, int] = field(default_factory=dict)
 

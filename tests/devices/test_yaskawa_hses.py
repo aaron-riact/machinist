@@ -364,3 +364,15 @@ def test_position_error_and_torque_are_zero(yrc: YaskawaRobot, command: int) -> 
     assert _ints(_ask(yrc, command, 1, 0, GET_ALL)) == (0,) * 8
     assert _ints(_ask(yrc, command, 1, 3, GET_SINGLE)) == (0,)
     assert _ask(yrc, command, 11, 0, GET_ALL).added_status == AddedStatus.INSTANCE_ERROR
+
+
+def test_system_information_names_the_arm(yrc: YaskawaRobot) -> None:
+    """Software version (24), model (16), parameter version (8)."""
+    data = _ask(yrc, 0x89, 11, 0, GET_ALL).data
+    assert len(data) == 48
+    assert data[24:40].rstrip(b"\0") == b"YR-UP50N-A00"
+
+
+def test_system_information_of_a_missing_group_is_empty(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x89, 12, 2, GET_SINGLE).data == bytes(16)
+    assert _ask(yrc, 0x89, 101, 2, GET_SINGLE).data.rstrip(b"\0") == b"HANDLING"

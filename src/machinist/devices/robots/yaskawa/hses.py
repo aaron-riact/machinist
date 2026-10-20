@@ -124,6 +124,14 @@ class MoveKind(IntEnum):
 PERCENT, V, VR = 0, 1, 2
 #: A move's operation coordinate (3.3.39).
 BASE_COORDINATE, ROBOT_COORDINATE, USER_COORDINATE, TOOL_COORDINATE = 16, 17, 18, 19
+#: System information instances (3.3.26): robots, stations, applications.
+R1_SYSTEM = 11
+APPLICATIONS = range(101, 109)
+SYSTEM_INSTANCES = (*range(11, 19), *range(21, 45), *APPLICATIONS)
+#: What the emulator reports as its software version and application. A real
+#: controller reports its own, such as "DS2.07.00A. (JP/US) -00".
+SOFTWARE_VERSION = "MACHINIST"
+APPLICATION = "HANDLING"
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -199,6 +207,7 @@ class HighSpeedEthernetServer:
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
+            0x89: self._system_information,
             0x8A: self._move_cartesian,
             0x8B: self._move_pulse,
             0x300: self._plural_io,
@@ -319,6 +328,20 @@ class HighSpeedEthernetServer:
             raise _added(AddedStatus.OPERAND_RANGE)
         self.controller.cycle = CYCLES[cycle]
         return b""
+
+    # --- 3.3.26 System information acquiring (0x89) ---------------------------
+
+    def _system_information(self, request: Request) -> bytes:
+        """Software version (24 characters), model or application (16) and parameter
+        version (8) of a robot (instances 11-18), station (21-44) or application
+        (101-108). Groups the cell lacks answer empty strings."""
+        instance = _instance(request, *SYSTEM_INSTANCES)
+        model = ""
+        if instance == R1_SYSTEM:
+            model = self.controller.model
+        elif instance == APPLICATIONS.start:
+            model = APPLICATION
+        return _read(request, [text(24, SOFTWARE_VERSION), text(16, model), text(8)])
 
     # --- 3.3.39 Move instruction, Cartesian (0x8A) -----------------------------
 

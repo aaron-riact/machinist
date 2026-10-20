@@ -126,6 +126,7 @@ class YaskawaRobot(Device, HasArm):
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             ladder_copies=dict(options.ladder_copies),
+            model=ROBOTS[options.robot].model if options.robot is not None else "",
         )
         if "ethernet_server" in self.protocols:
             self.add_service(LineServer(
