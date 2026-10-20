@@ -193,6 +193,8 @@ class HighSpeedEthernetServer:
             0x72: self._status,
             0x74: self._axis_configuration,
             0x75: self._position,
+            0x76: self._zero_per_axis,
+            0x77: self._zero_per_axis,
             0x78: self._io,
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
@@ -240,6 +242,14 @@ class HighSpeedEthernetServer:
         values = [data_type, self.controller.form, self.controller.tool, 0, 0,
                   *_pad(axes, AXIS_ELEMENTS, 0)]
         return _read(request, [int32s(v) for v in values])
+
+    # --- 3.3.7 Position error (0x76), 3.3.8 Torque (0x77) ----------------------
+
+    def _zero_per_axis(self, request: Request) -> bytes:
+        """Robot 1's position error or torque per axis. The emulated arm follows its
+        path exactly and has no dynamics, so both are 0."""
+        _instance(request, R1_PULSE)
+        return _read(request, [int32s(0)] * AXIS_ELEMENTS)
 
     # --- 3.3.9 I/O data reading / writing (0x78) --------------------------------
 

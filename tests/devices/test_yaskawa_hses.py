@@ -357,3 +357,10 @@ def test_no_move_while_servo_is_off_or_held(
         _set(yrc, 0x83, 1, 1)
     answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
     assert (answer.status, answer.added_status) == (Status.VENDOR, added_status)
+
+
+@pytest.mark.parametrize("command", [0x76, 0x77])
+def test_position_error_and_torque_are_zero(yrc: YaskawaRobot, command: int) -> None:
+    assert _ints(_ask(yrc, command, 1, 0, GET_ALL)) == (0,) * 8
+    assert _ints(_ask(yrc, command, 1, 3, GET_SINGLE)) == (0,)
+    assert _ask(yrc, command, 11, 0, GET_ALL).added_status == AddedStatus.INSTANCE_ERROR
