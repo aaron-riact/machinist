@@ -159,7 +159,8 @@ When two devices want the same `host:port`, Machinist:
 | Kind                | Protocol         | Default port | Notes                              |
 | ------------------- | ---------------- | ------------ | ---------------------------------- |
 | `ur_dashboard`      | TCP text         | 29999        | UR Dashboard (ur-rtde compatible)  |
-| `motoman_nx100`     | TCP text         | 80           | Yaskawa NX100 Ethernet server      |
+| `yaskawa`           | TCP text, UDP    | 80, 10040    | NX100/DX200/YRC1000; ES and HSES   |
+| `motoman_nx100`     | TCP text         | 80           | `yaskawa` NX100 with a UP50N       |
 | `dobot_dashboard`   | TCP text         | 29999        | Dobot Verb(args); reply pattern    |
 | `fanuc_r30ib`       | TCP text         | 18735        | fanucpy / FaRoC compatible verbs   |
 | `robot`             | SRCI / TCP·UDP   | 15001        | Generic arm; URDF/DH + OPC-UA      |
