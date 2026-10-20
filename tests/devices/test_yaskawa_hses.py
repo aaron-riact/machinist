@@ -179,3 +179,35 @@ def test_a_switch_takes_1_or_2(yrc: YaskawaRobot) -> None:
 def test_cycle_switching_shows_in_the_status(yrc: YaskawaRobot, cycle: int, bit: int) -> None:
     assert _set(yrc, 0x84, 2, cycle).status is Status.OK
     assert _ints(_ask(yrc, 0x72, 1, 1, GET_SINGLE)) == (0xC0 | bit,)
+
+
+def test_axis_configuration_names_r1s_axes(yrc: YaskawaRobot) -> None:
+    pulse = _ask(yrc, 0x74, 1, 0, GET_ALL).data
+    assert [pulse[i:i + 4].rstrip(b"\0") for i in range(0, 32, 4)] == [
+        b"S", b"L", b"U", b"R", b"B", b"T", b"", b""]
+    cartesian = _ask(yrc, 0x74, 101, 0, GET_ALL).data
+    assert cartesian[12:24] == b"Rx\0\0Ry\0\0Rz\0\0"
+
+
+def test_position_in_pulses(yrc: YaskawaRobot) -> None:
+    """Data type 0, form, tool, user coordinate, extended form, eight axes."""
+    assert _ints(_ask(yrc, 0x75, 1, 0, GET_ALL)) == (
+        0, 0, 0, 0, 0, 0, 0, 0, 0, -73307, 0, 0, 0)
+
+
+def test_position_in_base_coordinates(yrc: YaskawaRobot) -> None:
+    """The UP50N's flange at B -90: 1170 mm out, 805 mm up, pointing down."""
+    values = _ints(_ask(yrc, 0x75, 101, 0, GET_ALL))
+    assert values[0] == 16
+    x, y, z, rx, ry, rz = values[5:11]
+    assert (x, y, z) == (1_170_000, 0, 805_000)
+    assert (abs(rx), ry, abs(rz)) == (1_800_000, 0, 1_800_000)
+
+
+def test_position_of_one_axis(yrc: YaskawaRobot) -> None:
+    assert _ints(_ask(yrc, 0x75, 1, 10, GET_SINGLE)) == (-73307,)
+
+
+def test_position_of_a_group_the_cell_lacks_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x75, 2, 0, GET_ALL)
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.INSTANCE_ERROR)

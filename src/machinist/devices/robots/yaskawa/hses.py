@@ -12,11 +12,13 @@ element's number) or all of them (Get_Attribute_All, attribute 0).
 
 from __future__ import annotations
 
+import math
 import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
 
+from ....kinematics.api import Pose
 from ....transport.yaskawa_hses import (
     ANSWER_SERVICE,
     AddedStatus,
@@ -73,6 +75,15 @@ def _added(added_status: AddedStatus) -> HsesError:
 Handler = Callable[[Request], bytes]
 
 
+#: The control group instances for robot 1: its axes in pulses, or Cartesian.
+#: The emulated cell has one robot and no base or station axes.
+R1_PULSE, R1_CARTESIAN = 1, 101
+#: Position answers carry eight axes; a six-axis arm's last two are 0.
+AXIS_ELEMENTS = 8
+PULSE_AXES = ("S", "L", "U", "R", "B", "T")
+CARTESIAN_AXES = ("X", "Y", "Z", "Rx", "Ry", "Rz")
+#: A position's data type (3.3.6): pulses, or base coordinates.
+PULSE_DATA, BASE_COORDINATE_DATA = 0, 16
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -140,6 +151,8 @@ class HighSpeedEthernetServer:
         return {
             0x70: self._alarm,
             0x72: self._status,
+            0x74: self._axis_configuration,
+            0x75: self._position,
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
@@ -159,6 +172,30 @@ class HighSpeedEthernetServer:
             int32s(code), int32s(data), int32s(ALARM_TYPE_DECIMAL), text(16),
             text(32, FAULT_ALARM_NAME),
         ])
+
+    # --- 3.3.5 Axis configuration information reading (0x74) ---------------------
+
+    def _axis_configuration(self, request: Request) -> bytes:
+        """The names of R1's axes, in pulses (instance 1) or Cartesian (101)."""
+        names = PULSE_AXES if _instance(request, R1_PULSE, R1_CARTESIAN) == R1_PULSE else (
+            CARTESIAN_AXES
+        )
+        return _read(request, [text(4, name) for name in _pad(list(names), AXIS_ELEMENTS, "")])
+
+    # --- 3.3.6 Robot position data reading (0x75) ------------------------------
+
+    def _position(self, request: Request) -> bytes:
+        """R1's position in pulses (instance 1) or base coordinates (101): data type,
+        form, tool, user coordinate, extended form, then eight axes."""
+        if _instance(request, R1_PULSE, R1_CARTESIAN) == R1_PULSE:
+            data_type, axes = PULSE_DATA, self.controller.pulses()
+        else:
+            data_type, axes = BASE_COORDINATE_DATA, _micrometres_and_ten_thousandths(
+                self.controller.arm.state.view.pose
+            )
+        values = [data_type, self.controller.form, self.controller.tool, 0, 0,
+                  *_pad(axes, AXIS_ELEMENTS, 0)]
+        return _read(request, [int32s(v) for v in values])
 
     # --- 3.3.20 Hold / servo on/off (0x83) -------------------------------------
 
@@ -210,6 +247,22 @@ def _instance(request: Request, *allowed: int) -> int:
     if request.instance not in allowed:
         raise _added(AddedStatus.INSTANCE_ERROR)
     return request.instance
+
+
+def _pad[T](values: list[T], count: int, fill: T) -> list[T]:
+    """*values* followed by *fill* up to *count*."""
+    return values + [fill] * (count - len(values))
+
+
+def _micrometres_and_ten_thousandths(pose: Pose) -> list[int]:
+    """A pose in µm and 0.0001 degrees, the units of the move commands (3.3.39).
+
+    The manual gives no units for position reads; these are the move
+    commands' and need checking on a controller.
+    """
+    x, y, z, rx, ry, rz = pose
+    position = [round(m * 1e6) for m in (x, y, z)]
+    return position + [round(math.degrees(r) * 1e4) for r in (rx, ry, rz)]
 
 
 def _write(request: Request, *, count: int) -> tuple[int, ...]:
