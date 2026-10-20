@@ -666,3 +666,8 @@ def test_a_single_variable_takes_attribute_0_or_1(yrc: YaskawaRobot, attribute: 
     write = _ask(yrc, 0x7B, 1, attribute, SET_SINGLE, struct.pack("<h", 5))
     assert write.status is Status.OK
     assert _ask(yrc, 0x7B, 1, attribute, GET_SINGLE).data == struct.pack("<h", 5)
+
+
+def test_the_software_version_tells_the_generation(yrc: YaskawaRobot) -> None:
+    """YMConnect reads the controller generation from the version's first two letters."""
+    assert _ask(yrc, 0x89, 11, 1, GET_SINGLE).data.rstrip(b"\0") == b"YAS2.80.00-00"

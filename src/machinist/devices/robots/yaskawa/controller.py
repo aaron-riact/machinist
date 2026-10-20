@@ -95,6 +95,10 @@ class ControllerProfile:
     user_frames: int
     #: The network inputs, the only signals IOWRITE may write.
     network_inputs: range
+    #: The system software version HSES reports. YMConnect tells the controller
+    #: generation from its first two characters (DS DX100, DN DX200, FS FS100,
+    #: YA YRC1000, YB YRC1000micro).
+    software_version: str
 
     @property
     def last_user_coordinate(self) -> int:
@@ -111,6 +115,7 @@ class ControllerProfile:
 CONTROLLERS: dict[str, ControllerProfile] = {
     "nx100": ControllerProfile(
         server_name="OK: NX Information Server (3.00)",
+        software_version="NS3.30.00A(US)-00",  # the Ethernet server's minimum version
         rotation_decimals=2,
         max_tool=23,
         user_frames=24,
@@ -118,6 +123,7 @@ CONTROLLERS: dict[str, ControllerProfile] = {
     ),
     "dx200": ControllerProfile(
         server_name="OK: DX Information Server (1.00)",
+        software_version="DN2.44.00-00",  # MotoROS2's minimum for a DX200
         rotation_decimals=4,
         max_tool=63,
         user_frames=64,
@@ -129,7 +135,9 @@ CONTROLLERS: dict[str, ControllerProfile] = {
 #: "YR Information Server". MotoROS2 confirms its network inputs are the
 #: DX200's. The rest takes the DX200's values until a controller says otherwise.
 CONTROLLERS["yrc1000"] = replace(
-    CONTROLLERS["dx200"], server_name="OK: YR Information Server (1.00)"
+    CONTROLLERS["dx200"],
+    server_name="OK: YR Information Server (1.00)",
+    software_version="YAS2.80.00-00",  # MotoROS2's minimum for a YRC1000
 )
 
 

@@ -141,10 +141,10 @@ BASE_COORDINATE, ROBOT_COORDINATE, USER_COORDINATE, TOOL_COORDINATE = 16, 17, 18
 R1_SYSTEM = 11
 APPLICATIONS = range(101, 109)
 SYSTEM_INSTANCES = (*range(11, 19), *range(21, 45), *APPLICATIONS)
-#: What the emulator reports as its software version and application. A real
-#: controller reports its own, such as "DS2.07.00A. (JP/US) -00".
-SOFTWARE_VERSION = "MACHINIST"
+#: The name application 1 reports; the emulator has no application of its own.
 APPLICATION = "HANDLING"
+
+
 @dataclass(frozen=True, slots=True)
 class Numbered:
     """A kind of register or variable: how its numbers run and its values travel."""
@@ -741,7 +741,8 @@ class HighSpeedEthernetServer:
             model = self.controller.model
         elif instance == APPLICATIONS.start:
             model = APPLICATION
-        return _read(request, [text(24, SOFTWARE_VERSION), text(16, model), text(8)])
+        version = self.controller.profile.software_version
+        return _read(request, [text(24, version), text(16, model), text(8)])
 
     # --- 3.3.39 Move instruction, Cartesian (0x8A) -----------------------------
 
