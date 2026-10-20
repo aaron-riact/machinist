@@ -21,9 +21,12 @@ socket; with ``Keep-Alive:<n>`` it answers *n* (``-1``: no limit).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
+
+from pydantic import model_validator
 
 from ...core.device import Device
 from ...core.events import EventBus
@@ -40,6 +43,29 @@ SERVER_NAME = "OK: NX Information Server (3.00)"
 START_ERROR = "NG: HTTP Error Response"
 NORMAL_ANSWER = "0000"
 MAX_KEEP_ALIVE = 32767
+#: Position answers carry this many axes: the robot's six and six external ones.
+AXES_ON_THE_WIRE = 12
+
+#: Encoder pulses per degree of each YR-UP50N axis (S, L, U, R, B, T): 4096
+#: pulses per motor turn through each gear ratio, except L, whose ratio did
+#: not match the arm and is measured from its pulse limits. The riact Motoman
+#: driver converts with the same values.
+UP50N_PULSES_PER_DEGREE = (1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627)
+
+
+class MotomanOptions(ArmOptions):
+    """The ``motoman_nx100`` block: an arm, and how its joints count pulses."""
+
+    #: Encoder pulses per degree of each joint, in joint order.
+    pulses_per_degree: tuple[float, ...] = UP50N_PULSES_PER_DEGREE
+
+    @model_validator(mode="after")
+    def _one_ratio_per_joint(self) -> MotomanOptions:
+        if len(self.pulses_per_degree) != self.joint_count:
+            raise ValueError(
+                f"{len(self.pulses_per_degree)} pulses_per_degree for {self.joint_count} joints"
+            )
+        return self
 
 
 class InterpreterMessage(IntEnum):
@@ -93,6 +119,7 @@ class NX100Controller:
     """The controller state every session shares, and the commands that act on it."""
 
     arm: RobotArm
+    pulses_per_degree: tuple[float, ...]
     cycle: Status1 = Status1.ONE_CYCLE
 
     def command(self, name: str) -> Command | None:
@@ -104,6 +131,7 @@ class NX100Controller:
         """
         commands: dict[str, Command] = {
             "RSTATS": self._rstats,
+            "RPOSJ": self._rposj,
         }
         return commands.get(name)
 
@@ -118,6 +146,19 @@ class NX100Controller:
         if view.faulted:
             data2 |= Status2.ALARM
         return f"{int(data1)},{int(data2)}"
+
+
+    def _rposj(self, data: str) -> str:
+        pulses = [
+            round(math.degrees(joint) * ratio)
+            for joint, ratio in zip(self.arm.state.view.joints, self.pulses_per_degree, strict=True)
+        ]
+        return ",".join(str(p) for p in _pad(pulses, AXES_ON_THE_WIRE))
+
+
+def _pad(values: list[int], count: int) -> list[int]:
+    """*values* followed by zeros up to *count* (the external axes a cell lacks)."""
+    return values + [0] * (count - len(values))
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,12 +253,14 @@ class MotomanNX100(LineServerDevice, HasArm):
     FRAMER = CR
 
     def __init__(
-        self, name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions
+        self, name: str, endpoint: Endpoint, bus: EventBus, options: MotomanOptions
     ) -> None:
         super().__init__(name, endpoint, bus)
         self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
-        self.controller = NX100Controller(arm=self.arm)
+        self.controller = NX100Controller(
+            arm=self.arm, pulses_per_degree=options.pulses_per_degree
+        )
 
     def make_session(self) -> SessionHandler:
         return _TracingSession(self, _Session(controller=self.controller))
@@ -238,6 +281,6 @@ class _TracingSession:
         return reply
 
 
-@register("motoman_nx100", default_port=MOTOMAN_PORT, options=ArmOptions)
-def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: ArmOptions) -> Device:
+@register("motoman_nx100", default_port=MOTOMAN_PORT, options=MotomanOptions)
+def _factory(name: str, endpoint: Endpoint, bus: EventBus, options: MotomanOptions) -> Device:
     return MotomanNX100(name, endpoint, bus, options)

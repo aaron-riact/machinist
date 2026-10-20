@@ -12,8 +12,7 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.robots.arm import ArmOptions
-from machinist.devices.robots.motoman import MotomanNX100
+from machinist.devices.robots.motoman import MotomanNX100, MotomanOptions
 
 from ..conftest import free_port, wait_running
 
@@ -21,7 +20,8 @@ from ..conftest import free_port, wait_running
 @pytest.fixture
 def motoman() -> Iterator[MotomanNX100]:
     bus = EventBus()
-    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, ArmOptions())
+    options = MotomanOptions(start_joints_deg=(10, 20, -30, 0, 45, -90))
+    m = MotomanNX100("r1", Endpoint("127.0.0.1", free_port()), bus, options)
     m.start()
     try:
         wait_running(m)
@@ -114,3 +114,23 @@ def test_a_size_that_does_not_count_the_data_is_refused(motoman: MotomanNX100) -
         motoman, b"CONNECT Robot_access Keep-Alive:-1\r\nHOSTCTRL_REQUEST RSTATS 2\r\nab\r"
     )
     assert received.endswith(b"OK: RSTATS\r\nNG: size 2 for 3 bytes\r\n")
+
+
+def _answer(motoman: MotomanNX100, command: str, data: str = "") -> bytes:
+    """The answer to one *command*, after its OK line."""
+    size = len(data) + 1 if data else 0
+    sent = f"CONNECT Robot_access\r\nHOSTCTRL_REQUEST {command} {size}\r\n"
+    if data:
+        sent += data + "\r"
+    received = _session(motoman, sent.encode())
+    return received.split(f"OK: {command}\r\n".encode(), 1)[1]
+
+
+def test_rposj_answers_twelve_axes_in_pulses(motoman: MotomanNX100) -> None:
+    """S, L, U, R, B, T in encoder pulses, then six external axes."""
+    assert _answer(motoman, "RPOSJ") == b"14166,38908,-59831,0,36653,-37676,0,0,0,0,0,0\r"
+
+
+def test_pulses_per_degree_needs_one_ratio_per_joint() -> None:
+    with pytest.raises(ValueError, match="2 pulses_per_degree for 6 joints"):
+        MotomanOptions(pulses_per_degree=(1.0, 2.0))
