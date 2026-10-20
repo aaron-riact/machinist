@@ -13,15 +13,18 @@ from ....core.registry import register
 from ....core.types import Endpoint
 from ....transport.framing import CR
 from ....transport.line_server import LineServer, Reply, SessionHandler
-from ....transport.message import UdpMessageServer
+from ....transport.message import UdpDatagramServer, UdpMessageServer
 from ..arm import ArmOptions, HasArm, arm_from_options
 from .controller import CONTROLLERS, JOB_SUFFIX, ROBOTS, YaskawaController, empty_job
 from .ethernet_server import EthernetServer, _Session
 from .hses import HighSpeedEthernetServer
+from .hses_files import HsesFileServer
 
 MOTOMAN_PORT = 80
-#: Where the High-Speed Ethernet Server (HSES) listens, over UDP.
+#: Where the High-Speed Ethernet Server (HSES) listens, over UDP: robot
+#: control, and file control next to it.
 HSES_PORT = 10040
+HSES_FILE_PORT = 10041
 
 
 Protocol = Literal["ethernet_server", "hses"]
@@ -39,6 +42,7 @@ class YaskawaOptions(ArmOptions):
     #: port (TCP 80 by default), and HSES on hses_port (UDP).
     protocols: tuple[Protocol, ...] = ("ethernet_server",)
     hses_port: int = HSES_PORT
+    hses_file_port: int = HSES_FILE_PORT
 
     #: Encoder pulses per degree of each joint, in joint order.
     pulses_per_degree: tuple[float, ...]
@@ -124,6 +128,7 @@ class YaskawaRobot(Device, HasArm):
         self.add_service(self.arm)
         self.protocols = options.protocols
         self.hses_port = options.hses_port
+        self.hses_file_port = options.hses_file_port
         self.controller = YaskawaController(
             arm=self.arm,
             profile=CONTROLLERS[options.controller],
@@ -140,6 +145,10 @@ class YaskawaRobot(Device, HasArm):
         if "hses" in self.protocols:
             hses = HighSpeedEthernetServer(self.controller)
             self.add_service(UdpMessageServer(endpoint.host, self.hses_port, hses.handle))
+            files = HsesFileServer(self.controller)
+            self.add_service(
+                UdpDatagramServer(endpoint.host, self.hses_file_port, files.handle)
+            )
 
     def make_session(self) -> SessionHandler:
         return _TracingSession(self, _Session(server=EthernetServer(self.controller)))
