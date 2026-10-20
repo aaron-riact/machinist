@@ -652,3 +652,17 @@ def test_robot_control_takes_only_requests(yrc: YaskawaRobot) -> None:
 def test_a_named_job_is_a_jbi_file(yrc: YaskawaRobot) -> None:
     assert yrc.controller.jobs == {"MAIN", "PICK"}
     assert yrc.controller.files["PICK.JBI"].startswith(b"/JOB\r\n//NAME PICK\r\n")
+
+
+def test_an_io_write_may_carry_its_byte_in_a_32_bit_word(yrc: YaskawaRobot) -> None:
+    """moto-hses sends the IO byte and three zeros."""
+    assert _ask(yrc, 0x78, 2701, 1, SET_SINGLE, b"\x07\x00\x00\x00").status is Status.OK
+    assert _ask(yrc, 0x78, 2701, 1, GET_SINGLE).data == b"\x07"
+
+
+@pytest.mark.parametrize("attribute", [0, 1])
+def test_a_single_variable_takes_attribute_0_or_1(yrc: YaskawaRobot, attribute: int) -> None:
+    """moto-hses addresses single variables with attribute 0."""
+    write = _ask(yrc, 0x7B, 1, attribute, SET_SINGLE, struct.pack("<h", 5))
+    assert write.status is Status.OK
+    assert _ask(yrc, 0x7B, 1, attribute, GET_SINGLE).data == struct.pack("<h", 5)

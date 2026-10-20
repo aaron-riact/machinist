@@ -114,6 +114,14 @@ IO_INSTANCES = (
     range(8001, 8129),  # robot control status signals
     range(8201, 8221),  # pseudo inputs
 )
+#: An IO write carries its byte alone, or as the low byte of a 32-bit word: the
+#: manual draws the data as a 32-bit row, and moto-hses, verified on a
+#: YRC1000micro, sends four bytes where other clients send one.
+IO_WRITE_SIZES = (1, 4)
+#: A single register, variable or IO value is addressed with attribute 1, as
+#: the manual says, or 0, as moto-hses sends for variables on a real
+#: YRC1000micro.
+SINGLE_VALUE_ATTRIBUTES = (0, 1)
 #: The most IO bytes one plural command carries (3.3.27).
 MAX_PLURAL_IO = 474
 class MoveKind(IntEnum):
@@ -441,14 +449,14 @@ class HighSpeedEthernetServer:
         """One IO byte, the instance its first signal's number / 10. Network inputs
         are the only ones a host may write."""
         signal = _io_signal(request.instance)
-        if request.attribute != 1:
+        if request.attribute not in SINGLE_VALUE_ATTRIBUTES:
             raise _added(AddedStatus.ATTRIBUTE_ERROR)
         if request.service == Service.GET_SINGLE:
             return bytes(self.controller.read_io([signal]))
         if request.service == Service.SET_SINGLE:
-            if len(request.data) != 1:
+            if len(request.data) not in IO_WRITE_SIZES:
                 raise _added(AddedStatus.DATA_SIZE_ERROR)
-            self.controller.write_network_inputs([signal], list(request.data))
+            self.controller.write_network_inputs([signal], [request.data[0]])
             return b""
         raise HsesError(Status.UNDEFINED_COMMAND)
 
@@ -482,7 +490,7 @@ class HighSpeedEthernetServer:
     def _single(self, kind: Numbered) -> Handler:
         def handle(request: Request) -> bytes:
             number = _numbered(kind, request.instance)
-            if request.attribute != 1:
+            if request.attribute not in SINGLE_VALUE_ATTRIBUTES:
                 raise _added(AddedStatus.ATTRIBUTE_ERROR)
             store = self.controller.variables.setdefault(kind.name, {})
             if request.service in (Service.GET_SINGLE, Service.GET_ALL):
@@ -577,7 +585,7 @@ class HighSpeedEthernetServer:
     def _string_variable(self, size: int) -> Handler:
         def handle(request: Request) -> bytes:
             number = _string_number(request.instance)
-            if request.attribute != 1:
+            if request.attribute not in SINGLE_VALUE_ATTRIBUTES:
                 raise _added(AddedStatus.ATTRIBUTE_ERROR)
             if request.service in (Service.GET_SINGLE, Service.GET_ALL):
                 return self._string(number)[:size]
