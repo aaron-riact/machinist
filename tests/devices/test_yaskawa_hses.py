@@ -685,6 +685,13 @@ def test_a_yrc1000_reads_system_parameters(yrc: YaskawaRobot) -> None:
     assert _ints(_ask(yrc, 0x39C, 0, 0, GET_ALL, struct.pack("<3i", 1, 0, 541))) == (0,)
 
 
+def test_r1_is_in_the_first_motion_slot(yrc: YaskawaRobot) -> None:
+    """YMConnect maps its motion slots to control groups from type 11, numbers 33 to 36."""
+    slots = [_ints(_ask(yrc, 0x39C, 0, 0, GET_ALL, struct.pack("<3i", 11, 0, n)))
+             for n in range(33, 37)]
+    assert slots == [(1,), (0,), (0,), (0,)]
+
+
 def test_a_dx200_has_no_system_parameter_read() -> None:
     options = YaskawaOptions(controller="dx200", robot="up50n", protocols=("hses",),
                              hses_port=free_port(), hses_file_port=free_port())

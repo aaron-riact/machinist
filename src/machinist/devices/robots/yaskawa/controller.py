@@ -25,6 +25,11 @@ MIN_MOVE_SECONDS = 0.02
 
 #: The RS parameters' type number in a system parameter read.
 PARAMETER_RS = 4
+#: A type YMConnect reads but does not name: numbers 33 to 36 hold the control
+#: group in each of its four motion slots (1-8 R1-R8, 9-16 B1-B8, 17-40 S1-S24,
+#: 0 none).
+PARAMETER_CONTROL_GROUPS = 11
+FIRST_MOTION_SLOT = 33
 #: An alarm's time as the controller shows it, e.g. 2011/10/10 15:49.
 ALARM_TIME_FORMAT = "%Y/%m/%d %H:%M"
 #: How many alarms the history keeps (HSES reads 1 to 100).
@@ -258,9 +263,14 @@ class YaskawaController:
     master_jobs: dict[int, str] = field(default_factory=dict)
     #: System parameters by (type, group, number), the type as YMConnect numbers
     #: them (4 is RS); an unset one reads 0. RS022 = 1 lets instance 0 address
-    #: variable 0, as the HSES manual says to set it (2.2).
+    #: variable 0, as the HSES manual says to set it (2.2). The cell has R1 alone,
+    #: in the first motion slot. YMConnect also reads S2C430 (type 1, group 1) to
+    #: pick a kinematics type; what its values mean is not known, so it reads 0.
     parameters: dict[tuple[int, int, int], int] = field(
-        default_factory=lambda: {(PARAMETER_RS, 0, 22): 1}
+        default_factory=lambda: {
+            (PARAMETER_RS, 0, 22): 1,
+            (PARAMETER_CONTROL_GROUPS, 0, FIRST_MOTION_SLOT): 1,
+        }
     )
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
