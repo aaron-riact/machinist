@@ -139,6 +139,8 @@ class EthernetServer:
             "IMOV": self._imov,
             "START": self._start,
             "DELETE": self._delete,
+            "CVTRJ": self._convert_job,
+            "CVTSJ": self._convert_job,
             "SETMJ": self._setmj,
             "JSEQ": self._jseq,
             "IOREAD": self._ioread,
@@ -306,6 +308,11 @@ class EthernetServer:
         """Delete the job named, or every job (``*``)."""
         name = data.strip()
         self.controller.delete_jobs(None if name == ALL_JOBS else name)
+
+    def _convert_job(self, data: str) -> None:
+        """CVTRJ (to a relative job) and CVTSJ (to a standard job) need the relative
+        job function, an option the emulated controller lacks, so both are refused."""
+        raise CommandRefusedError(Refusal.NOT_PERMITTED, "no relative job function")
 
     def _setmj(self, data: str) -> None:
         """A job to set as the master job, and at the same time as the executing job."""

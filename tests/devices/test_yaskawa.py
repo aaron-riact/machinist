@@ -364,6 +364,15 @@ def test_a_deleted_job_no_longer_executes(with_jobs: YaskawaRobot) -> None:
     assert _answer(with_jobs, "RJSEQ") == b",0,0\r"
 
 
+@pytest.mark.parametrize(("command", "data"), [("CVTRJ", "PICK,0"), ("CVTSJ", "PICK,0,0")])
+def test_job_conversion_needs_the_relative_job_function(
+    with_jobs: YaskawaRobot, command: str, data: str
+) -> None:
+    _answer(with_jobs, "MODE", "1")
+    error = f"ERROR:{command} is not successful (4490).\r\n".encode()
+    assert _answer(with_jobs, command, data) == error
+
+
 def test_setmj_sets_the_master_and_executing_job(with_jobs: YaskawaRobot) -> None:
     with_jobs.controller.select_job("PICK", 7)
     assert _answer(with_jobs, "SETMJ", "MAIN") == b"0000\r\n"
