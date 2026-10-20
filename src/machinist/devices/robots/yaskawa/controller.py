@@ -173,6 +173,7 @@ class Refusal(Enum):
     BAD_TOOL = auto()
     NO_SUCH_JOB = auto()
     NO_EXECUTING_JOB = auto()
+    WRONG_MODE = auto()
 
 
 class Status1(IntFlag):
@@ -188,6 +189,8 @@ class Status1(IntFlag):
     COMMAND_REMOTE = 0x80
 
 
+#: The modes MODE selects: 1 teach, 2 play.
+MODES = {1: Status1.TEACH, 2: Status1.PLAY}
 #: The cycles both servers number 1 step, 2 one cycle, 3 auto (CYCLE, HSES 0x84).
 CYCLES = {1: Status1.STEP, 2: Status1.ONE_CYCLE, 3: Status1.AUTO}
 
@@ -233,6 +236,8 @@ class YaskawaController:
     pulses_per_degree: tuple[float, ...]
     max_joint_speed_deg_s: tuple[float, ...]
     cycle: Status1 = Status1.ONE_CYCLE
+    #: Teach or play. Moves and jobs run only in play mode.
+    mode: Status1 = Status1.PLAY
     #: The form (posture) type and tool number of the last move, which
     #: position reads report. The arm has no tool files, so the tool only
     #: travels along.
@@ -338,7 +343,7 @@ class YaskawaController:
 
     def status(self) -> tuple[Status1, Status2]:
         view = self.arm.state.view
-        data1 = Status1.COMMAND_REMOTE | Status1.PLAY | self.cycle
+        data1 = Status1.COMMAND_REMOTE | self.mode | self.cycle
         if view.moving:
             data1 |= Status1.RUNNING
         data2 = Status2(0)
@@ -480,6 +485,8 @@ class YaskawaController:
 
     def _check_can_move(self) -> None:
         view = self.arm.state.view
+        if self.mode is not Status1.PLAY:
+            raise CommandRefusedError(Refusal.WRONG_MODE, "the controller is in teach mode")
         if view.estopped:
             raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
         if not view.servo_on:

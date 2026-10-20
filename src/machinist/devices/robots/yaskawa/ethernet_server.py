@@ -33,6 +33,7 @@ from ....kinematics.units import Meters, Radians
 from ....transport.line_server import Hangup, Reply
 from .controller import (
     CYCLES,
+    MODES,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
@@ -77,6 +78,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.BAD_TOOL: 5200,
     Refusal.NO_SUCH_JOB: 4040,
     Refusal.NO_EXECUTING_JOB: 4060,
+    Refusal.WRONG_MODE: 2080,
 }
 
 
@@ -105,6 +107,7 @@ class EthernetServer:
             "HOLD": self._hold,
             "RESET": self._reset,
             "CANCEL": self._cancel,
+            "MODE": self._mode,
             "CYCLE": self._cycle,
             "PMOVJ": self._pmovj,
             "PMOVL": self._pmovl,
@@ -156,6 +159,14 @@ class EthernetServer:
 
     def _cancel(self, data: str) -> None:
         self.controller.cancel_error()
+
+    def _mode(self, data: str) -> None:
+        """1 teach, 2 play. A real controller takes MODE only when its external mode
+        switch is enabled; the emulator always does."""
+        (mode,) = _parse_ints(data, count=1)
+        if mode not in MODES:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"mode {mode}")
+        self.controller.mode = MODES[mode]
 
     def _cycle(self, data: str) -> None:
         """1 step, 2 one cycle, 3 auto."""

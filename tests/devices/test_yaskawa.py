@@ -235,6 +235,24 @@ def test_cycle_takes_only_1_to_3(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "CYCLE", "4") == b"ERROR:CYCLE is not successful (5200).\r\n"
 
 
+def test_mode_selects_teach_or_play(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "MODE", "1") == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"162,64\r"
+    assert _answer(motoman, "MODE", "2") == b"0000\r\n"
+    assert _answer(motoman, "RSTATS") == b"194,64\r"
+
+
+def test_mode_takes_only_1_or_2(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "MODE", "3") == b"ERROR:MODE is not successful (5200).\r\n"
+
+
+def test_a_move_in_teach_mode_is_an_error(motoman: YaskawaRobot) -> None:
+    """2080: incorrect mode (the interlock table, 11.1.1)."""
+    _answer(motoman, "MODE", "1")
+    move = "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (2080).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:

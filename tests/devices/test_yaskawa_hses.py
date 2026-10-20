@@ -12,6 +12,7 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import YaskawaOptions, YaskawaRobot
+from machinist.devices.robots.yaskawa.controller import Status1
 from machinist.transport.message import UdpMessageTransport
 from machinist.transport.yaskawa_hses import (
     AddedStatus,
@@ -357,6 +358,13 @@ def test_no_move_while_servo_is_off_or_held(
         _set(yrc, 0x83, 1, 1)
     answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
     assert (answer.status, answer.added_status) == (Status.VENDOR, added_status)
+
+
+def test_no_move_in_teach_mode(yrc: YaskawaRobot) -> None:
+    """The Ethernet server's MODE puts the controller HSES moves in teach mode."""
+    yrc.controller.mode = Status1.TEACH
+    answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
+    assert answer.added_status == AddedStatus.INCORRECT_MODE
 
 
 @pytest.mark.parametrize("command", [0x76, 0x77])
