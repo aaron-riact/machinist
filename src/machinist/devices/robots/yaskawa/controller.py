@@ -431,11 +431,14 @@ class YaskawaController:
             return
         self.executing_job, self.executing_line = name, line
 
-    def start_job(self) -> None:
-        """Start the executing job. The emulator cannot run INFORM, so it finishes at once."""
+    def start_job(self, name: str | None = None) -> None:
+        """Start the executing job from its line, or job *name* from its start. The
+        emulator cannot run INFORM, so the job finishes at once."""
+        self._check_can_move()
+        if name is not None:
+            self.select_job(name)
         if not self.executing_job:
             raise CommandRefusedError(Refusal.NO_EXECUTING_JOB, "no job is set to execute")
-        self._check_can_move()
 
     def check_tool(self, tool: int) -> int:
         if not 0 <= tool <= self.profile.max_tool:

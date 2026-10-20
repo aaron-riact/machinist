@@ -284,6 +284,28 @@ def test_rjseq_without_an_executing_job_reads_no_name(motoman: YaskawaRobot) -> 
     assert _answer(motoman, "RJSEQ") == b",0,0\r"
 
 
+def test_start_runs_the_executing_job(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.select_job("PICK", 3)
+    assert _answer(with_jobs, "START") == b"0000\r\n"
+
+
+def test_start_without_an_executing_job_is_an_error(with_jobs: YaskawaRobot) -> None:
+    assert _answer(with_jobs, "START") == b"ERROR:START is not successful (4060).\r\n"
+
+
+def test_start_with_a_name_runs_that_job_from_its_start(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.select_job("PICK", 3)
+    assert _answer(with_jobs, "START", "MAIN") == b"0000\r\n"
+    assert _answer(with_jobs, "RJSEQ") == b"MAIN,0,0\r"
+
+
+def test_start_in_teach_mode_keeps_the_executing_job(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.select_job("PICK", 3)
+    _answer(with_jobs, "MODE", "1")
+    assert _answer(with_jobs, "START", "MAIN") == b"ERROR:START is not successful (2080).\r\n"
+    assert _answer(with_jobs, "RJSEQ") == b"PICK,3,0\r"
+
+
 def test_setmj_sets_the_master_and_executing_job(with_jobs: YaskawaRobot) -> None:
     with_jobs.controller.select_job("PICK", 7)
     assert _answer(with_jobs, "SETMJ", "MAIN") == b"0000\r\n"

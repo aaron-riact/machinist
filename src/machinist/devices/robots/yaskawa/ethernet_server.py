@@ -124,6 +124,7 @@ class EthernetServer:
             "MOVJ": self._movj,
             "MOVL": self._movl,
             "IMOV": self._imov,
+            "START": self._start,
             "SETMJ": self._setmj,
             "JSEQ": self._jseq,
             "IOREAD": self._ioread,
@@ -255,6 +256,10 @@ class EthernetServer:
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
         here = self.controller.arm.state.view.pose
         self.controller.move_linear(stepped(here, step, in_tool=in_tool), selection, speed)
+
+    def _start(self, data: str) -> None:
+        """Start the executing job from its line, or the job named from its start."""
+        self.controller.start_job(data.strip() or None)
 
     def _setmj(self, data: str) -> None:
         """A job to set as the master job, and at the same time as the executing job."""
