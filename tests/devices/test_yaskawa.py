@@ -487,3 +487,15 @@ def test_motoman_nx100_is_a_yaskawa_nx100_with_a_up50n() -> None:
     assert m.controller.profile == CONTROLLERS["nx100"]
     assert m.controller.pulses_per_degree == ROBOTS["up50n"].pulses_per_degree
     assert m.protocols == ("ethernet_server",)
+
+
+def test_command_data_may_end_with_cr_lf_counted_in_the_size(motoman: YaskawaRobot) -> None:
+    """EPICS StreamDevice sends "1, 0<CR><LF>" with size 6."""
+    received = _session(
+        motoman,
+        b"CONNECT Robot_access Keep-Alive:2\r\n"
+        b"HOSTCTRL_REQUEST RPOSC 6\r\n1, 0\r\n"
+        b"HOSTCTRL_REQUEST RSTATS 0\r\n",
+    )
+    assert b"OK: RPOSC\r\n174.533," in received
+    assert received.endswith(b"OK: RSTATS\r\n194,64\r")

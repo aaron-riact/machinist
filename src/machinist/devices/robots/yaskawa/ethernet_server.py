@@ -365,9 +365,13 @@ class _Session:
         return Hangup(lines) if isinstance(answer, Hangup) else lines
 
     def _answer(self, request: _Request, data: str) -> list[str] | Hangup:
-        sent = len(data.encode()) + 1  # the size counts the closing CR
-        if request.size > 0 and sent != request.size:
-            return Hangup([f"NG: size {request.size} for {sent} bytes\r\n"])
+        # The size counts the data and its closing CR, or CR LF: the EPICS
+        # StreamDevice support for the NX100 ends command data with CR LF and
+        # counts both. The LF arrives at the start of the next message, where
+        # the framer drops it.
+        data_size = len(data.encode())
+        if request.size > 0 and request.size - data_size not in (1, 2):
+            return Hangup([f"NG: size {request.size} for {data_size + 1} bytes\r\n"])
         try:
             answer = request.run(data)
         except CommandRefusedError as exc:
