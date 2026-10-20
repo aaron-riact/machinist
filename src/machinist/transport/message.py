@@ -200,6 +200,52 @@ class UdpMessageServer(Service):
             self._sock.close()
 
 
+#: A datagram and its sender in; the reply, or None for no reply, out.
+AddressedHandler = Callable[[bytes, tuple[str, int]], bytes | None]
+
+
+class UdpDatagramServer(Service):
+    """Datagram server for protocols that hold a conversation with each sender.
+
+    Its handler also gets the sender's address, so it can keep state per
+    host, and may return None to send nothing back.
+    """
+
+    def __init__(self, host: str, port: int, handler: AddressedHandler) -> None:
+        self._host = host
+        self._port = port
+        self._handler = handler
+        self._sock: socket.socket | None = None
+        self._stop = threading.Event()
+
+    def serve_forever(self, ready: threading.Event | None = None) -> None:
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind((self._host, self._port))
+        self._sock.settimeout(0.25)
+        if ready is not None:
+            ready.set()
+        try:
+            while not self._stop.is_set():
+                try:
+                    payload, addr = self._sock.recvfrom(_MAX_FRAME)
+                except TimeoutError:
+                    continue
+                except OSError:
+                    return
+                reply = self._handler(payload, addr)
+                if reply is not None:
+                    self._sock.sendto(reply, addr)
+        finally:
+            if self._sock is not None:
+                self._sock.close()
+
+    def shutdown(self) -> None:
+        self._stop.set()
+        if self._sock is not None:
+            self._sock.close()
+
+
 # --- transport selection ------------------------------------------------
 
 _CLIENTS: dict[str, Callable[..., MessageTransport]] = {
