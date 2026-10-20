@@ -101,3 +101,40 @@ def test_both_servers_share_one_controller(yrc: YaskawaRobot) -> None:
         while s.recv(1024):
             pass
     assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x48,)
+
+
+SET_SINGLE = 0x10
+
+
+def test_alarm_read_without_an_alarm_is_all_zero(yrc: YaskawaRobot) -> None:
+    """3.3.1: code, data, type (4 bytes each), time (16), name (32)."""
+    assert _ask(yrc, 0x70, 1, 0, GET_ALL).data == bytes(60)
+
+
+def test_alarm_read_reports_a_fault(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    answer = _ask(yrc, 0x70, 1, 0, GET_ALL)
+    assert struct.unpack("<3i", answer.data[:12]) == (4000, 0, 1)
+    assert answer.data[28:].rstrip(b"\0") == b"MACHINIST FAULT"
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x50,)  # alarm, servo on
+
+
+def test_alarm_read_of_one_element(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    assert _ints(_ask(yrc, 0x70, 1, 1, GET_SINGLE)) == (4000,)
+    assert _ask(yrc, 0x70, 2, 1, GET_SINGLE).data == bytes(4)  # no second alarm
+
+
+def test_alarm_reset_clears_the_fault(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    assert _ask(yrc, 0x82, 1, 1, SET_SINGLE, struct.pack("<i", 1)).status is Status.OK
+    assert _ask(yrc, 0x70, 1, 0, GET_ALL).data == bytes(60)
+
+
+def test_error_cancel_answers_normally(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x82, 2, 1, SET_SINGLE, struct.pack("<i", 1)).status is Status.OK
+
+
+def test_a_write_without_its_data_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x82, 1, 1, SET_SINGLE)
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.DATA_SIZE_ERROR)

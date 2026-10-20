@@ -73,8 +73,19 @@ def _added(added_status: AddedStatus) -> HsesError:
 Handler = Callable[[Request], bytes]
 
 
+#: An alarm's data shown as a decimal number (3.3.1, alarm type 1).
+ALARM_TYPE_DECIMAL = 1
+#: The name a faulted arm's alarm shows; the arm does not know the cause.
+FAULT_ALARM_NAME = "MACHINIST FAULT"
+
+
 def int32s(*values: int) -> bytes:
     return struct.pack(f"<{len(values)}i", *values)
+
+
+def text(size: int, value: str = "") -> bytes:
+    """A character string field of *size* bytes, padded with NULs."""
+    return value.encode("ascii")[:size].ljust(size, b"\0")
 
 
 @dataclass(slots=True)
@@ -123,8 +134,36 @@ class HighSpeedEthernetServer:
 
     def _commands(self) -> dict[int, Handler]:
         return {
+            0x70: self._alarm,
             0x72: self._status,
+            0x82: self._reset_or_cancel,
         }
+
+    # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
+
+    def _alarm(self, request: Request) -> bytes:
+        """The newest alarm (instance 1) to the fourth newest (4): code, data, type,
+        time and name."""
+        newest = _instance(request, 1, 2, 3, 4)
+        alarms = self.controller.alarms()
+        if newest > len(alarms):
+            return _read(request, [int32s(0), int32s(0), int32s(0), text(16), text(32)])
+        code, data = alarms[newest - 1]
+        return _read(request, [
+            int32s(code), int32s(data), int32s(ALARM_TYPE_DECIMAL), text(16),
+            text(32, FAULT_ALARM_NAME),
+        ])
+
+    # --- 3.3.19 Alarm reset / error cancel (0x82) ------------------------------
+
+    def _reset_or_cancel(self, request: Request) -> bytes:
+        kind = _instance(request, 1, 2)
+        _write(request, count=1)
+        if kind == 1:
+            self.controller.reset_alarm()
+        else:
+            self.controller.cancel_error()
+        return b""
 
     # --- 3.3.3 Status information reading (0x72) ------------------------------
 
@@ -138,6 +177,17 @@ def _instance(request: Request, *allowed: int) -> int:
     if request.instance not in allowed:
         raise _added(AddedStatus.INSTANCE_ERROR)
     return request.instance
+
+
+def _write(request: Request, *, count: int) -> tuple[int, ...]:
+    """The *count* 32-bit integers a Set_Attribute request carries."""
+    if request.service not in (Service.SET_SINGLE, Service.SET_ALL):
+        raise HsesError(Status.UNDEFINED_COMMAND)
+    if request.attribute != 1:
+        raise _added(AddedStatus.ATTRIBUTE_ERROR)
+    if len(request.data) != 4 * count:
+        raise _added(AddedStatus.DATA_SIZE_ERROR)
+    return struct.unpack(f"<{count}i", request.data)
 
 
 def _read(request: Request, elements: list[bytes]) -> bytes:
