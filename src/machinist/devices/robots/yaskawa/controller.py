@@ -182,6 +182,9 @@ class YaskawaController:
     model: str = ""
     #: Each IO byte by the number of its first signal; an unset byte reads 0.
     io: dict[int, int] = field(default_factory=dict)
+    #: Registers and variables by kind ("register", "B", "I", ...), then number;
+    #: an unset one reads 0.
+    variables: dict[str, dict[int, float]] = field(default_factory=dict)
 
     # --- status -----------------------------------------------------------
 

@@ -132,6 +132,31 @@ SYSTEM_INSTANCES = (*range(11, 19), *range(21, 45), *APPLICATIONS)
 #: controller reports its own, such as "DS2.07.00A. (JP/US) -00".
 SOFTWARE_VERSION = "MACHINIST"
 APPLICATION = "HANDLING"
+@dataclass(frozen=True, slots=True)
+class Numbered:
+    """A kind of register or variable: how its numbers run and its values travel."""
+
+    name: str
+    #: The struct format of one value.
+    value_format: str
+    numbers: range
+    #: The numbers a host may write; all of them when None.
+    writable: range | None
+    #: The most values one plural command carries, and the multiple it counts in.
+    plural_max: int
+    plural_step: int = 1
+
+    def pack(self, value: float) -> bytes:
+        return struct.pack("<" + self.value_format, value)
+
+    def unpack(self, data: bytes, *, count: int) -> tuple[float, ...]:
+        if len(data) != count * struct.calcsize(self.value_format):
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        return struct.unpack(f"<{count}{self.value_format}", data)
+
+
+#: Registers (3.3.10, 3.3.28): 0 to 999, of which 0 to 559 are writable.
+REGISTERS = Numbered("register", "H", range(1000), range(560), plural_max=237)
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -204,6 +229,7 @@ class HighSpeedEthernetServer:
             0x76: self._zero_per_axis,
             0x77: self._zero_per_axis,
             0x78: self._io,
+            0x79: self._single(REGISTERS),
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
@@ -211,6 +237,7 @@ class HighSpeedEthernetServer:
             0x8A: self._move_cartesian,
             0x8B: self._move_pulse,
             0x300: self._plural_io,
+            0x301: self._plural(REGISTERS),
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
@@ -301,6 +328,49 @@ class HighSpeedEthernetServer:
             self.controller.write_network_inputs(signals, list(values))
             return b""
         raise HsesError(Status.UNDEFINED_COMMAND)
+
+    # --- Registers and variables: one (3.3.10-) or many (3.3.28-) -------------
+
+    def _single(self, kind: Numbered) -> Handler:
+        def handle(request: Request) -> bytes:
+            number = _numbered(kind, request.instance)
+            if request.attribute != 1:
+                raise _added(AddedStatus.ATTRIBUTE_ERROR)
+            store = self.controller.variables.setdefault(kind.name, {})
+            if request.service in (Service.GET_SINGLE, Service.GET_ALL):
+                return kind.pack(store.get(number, 0))
+            if request.service in (Service.SET_SINGLE, Service.SET_ALL):
+                (value,) = kind.unpack(request.data, count=1)
+                _check_writable(kind, number)
+                store[number] = value
+                return b""
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handle
+
+    def _plural(self, kind: Numbered) -> Handler:
+        def handle(request: Request) -> bytes:
+            first = _numbered(kind, request.instance)
+            if request.attribute != 0:
+                raise _added(AddedStatus.ATTRIBUTE_ERROR)
+            if len(request.data) < 4:
+                raise _added(AddedStatus.DATA_SIZE_ERROR)
+            (count,) = struct.unpack_from("<i", request.data)
+            if not 1 <= count <= kind.plural_max or count % kind.plural_step:
+                raise _added(AddedStatus.OPERAND_RANGE)
+            numbers = range(first, first + count)
+            if numbers[-1] not in kind.numbers:
+                raise _added(AddedStatus.OUTSIDE_THE_DATA)
+            store = self.controller.variables.setdefault(kind.name, {})
+            if request.service == Service.READ_PLURAL:
+                return int32s(count) + b"".join(kind.pack(store.get(n, 0)) for n in numbers)
+            if request.service == Service.WRITE_PLURAL:
+                values = kind.unpack(request.data[4:], count=count)
+                for number in numbers:
+                    _check_writable(kind, number)
+                store.update(zip(numbers, values, strict=True))
+                return b""
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handle
 
     # --- 3.3.20 Hold / servo on/off (0x83) -------------------------------------
 
@@ -478,6 +548,17 @@ def _pose_from(values: tuple[int, ...]) -> Pose:
         Radians(math.radians(rx / 1e4)), Radians(math.radians(ry / 1e4)),
         Radians(math.radians(rz / 1e4)),
     )
+
+
+def _numbered(kind: Numbered, instance: int) -> int:
+    if instance not in kind.numbers:
+        raise _added(AddedStatus.INSTANCE_ERROR)
+    return instance
+
+
+def _check_writable(kind: Numbered, number: int) -> None:
+    if kind.writable is not None and number not in kind.writable:
+        raise _added(AddedStatus.OUTSIDE_THE_DATA)
 
 
 def _known_io_signal(signal: int) -> bool:

@@ -376,3 +376,33 @@ def test_system_information_names_the_arm(yrc: YaskawaRobot) -> None:
 def test_system_information_of_a_missing_group_is_empty(yrc: YaskawaRobot) -> None:
     assert _ask(yrc, 0x89, 12, 2, GET_SINGLE).data == bytes(16)
     assert _ask(yrc, 0x89, 101, 2, GET_SINGLE).data.rstrip(b"\0") == b"HANDLING"
+
+
+def test_register_write_and_read(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x79, 7, 1, SET_SINGLE, struct.pack("<H", 1234)).status is Status.OK
+    assert _ask(yrc, 0x79, 7, 1, GET_SINGLE).data == struct.pack("<H", 1234)
+    assert _ask(yrc, 0x79, 8, 1, GET_SINGLE).data == struct.pack("<H", 0)
+
+
+def test_registers_from_560_are_read_only(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x79, 560, 1, SET_SINGLE, struct.pack("<H", 1))
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.OUTSIDE_THE_DATA)
+    assert _ask(yrc, 0x79, 999, 1, GET_SINGLE).status is Status.OK
+    assert _ask(yrc, 0x79, 1000, 1, GET_SINGLE).added_status == AddedStatus.INSTANCE_ERROR
+
+
+def test_plural_registers(yrc: YaskawaRobot) -> None:
+    values = struct.pack("<3H", 1, 2, 3)
+    assert _ask(yrc, 0x301, 10, 0, 0x34, struct.pack("<i", 3) + values).status is Status.OK
+    read = _ask(yrc, 0x301, 9, 0, 0x33, struct.pack("<i", 5))
+    assert read.data == struct.pack("<i5H", 5, 0, 1, 2, 3, 0)
+
+
+def test_plural_registers_stop_at_237(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x301, 0, 0, 0x33, struct.pack("<i", 238))
+    assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+def test_a_register_value_of_the_wrong_size_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x79, 7, 1, SET_SINGLE, struct.pack("<i", 1))
+    assert answer.added_status == AddedStatus.DATA_SIZE_ERROR
