@@ -131,6 +131,12 @@ def test_an_unknown_command_is_refused_and_closed(motoman: YaskawaRobot) -> None
     assert received.endswith(b"Keep-Alive:-1.\r\nNG: unknown command NOPE\r\n")
 
 
+def test_jwait_is_not_an_ethernet_server_command(motoman: YaskawaRobot) -> None:
+    """The manual lists JWAIT only to say the Ethernet server does not support it."""
+    received = _session(motoman, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST JWAIT 0\r\n")
+    assert received.endswith(b"NG: unknown command JWAIT\r\n")
+
+
 def test_a_size_that_does_not_count_the_data_is_refused(motoman: YaskawaRobot) -> None:
     """The size counts the data and its closing CR: ``ab<CR>`` is 3 bytes."""
     received = _session(
