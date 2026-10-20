@@ -54,6 +54,8 @@ BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 ALARM_SLOTS = 4
 
 
+#: MDSP shows up to 30 bytes on the pendant's remote display.
+PENDANT_MESSAGE_BYTES = 30
 #: Joint speed in percent of the maximum, and linear speed in mm/s or degrees/s.
 MIN_JOINT_SPEED, MAX_JOINT_SPEED_PERCENT, MIN_LINEAR_SPEED = 0.01, 100.0, 0.1
 #: Signal numbers count eight to a byte: #22010 to #22017 are byte 2201's bits.
@@ -109,6 +111,7 @@ class EthernetServer:
             "CANCEL": self._cancel,
             "HLOCK": self._hlock,
             "MODE": self._mode,
+            "MDSP": self._mdsp,
             "CYCLE": self._cycle,
             "PMOVJ": self._pmovj,
             "PMOVL": self._pmovl,
@@ -164,6 +167,12 @@ class EthernetServer:
     def _hlock(self, data: str) -> None:
         """The interlock between the pendant and IO operation signals, 1 on, 0 off."""
         self.controller.hlock = _parse_switch(data)
+
+    def _mdsp(self, data: str) -> None:
+        """A message for the pendant's remote display."""
+        if len(data.encode()) > PENDANT_MESSAGE_BYTES:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"{len(data.encode())}-byte message")
+        self.controller.pendant_message = data
 
     def _mode(self, data: str) -> None:
         """1 teach, 2 play. A real controller takes MODE only when its external mode

@@ -242,6 +242,15 @@ def test_hlock_sets_the_interlock(motoman: YaskawaRobot) -> None:
     assert not motoman.controller.hlock
 
 
+def test_mdsp_shows_a_message_on_the_pendant(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "MDSP", "PART 12, DONE") == b"0000\r\n"
+    assert motoman.controller.pendant_message == "PART 12, DONE"
+
+
+def test_mdsp_takes_at_most_30_bytes(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "MDSP", "X" * 31) == b"ERROR:MDSP is not successful (5200).\r\n"
+
+
 def test_mode_selects_teach_or_play(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "MODE", "1") == b"0000\r\n"
     assert _answer(motoman, "RSTATS") == b"162,64\r"
