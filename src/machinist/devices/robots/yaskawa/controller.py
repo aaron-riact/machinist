@@ -555,6 +555,16 @@ class YaskawaController:
         self._check_can_move()
         self.arm.movej(target, duration=self._joint_move_seconds(target, speed_percent))
 
+    def move_joints_to_pose(self, target: Pose, speed_percent: float) -> None:
+        """Joint-space move to the joints that put the arm at *target*."""
+        self.move_joints(self.arm.inverse(target), speed_percent)
+
+    def step_linear(self, step: NDArray[np.float64], *, in_tool: bool,
+                    selection: SpeedSelection, speed: float) -> None:
+        """Straight-line move by *step* from where the arm is: in the tool's own frame,
+        or along and about the base axes."""
+        self.move_linear(stepped(self.arm.state.view.pose, step, in_tool=in_tool), selection, speed)
+
     def move_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
         """Straight-line move, *speed* in mm/s (V) or degrees/s (VR)."""
         self._check_can_move()

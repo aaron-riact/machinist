@@ -52,7 +52,6 @@ from .controller import (
     YaskawaController,
     frame_step,
     from_frame,
-    stepped,
     to_frame,
 )
 
@@ -425,7 +424,7 @@ class EthernetServer:
         target = from_frame(self._frame(_integer(values[1])), _pose(values[2:8]))
         self.controller.form = _integer(values[8])
         self.controller.tool = self.controller.check_tool(_integer(values[9]))
-        self.controller.move_joints(self.controller.arm.inverse(target), speed)
+        self.controller.move_joints_to_pose(target, speed)
 
     def _movl(self, data: str) -> None:
         """Speed selection, speed, coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
@@ -452,8 +451,7 @@ class EthernetServer:
         if not in_tool:
             step = frame_step(self._frame(coordinate), step)
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
-        here = self.controller.arm.state.view.pose
-        self.controller.move_linear(stepped(here, step, in_tool=in_tool), selection, speed)
+        self.controller.step_linear(step, in_tool=in_tool, selection=selection, speed=speed)
 
     def _start(self, data: str) -> None:
         """Start the executing job from its line, or the job named from its start."""

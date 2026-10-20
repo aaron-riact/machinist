@@ -50,7 +50,6 @@ from .controller import (
     YaskawaController,
     frame_step,
     from_frame,
-    stepped,
     to_frame,
 )
 
@@ -821,17 +820,16 @@ class HighSpeedEthernetServer:
         tool = self.controller.check_tool(values[15])
         frame = self._move_frame(kind, coordinate, user_frame=values[16])
         target = _pose_from(values[5:11])
-        if kind is not MoveKind.STRAIGHT_INCREMENT:
-            assert frame is not None
-            target = from_frame(frame, target)
-        elif frame is None:
-            target = stepped(self.controller.arm.state.view.pose, pose_to_mat(target), in_tool=True)
-        else:
-            step = frame_step(frame, pose_to_mat(target))
-            target = stepped(self.controller.arm.state.view.pose, step, in_tool=False)
         self.controller.form, self.controller.tool = values[13], tool
+        if kind is MoveKind.STRAIGHT_INCREMENT:
+            step = pose_to_mat(target) if frame is None else frame_step(frame, pose_to_mat(target))
+            self.controller.step_linear(step, in_tool=frame is None, selection=speed_class,
+                                        speed=speed)
+            return b""
+        assert frame is not None
+        target = from_frame(frame, target)
         if kind is MoveKind.JOINT:
-            self.controller.move_joints(self.controller.arm.inverse(target), speed)
+            self.controller.move_joints_to_pose(target, speed)
         else:
             self.controller.move_linear(target, speed_class, speed)
         return b""
