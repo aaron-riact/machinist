@@ -8,9 +8,10 @@ from enum import Enum, IntEnum, IntFlag, auto
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ....kinematics.api import Joints, Pose
-from ....kinematics.dh_backend import pose_to_mat
+from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ....kinematics.units import Radians
 from ..arm import NoLinearPath, RobotArm
 
@@ -302,3 +303,12 @@ class YaskawaController:
         return max(seconds, MIN_MOVE_SECONDS)
 
 
+def stepped(pose: Pose, step: NDArray[np.float64], *, in_tool: bool) -> Pose:
+    """*pose* moved by *step*: in the tool's own frame, or along and about the base axes."""
+    here = pose_to_mat(pose)
+    if in_tool:
+        return _mat_to_pose(here @ step)
+    there = np.eye(4)
+    there[:3, :3] = step[:3, :3] @ here[:3, :3]
+    there[:3, 3] = here[:3, 3] + step[:3, 3]
+    return _mat_to_pose(there)

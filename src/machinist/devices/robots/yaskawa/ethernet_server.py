@@ -27,14 +27,17 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import numpy as np
-from numpy.typing import NDArray
-
 from ....kinematics.api import Pose
-from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
+from ....kinematics.dh_backend import pose_to_mat
 from ....kinematics.units import Meters, Radians
 from ....transport.line_server import Hangup, Reply
-from .controller import CommandRefusedError, Refusal, SpeedSelection, YaskawaController
+from .controller import (
+    CommandRefusedError,
+    Refusal,
+    SpeedSelection,
+    YaskawaController,
+    stepped,
+)
 
 #: The reply to a START request the controller cannot accept, before it closes.
 START_ERROR = "NG: HTTP Error Response"
@@ -197,7 +200,7 @@ class EthernetServer:
         step = pose_to_mat(_pose(values[3:9]))
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
         here = self.controller.arm.state.view.pose
-        self.controller.move_linear(_stepped(here, step, in_tool=in_tool), selection, speed)
+        self.controller.move_linear(stepped(here, step, in_tool=in_tool), selection, speed)
 
     def _ioread(self, data: str) -> str:
         """First signal and signal count → one value per byte."""
@@ -220,17 +223,6 @@ class EthernetServer:
         if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
             return
         self.controller.check_user_frame(coordinate - 1)
-
-
-def _stepped(pose: Pose, step: NDArray[np.float64], *, in_tool: bool) -> Pose:
-    """*pose* moved by *step*: in the tool's own frame, or along and about the base axes."""
-    here = pose_to_mat(pose)
-    if in_tool:
-        return _mat_to_pose(here @ step)
-    there = np.eye(4)
-    there[:3, :3] = step[:3, :3] @ here[:3, :3]
-    there[:3, 3] = here[:3, 3] + step[:3, 3]
-    return _mat_to_pose(there)
 
 
 def _joint_speed(value: float) -> float:
