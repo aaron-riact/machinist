@@ -4,9 +4,10 @@ Parses a serial-chain URDF and evaluates FK by composing joint
 transforms directly — no DH conversion needed.  IK uses the same
 damped least-squares Jacobian iteration as the DH back-end.
 
-Only revolute (and continuous) joints are used; fixed joints are folded
-into the preceding link transform.  The chain is traversed in URDF order
-(root → first child → …).
+Only revolute (and continuous) joints move; a fixed joint is folded into
+the transform of the moving joint after it, and fixed joints after the last
+moving one form the chain's tip (a flange or tool offset) as long as they do
+not branch. The chain is traversed in URDF order (root → first child → …).
 """
 
 from __future__ import annotations
@@ -31,11 +32,12 @@ class UrdfKinematics(Kinematics):
     joint_count: int
     _fixed: list[NDArray[np.float64]]
     _axes: list[NDArray[np.float64]]
+    _tip: NDArray[np.float64]
 
     def __init__(self, model: RobotModel) -> None:
         if model.urdf_path is None:
             raise ValueError("UrdfKinematics requires model.urdf_path to be set")
-        joints = _parse_chain(model.urdf_path)
+        joints, self._tip = _walk_chain(model.urdf_path)
         self.joint_count = len(joints)
         self._fixed = [j["fixed"] for j in joints]
         self._axes = [j["axis"] for j in joints]
@@ -43,10 +45,7 @@ class UrdfKinematics(Kinematics):
     def forward(self, joints: Joints) -> Pose:
         if len(joints) != self.joint_count:
             raise ValueError(f"expected {self.joint_count} joints, got {len(joints)}")
-        T = np.eye(4)
-        for fixed, ax, q in zip(self._fixed, self._axes, joints, strict=False):
-            T = T @ fixed @ _rot(ax, q)
-        return _mat_to_pose(T)
+        return _mat_to_pose(self._fk_matrix(np.array(joints, dtype=float)))
 
     def inverse(
         self, pose: Pose, *, seed: Joints,
@@ -72,7 +71,7 @@ class UrdfKinematics(Kinematics):
         T = np.eye(4)
         for fixed, ax, qi in zip(self._fixed, self._axes, q, strict=False):
             T = T @ fixed @ _rot(ax, qi)
-        return T
+        return T @ self._tip
 
     def _numerical_jacobian(
         self, q: NDArray[np.float64], current: NDArray[np.float64],
@@ -90,36 +89,51 @@ class UrdfKinematics(Kinematics):
 
 def _parse_chain(urdf_path: str | Path) -> list[dict]:
     """Extract revolute/continuous joints in traversal order from a URDF file."""
-    tree = ET.parse(urdf_path)
-    root = tree.getroot()
+    return _walk_chain(urdf_path)[0]
 
+
+def _walk_chain(urdf_path: str | Path) -> tuple[list[dict], NDArray[np.float64]]:
+    """The moving joints from the root, and the tip after the last of them.
+
+    Each moving joint's ``fixed`` transform includes the fixed joints before
+    it. Where a link has several child joints, the walk follows the first
+    whose branch moves; past the last moving joint it follows fixed joints
+    only while each link has one child, so a tip that branches (a camera
+    mount beside a gripper) stays at the last moving joint.
+    """
+    root = ET.parse(urdf_path).getroot()
     moving_types = {"revolute", "continuous"}
-    children: dict[str, list] = {}
-    for joint in root.findall("joint"):
-        if joint.get("type", "revolute") not in moving_types:
-            continue
-        parent = joint.find("parent").get("link")
-        info = _parse_joint(joint)
-        children.setdefault(parent, []).append(info)
+    children: dict[str, list[dict]] = {}
+    child_links = set()
+    for elem in root.findall("joint"):
+        info = _parse_joint(elem)
+        info["moving"] = elem.get("type", "revolute") in moving_types
+        children.setdefault(info["parent"], []).append(info)
+        child_links.add(info["child"])
 
-    moving_parents = set()
-    moving_children = set()
-    for joint in root.findall("joint"):
-        if joint.get("type", "revolute") not in moving_types:
-            continue
-        moving_parents.add(joint.find("parent").get("link"))
-        moving_children.add(joint.find("child").get("link"))
-    base = (moving_parents - moving_children).pop() if (moving_parents - moving_children) else "base_link"
+    def moves(link: str) -> bool:
+        return any(j["moving"] or moves(j["child"]) for j in children.get(link, []))
 
+    links = [str(elem.get("name")) for elem in root.findall("link")]
+    roots = [name for name in links if name not in child_links]
+    link = roots[0] if roots else "base_link"
     chain: list[dict] = []
-    _traverse(base, children, chain)
-    return chain
-
-
-def _traverse(link: str, children: dict[str, list], out: list[dict]) -> None:
-    for j in children.get(link, []):
-        out.append(j)
-        _traverse(j["child"], children, out)
+    pending = np.eye(4)
+    while kids := children.get(link):
+        moving = [j for j in kids if j["moving"] or moves(j["child"])]
+        if moving:
+            step = moving[0]
+        elif len(kids) == 1:
+            step = kids[0]
+        else:
+            break
+        if step["moving"]:
+            chain.append({**step, "fixed": pending @ step["fixed"]})
+            pending = np.eye(4)
+        else:
+            pending = pending @ step["fixed"]
+        link = step["child"]
+    return chain, pending
 
 
 def _parse_joint(elem: ET.Element) -> dict:
@@ -135,6 +149,7 @@ def _parse_joint(elem: ET.Element) -> dict:
 
     return {
         "name": elem.get("name"),
+        "parent": elem.find("parent").get("link"),
         "child": elem.find("child").get("link"),
         "fixed": fixed,
         "axis": ax,

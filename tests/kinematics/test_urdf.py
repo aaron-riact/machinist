@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from machinist.kinematics import RobotModel, build_kinematics, urdf_to_dh
 from machinist.kinematics.api import KinematicsOptions
@@ -83,3 +84,38 @@ def test_urdf_to_dh_with_known_dh_produces_valid_fk() -> None:
         p_k = kin_known.forward(q)
         assert all(not np.isnan(v) for v in p_u), f"NaN in URDF DH FK at {q}"
         assert all(not np.isnan(v) for v in p_k), f"NaN in known DH FK at {q}"
+
+
+_TWO_LINK = """<robot name="two">
+  <link name="base"/><link name="a"/><link name="b"/><link name="b_up"/><link name="tip"/>
+  <joint name="j1" type="revolute"><parent link="base"/><child link="a"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/></joint>
+  <joint name="j2" type="revolute"><parent link="a"/><child link="b"/>
+    <origin xyz="1 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/></joint>
+  <joint name="riser" type="fixed"><parent link="b"/><child link="b_up"/>
+    <origin xyz="0 0 0.5" rpy="0 0 0"/></joint>
+  <joint name="flange" type="fixed"><parent link="b_up"/><child link="tip"/>
+    <origin xyz="0.25 0 0" rpy="0 1.5707963 0"/></joint>
+</robot>
+"""
+
+
+def test_urdf_fixed_joints_after_the_last_moving_one_form_the_tip(tmp_path: Path) -> None:
+    urdf = tmp_path / "two.urdf"
+    urdf.write_text(_TWO_LINK)
+    kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf))
+    x, y, z, rx, ry, rz = kin.forward((0.0, 0.0))
+    assert (x, y, z) == pytest.approx((1.25, 0.0, 0.5))
+    assert (rx, ry, rz) == pytest.approx((0.0, np.pi / 2, 0.0), abs=1e-6)
+
+
+def test_urdf_a_fixed_joint_between_moving_ones_is_kept(tmp_path: Path) -> None:
+    """With j2 fixed and the riser moving, j2's offset now lies between two moving joints."""
+    urdf = tmp_path / "mid.urdf"
+    urdf.write_text(
+        _TWO_LINK.replace('name="j2" type="revolute"', 'name="j2" type="fixed"')
+        .replace('name="riser" type="fixed"', 'name="riser" type="revolute"')
+    )
+    kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf))
+    x, y, z, *_ = kin.forward((0.0, 0.0))
+    assert (x, y, z) == pytest.approx((1.25, 0.0, 0.5))
