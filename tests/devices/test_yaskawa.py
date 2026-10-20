@@ -13,7 +13,7 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
-from machinist.devices.robots.motoman import MotomanNX100, MotomanOptions
+from machinist.devices.robots.yaskawa import MotomanNX100, MotomanOptions
 
 from ..conftest import free_port, wait_running
 

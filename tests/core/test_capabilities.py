@@ -19,7 +19,7 @@ from machinist.devices.robots.arm import HasArm
 from machinist.devices.robots.dobot import DobotDashboard
 from machinist.devices.robots.fanuc import FanucFocasRobot, FanucKarelServer
 from machinist.devices.robots.generic import RobotDevice
-from machinist.devices.robots.motoman import MotomanNX100
+from machinist.devices.robots.yaskawa import MotomanNX100
 from machinist.devices.gateways.modbus_rtu import ModbusRtuGatewayDevice
 from machinist.devices.robots.ur import URDashboardServer
 
