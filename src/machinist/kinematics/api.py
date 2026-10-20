@@ -61,6 +61,9 @@ class KinematicsOptions:
     dh: DHParams | None = None
     urdf_path: Path | None = None
     robot_type: str | None = None
+    #: The URDF link whose pose the kinematics computes (the flange or tool).
+    #: Left out, it is the URDF's only end link.
+    tip_link: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +74,7 @@ class RobotModel:
     dh: DHParams | None = None
     urdf_path: Path | None = None
     robot_type: str | None = None
+    tip_link: str | None = None
 
 
 # --- kinematics protocol ---------------------------------------------
@@ -139,6 +143,7 @@ def build_kinematics(options: KinematicsOptions) -> Kinematics:
         dh=options.dh,
         urdf_path=options.urdf_path,
         robot_type=options.robot_type,
+        tip_link=options.tip_link,
     )
     return get_backend(backend, model)
 

@@ -49,11 +49,15 @@ def kinds() -> None:
 @app.command()
 def urdf_to_dh(
     urdf_path: Annotated[Path, typer.Argument(help="Path to a URDF file.")],
+    tip_link: Annotated[
+        str | None,
+        typer.Option(help="The link the chain ends at; needed when the URDF has several."),
+    ] = None,
 ) -> None:
     """Convert a URDF to modified-DH parameters."""
     from .kinematics import urdf_to_dh as _convert
 
-    dh = _convert(str(urdf_path))
+    dh = _convert(str(urdf_path), tip_link=tip_link)
     table = Table(title=f"DH Parameters — {urdf_path.name}")
     table.add_column("i", style="dim")
     table.add_column("a", justify="right")

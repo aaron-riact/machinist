@@ -11,12 +11,16 @@ from machinist.kinematics import RobotModel, build_kinematics, urdf_to_dh
 from machinist.kinematics.api import KinematicsOptions
 
 EXAMPLES = Path(__file__).parents[2] / "examples"
+#: cr5 ends in a camera mount and a gripper; both sit on Link6 at no offset.
+TIPS = {"cr5": "Link6"}
 
 
 def test_urdf_backend_fk_zero_config() -> None:
     for name in ("cr5", "cr10", "cr10a", "cr20", "cr20a"):
         urdf = EXAMPLES / f"{name}.urdf"
-        kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf))
+        kin = build_kinematics(
+            KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link=TIPS.get(name))
+        )
         p = kin.forward((0.0,) * kin.joint_count)
         assert all(not np.isnan(v) for v in p), f"NaN in FK at q=0 for {name}"
         assert any(abs(v) > 1e-9 for v in p), f"all-zero pose at q=0 for {name}"
@@ -24,7 +28,7 @@ def test_urdf_backend_fk_zero_config() -> None:
 
 def test_urdf_backend_fk_deterministic() -> None:
     kin = build_kinematics(KinematicsOptions(
-        backend="urdf", urdf_path=EXAMPLES / "cr5.urdf",
+        backend="urdf", urdf_path=EXAMPLES / "cr5.urdf", tip_link="Link6",
     ))
     q = (0.1, -0.2, 0.3, -0.4, 0.5, -0.6)
     p1 = kin.forward(q)
@@ -35,7 +39,9 @@ def test_urdf_backend_fk_deterministic() -> None:
 def test_urdf_backend_ik_round_trip() -> None:
     for name in ("cr5", "cr10", "cr10a", "cr20", "cr20a"):
         urdf = EXAMPLES / f"{name}.urdf"
-        kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf))
+        kin = build_kinematics(
+            KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link=TIPS.get(name))
+        )
         rng = np.random.default_rng(42)
         for _ in range(20):
             q = tuple(rng.uniform(-0.5, 0.5, kin.joint_count).tolist())
@@ -47,13 +53,13 @@ def test_urdf_backend_ik_round_trip() -> None:
 
 
 def test_urdf_backend_falls_back_when_pinocchio_not_available() -> None:
-    kin = build_kinematics(KinematicsOptions(urdf_path=EXAMPLES / "cr5.urdf"))
+    kin = build_kinematics(KinematicsOptions(urdf_path=EXAMPLES / "cr5.urdf", tip_link="Link6"))
     assert type(kin).__name__ == "UrdfKinematics"
 
 
 def test_urdf_backend_rejects_wrong_joint_count() -> None:
     kin = build_kinematics(KinematicsOptions(
-        backend="urdf", urdf_path=EXAMPLES / "cr5.urdf",
+        backend="urdf", urdf_path=EXAMPLES / "cr5.urdf", tip_link="Link6",
     ))
     try:
         kin.forward((0.0,) * (kin.joint_count + 1))
@@ -64,7 +70,7 @@ def test_urdf_backend_rejects_wrong_joint_count() -> None:
 
 def test_urdf_to_dh_returns_valid_params() -> None:
     for name in ("cr5", "cr10", "cr10a", "cr20", "cr20a"):
-        dh = urdf_to_dh(str(EXAMPLES / f"{name}.urdf"))
+        dh = urdf_to_dh(str(EXAMPLES / f"{name}.urdf"), tip_link=TIPS.get(name))
         assert len(dh.a) == 6, f"expected 6 joints for {name}, got {len(dh.a)}"
         assert len(dh.d) == 6
         assert len(dh.alpha) == 6
@@ -74,7 +80,7 @@ def test_urdf_to_dh_with_known_dh_produces_valid_fk() -> None:
     """URDF-extracted DH produces a valid (non-NaN) FK at multiple configs."""
     from machinist.devices.robots.dobot import _CR5_DH
 
-    dh = urdf_to_dh(str(EXAMPLES / "cr5.urdf"))
+    dh = urdf_to_dh(str(EXAMPLES / "cr5.urdf"), tip_link="Link6")
     kin_urdf = build_kinematics(KinematicsOptions(backend="dh", dh=dh, joint_count=6))
     kin_known = build_kinematics(KinematicsOptions(backend="dh", dh=_CR5_DH, joint_count=6))
     rng = np.random.default_rng(7)
@@ -119,3 +125,23 @@ def test_urdf_a_fixed_joint_between_moving_ones_is_kept(tmp_path: Path) -> None:
     kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf))
     x, y, z, *_ = kin.forward((0.0, 0.0))
     assert (x, y, z) == pytest.approx((1.25, 0.0, 0.5))
+
+
+def test_urdf_tip_link_can_end_the_chain_early(tmp_path: Path) -> None:
+    """Ending at b leaves out the riser and the flange after it."""
+    urdf = tmp_path / "two.urdf"
+    urdf.write_text(_TWO_LINK)
+    kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link="b"))
+    assert kin.forward((0.0, 0.0)) == pytest.approx((1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+
+
+def test_urdf_with_several_end_links_needs_a_tip_link() -> None:
+    with pytest.raises(ValueError, match=r"ends in 2 links \(camera_mount, gripper\)"):
+        build_kinematics(KinematicsOptions(backend="urdf", urdf_path=EXAMPLES / "cr5.urdf"))
+
+
+def test_urdf_tip_link_must_be_a_link(tmp_path: Path) -> None:
+    urdf = tmp_path / "two.urdf"
+    urdf.write_text(_TWO_LINK)
+    with pytest.raises(ValueError, match="has no link 'nope'"):
+        build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link="nope"))

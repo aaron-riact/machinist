@@ -4,10 +4,11 @@ Parses a serial-chain URDF and evaluates FK by composing joint
 transforms directly — no DH conversion needed.  IK uses the same
 damped least-squares Jacobian iteration as the DH back-end.
 
-Only revolute (and continuous) joints move; a fixed joint is folded into
-the transform of the moving joint after it, and fixed joints after the last
-moving one form the chain's tip (a flange or tool offset) as long as they do
-not branch. The chain is traversed in URDF order (root → first child → …).
+The chain runs from the URDF's root link to a tip link: the one the
+caller names, or the URDF's only end link. Only revolute (and continuous)
+joints move; a fixed joint on the way is folded into the transform of the
+moving joint after it, and fixed joints after the last moving one are the
+tip's offset (a flange or tool).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from typing import Any
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +39,7 @@ class UrdfKinematics(Kinematics):
     def __init__(self, model: RobotModel) -> None:
         if model.urdf_path is None:
             raise ValueError("UrdfKinematics requires model.urdf_path to be set")
-        joints, self._tip = _walk_chain(model.urdf_path)
+        joints, self._tip = _walk_chain(model.urdf_path, tip_link=model.tip_link)
         self.joint_count = len(joints)
         self._fixed = [j["fixed"] for j in joints]
         self._axes = [j["axis"] for j in joints]
@@ -87,53 +89,59 @@ class UrdfKinematics(Kinematics):
 
 # --- URDF parsing ---------------------------------------------------------
 
-def _parse_chain(urdf_path: str | Path) -> list[dict]:
-    """Extract revolute/continuous joints in traversal order from a URDF file."""
-    return _walk_chain(urdf_path)[0]
+_MOVING_TYPES = frozenset({"revolute", "continuous"})
 
 
-def _walk_chain(urdf_path: str | Path) -> tuple[list[dict], NDArray[np.float64]]:
-    """The moving joints from the root, and the tip after the last of them.
+def _parse_chain(urdf_path: str | Path, *, tip_link: str | None = None) -> list[dict]:
+    """The moving joints from the root to the tip link, in order."""
+    return _walk_chain(urdf_path, tip_link=tip_link)[0]
 
-    Each moving joint's ``fixed`` transform includes the fixed joints before
-    it. Where a link has several child joints, the walk follows the first
-    whose branch moves; past the last moving joint it follows fixed joints
-    only while each link has one child, so a tip that branches (a camera
-    mount beside a gripper) stays at the last moving joint.
+
+def _walk_chain(
+    urdf_path: str | Path, *, tip_link: str | None = None
+) -> tuple[list[dict], NDArray[np.float64]]:
+    """The moving joints from the root to *tip_link*, and the offset after the last of them.
+
+    A link has one parent joint, so the path from the tip back to the root is
+    unique. Each moving joint's ``fixed`` transform includes the fixed joints
+    before it on the path.
     """
     root = ET.parse(urdf_path).getroot()
-    moving_types = {"revolute", "continuous"}
-    children: dict[str, list[dict]] = {}
-    child_links = set()
-    for elem in root.findall("joint"):
-        info = _parse_joint(elem)
-        info["moving"] = elem.get("type", "revolute") in moving_types
-        children.setdefault(info["parent"], []).append(info)
-        child_links.add(info["child"])
-
-    def moves(link: str) -> bool:
-        return any(j["moving"] or moves(j["child"]) for j in children.get(link, []))
-
+    joints = [_parse_joint(elem) for elem in root.findall("joint")]
     links = [str(elem.get("name")) for elem in root.findall("link")]
-    roots = [name for name in links if name not in child_links]
-    link = roots[0] if roots else "base_link"
+    tip = tip_link if tip_link is not None else _end_link(urdf_path, links, joints)
+    if tip not in links:
+        raise ValueError(f"{urdf_path} has no link {tip!r}")
+
+    parent_joint = {j["child"]: j for j in joints}
+    path: list[dict] = []
+    link = tip
+    while link in parent_joint:
+        path.append(parent_joint[link])
+        link = parent_joint[link]["parent"]
+
     chain: list[dict] = []
     pending = np.eye(4)
-    while kids := children.get(link):
-        moving = [j for j in kids if j["moving"] or moves(j["child"])]
-        if moving:
-            step = moving[0]
-        elif len(kids) == 1:
-            step = kids[0]
-        else:
-            break
-        if step["moving"]:
-            chain.append({**step, "fixed": pending @ step["fixed"]})
+    for joint in reversed(path):
+        if joint["type"] in _MOVING_TYPES:
+            chain.append({**joint, "fixed": pending @ joint["fixed"]})
             pending = np.eye(4)
         else:
-            pending = pending @ step["fixed"]
-        link = step["child"]
+            pending = pending @ joint["fixed"]
     return chain, pending
+
+
+def _end_link(urdf_path: str | Path, links: list[str], joints: list[dict[str, Any]]) -> str:
+    """The URDF's only end link: one that a joint leads to and none leaves."""
+    parents = {j["parent"] for j in joints}
+    children = {j["child"] for j in joints}
+    ends = [link for link in links if link in children and link not in parents]
+    if len(ends) != 1:
+        raise ValueError(
+            f"{urdf_path} ends in {len(ends)} links ({', '.join(ends)}); "
+            "name the tool's link as tip_link"
+        )
+    return ends[0]
 
 
 def _parse_joint(elem: ET.Element) -> dict:
@@ -149,6 +157,7 @@ def _parse_joint(elem: ET.Element) -> dict:
 
     return {
         "name": elem.get("name"),
+        "type": elem.get("type", "revolute"),
         "parent": elem.find("parent").get("link"),
         "child": elem.find("child").get("link"),
         "fixed": fixed,
@@ -159,7 +168,9 @@ def _parse_joint(elem: ET.Element) -> dict:
 # --- URDF → DH conversion (analytical) ------------------------------------
 
 
-def urdf_to_dh(urdf_path: str, *, joint_count: int | None = None) -> DHParams:
+def urdf_to_dh(
+    urdf_path: str, *, joint_count: int | None = None, tip_link: str | None = None
+) -> DHParams:
     r"""Extract modified-Denavit–Hartenberg parameters from a serial-chain URDF.
 
     The extraction follows the common-normal convention: the *z*\ :sub:`i`
@@ -172,7 +183,9 @@ def urdf_to_dh(urdf_path: str, *, joint_count: int | None = None) -> DHParams:
         Path to the URDF file.
     joint_count:
         Number of moving joints to extract (default: all revolute/continuous
-        joints in traversal order).
+        joints from the root to the tip link).
+    tip_link:
+        The link the chain ends at (default: the URDF's only end link).
 
     Returns
     -------
@@ -191,7 +204,7 @@ def urdf_to_dh(urdf_path: str, *, joint_count: int | None = None) -> DHParams:
     root = tree.getroot()
 
     # collect homogeneous transforms for each joint frame in the chain
-    joints = _parse_chain(urdf_path)
+    joints = _parse_chain(urdf_path, tip_link=tip_link)
     if joint_count is not None:
         joints = joints[:joint_count]
     n = len(joints)
