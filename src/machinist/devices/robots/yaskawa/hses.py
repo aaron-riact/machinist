@@ -611,7 +611,8 @@ class HighSpeedEthernetServer:
             if request.service in (Service.GET_SINGLE, Service.GET_ALL):
                 return self._string(number)[:size]
             if request.service in (Service.SET_SINGLE, Service.SET_ALL):
-                if len(request.data) != size:
+                # YMConnect sends the text unpadded, so a write may be shorter.
+                if not 0 < len(request.data) <= size:
                     raise _added(AddedStatus.DATA_SIZE_ERROR)
                 self._set_string(number, request.data)
                 return b""
@@ -729,7 +730,8 @@ class HighSpeedEthernetServer:
             raise HsesError(Status.UNDEFINED_COMMAND)
         if request.attribute != 1:
             raise _added(AddedStatus.ATTRIBUTE_ERROR)
-        if len(request.data) != PENDANT_FIELD:
+        # YMConnect sends the text unpadded, so the field may be shorter.
+        if not 0 < len(request.data) <= PENDANT_FIELD:
             raise _added(AddedStatus.DATA_SIZE_ERROR)
         message = request.data.split(b"\0", 1)[0]
         if len(message) > PENDANT_CHARACTERS:

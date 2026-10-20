@@ -523,8 +523,14 @@ def test_the_16_byte_command_carries_the_first_16(yrc: YaskawaRobot) -> None:
     assert _ask(yrc, 0x8C, 4, 1, GET_SINGLE).data == b"B" * 16 + bytes(16)
 
 
-def test_a_string_of_the_wrong_size_is_refused(yrc: YaskawaRobot) -> None:
-    answer = _ask(yrc, 0x8C, 4, 1, SET_SINGLE, b"short")
+def test_a_string_may_come_unpadded(yrc: YaskawaRobot) -> None:
+    """YMConnect writes S variables without padding them."""
+    assert _ask(yrc, 0x8C, 4, 1, SET_SINGLE, b"HELLO").status is Status.OK
+    assert _ask(yrc, 0x8C, 4, 1, GET_SINGLE).data == b"HELLO".ljust(32, b"\0")
+
+
+def test_a_string_longer_than_its_field_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x8C, 4, 1, SET_SINGLE, b"X" * 33)
     assert answer.added_status == AddedStatus.DATA_SIZE_ERROR
 
 
@@ -696,3 +702,8 @@ def test_an_io_write_may_carry_its_byte_in_8_bytes(yrc: YaskawaRobot) -> None:
     """YMConnect sends the IO byte and seven zeros."""
     assert _ask(yrc, 0x78, 2701, 1, SET_SINGLE, b"\x05" + bytes(7)).status is Status.OK
     assert _ask(yrc, 0x78, 2701, 1, GET_SINGLE).data == b"\x05"
+
+
+def test_a_pendant_message_may_come_unpadded(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x85, 1, 1, SET_SINGLE, b"YMCONNECT").status is Status.OK
+    assert yrc.controller.pendant_message == "YMCONNECT"
