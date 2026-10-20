@@ -54,6 +54,8 @@ BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 ALARM_SLOTS = 4
 
 
+#: The task SETMJ sets the master job of: CTASK selects none other here.
+MASTER_TASK = 0
 #: The last line JSEQ can set.
 MAX_JOB_LINE = 9999
 #: MDSP shows up to 30 bytes on the pendant's remote display.
@@ -122,6 +124,7 @@ class EthernetServer:
             "MOVJ": self._movj,
             "MOVL": self._movl,
             "IMOV": self._imov,
+            "SETMJ": self._setmj,
             "JSEQ": self._jseq,
             "IOREAD": self._ioread,
             "IOWRITE": self._iowrite,
@@ -252,6 +255,12 @@ class EthernetServer:
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
         here = self.controller.arm.state.view.pose
         self.controller.move_linear(stepped(here, step, in_tool=in_tool), selection, speed)
+
+    def _setmj(self, data: str) -> None:
+        """A job to set as the master job, and at the same time as the executing job."""
+        name = data.strip()
+        self.controller.select_job(name, master_of_task=MASTER_TASK)
+        self.controller.select_job(name)
 
     def _jseq(self, data: str) -> None:
         """A job name and line No. to set as the executing job."""

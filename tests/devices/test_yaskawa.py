@@ -284,6 +284,17 @@ def test_rjseq_without_an_executing_job_reads_no_name(motoman: YaskawaRobot) -> 
     assert _answer(motoman, "RJSEQ") == b",0,0\r"
 
 
+def test_setmj_sets_the_master_and_executing_job(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.select_job("PICK", 7)
+    assert _answer(with_jobs, "SETMJ", "MAIN") == b"0000\r\n"
+    assert with_jobs.controller.master_jobs[0] == "MAIN"
+    assert _answer(with_jobs, "RJSEQ") == b"MAIN,0,0\r"
+
+
+def test_setmj_of_a_job_the_controller_lacks_is_an_error(with_jobs: YaskawaRobot) -> None:
+    assert _answer(with_jobs, "SETMJ", "NOPE") == b"ERROR:SETMJ is not successful (4040).\r\n"
+
+
 def test_jseq_sets_the_executing_job_and_line(with_jobs: YaskawaRobot) -> None:
     assert _answer(with_jobs, "JSEQ", "PICK,5") == b"0000\r\n"
     assert _answer(with_jobs, "RJSEQ") == b"PICK,5,0\r"
