@@ -636,3 +636,14 @@ def test_a_started_job_finishes_at_once(yrc: YaskawaRobot) -> None:
     _ask(yrc, 0x87, 1, 0, SET_ALL, _job("PICK"))
     assert _set(yrc, 0x86, 1, 1).status is Status.OK
     assert _ints(_ask(yrc, 0x72, 1, 1, GET_SINGLE))[0] & 0x08 == 0  # not running
+
+
+def test_robot_control_takes_only_requests(yrc: YaskawaRobot) -> None:
+    client = UdpMessageTransport("127.0.0.1", yrc.hses_port, timeout=2)
+    try:
+        ack = Request(division=Division.ROBOT, request_id=1, command=0x72, instance=1,
+                      attribute=0, service=GET_ALL, ack=True)
+        answer = parse_answer(client.request(encode_request(ack)))
+    finally:
+        client.close()
+    assert answer.added_status == AddedStatus.ACK_ERROR

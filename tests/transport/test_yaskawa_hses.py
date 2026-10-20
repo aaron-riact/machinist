@@ -70,7 +70,7 @@ def test_a_request_carries_its_data() -> None:
         (b"XERC" + STATUS_READ[4:], AddedStatus.IDENTIFIER_ERROR),
         (STATUS_READ[:4] + b"\x10\x00" + STATUS_READ[6:], AddedStatus.HEADER_SIZE_ERROR),
         (STATUS_READ[:6] + b"\x04\x00" + STATUS_READ[8:], AddedStatus.FRAME_SIZE_MISMATCH),
-        (STATUS_READ[:10] + b"\x01" + STATUS_READ[11:], AddedStatus.ACK_ERROR),
+        (STATUS_READ[:10] + b"\x02" + STATUS_READ[11:], AddedStatus.ACK_ERROR),
         (STATUS_READ[:9] + b"\x05" + STATUS_READ[10:], AddedStatus.DIVISION_ERROR),
     ],
 )
@@ -83,3 +83,12 @@ def test_a_malformed_request_is_refused(datagram: bytes, added_status: AddedStat
 def test_the_request_id_survives_a_malformed_request() -> None:
     assert request_id_of(b"XERC" + STATUS_READ[4:11] + b"\x09" + STATUS_READ[12:]) == 9
     assert request_id_of(b"YE") == 0
+
+
+def test_a_hosts_ack_carries_its_block() -> None:
+    """3.2.3: in a file transfer the host's ACKs have ACK 1 and a block number."""
+    ack = Request(division=Division.FILE, request_id=2, command=0, instance=0, attribute=0,
+                  service=0x16, ack=True, block=0x8000_0003)
+    datagram = encode_request(ack)
+    assert datagram[8:16] == b"\x03\x02\x01\x02\x03\x00\x00\x80"
+    assert parse_request(datagram) == ack

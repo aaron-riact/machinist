@@ -92,6 +92,9 @@ class AddedStatus(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class Request:
+    """A packet from the host. Its sub-header is a request's; in a file transfer the
+    host's later packets (its data blocks and its ACKs) carry *ack* and a *block*."""
+
     division: Division
     request_id: int
     command: int
@@ -99,6 +102,8 @@ class Request:
     attribute: int
     service: int
     data: bytes = b""
+    ack: bool = False
+    block: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,10 +126,10 @@ class FrameError(Exception):
 
 
 def parse_request(datagram: bytes) -> Request:
-    """The request a datagram carries. Raises :class:`FrameError` for anything else."""
+    """The host's packet a datagram carries. Raises :class:`FrameError` for anything else."""
     if len(datagram) < HEADER_SIZE:
         raise FrameError(AddedStatus.HEADER_SIZE_ERROR, f"{len(datagram)} bytes")
-    identifier, header_size, data_size, _reserve, division, ack, request_id, _block, _r2 = (
+    identifier, header_size, data_size, _reserve, division, ack, request_id, block, _r2 = (
         _HEADER.unpack_from(datagram)
     )
     if identifier != IDENTIFIER:
@@ -136,8 +141,8 @@ def parse_request(datagram: bytes) -> Request:
             AddedStatus.FRAME_SIZE_MISMATCH,
             f"data size {data_size} for {len(datagram) - HEADER_SIZE} bytes",
         )
-    if ack != 0:
-        raise FrameError(AddedStatus.ACK_ERROR, f"ACK {ack} in a request")
+    if ack not in (0, 1):
+        raise FrameError(AddedStatus.ACK_ERROR, f"ACK {ack}")
     if division not in tuple(Division):
         raise FrameError(AddedStatus.DIVISION_ERROR, f"processing division {division}")
     command, instance, attribute, service, _pad = _REQUEST_SUB.unpack_from(
@@ -151,6 +156,8 @@ def parse_request(datagram: bytes) -> Request:
         attribute=attribute,
         service=service,
         data=bytes(datagram[HEADER_SIZE:]),
+        ack=ack == 1,
+        block=block,
     )
 
 
@@ -163,7 +170,7 @@ def encode_request(request: Request) -> bytes:
     """A request's datagram (what a host sends)."""
     header = _HEADER.pack(
         IDENTIFIER, HEADER_SIZE, len(request.data), RESERVE_1, request.division,
-        0, request.request_id, 0, RESERVE_2,
+        int(request.ack), request.request_id, request.block, RESERVE_2,
     )
     sub = _REQUEST_SUB.pack(
         request.command, request.instance, request.attribute, request.service, 0

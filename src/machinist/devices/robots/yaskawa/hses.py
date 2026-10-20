@@ -309,6 +309,8 @@ class HighSpeedEthernetServer:
         ))
 
     def _run(self, request: Request) -> bytes:
+        if request.ack:
+            raise _added(AddedStatus.ACK_ERROR)
         if request.division is not Division.ROBOT:
             raise HsesError(Status.UNDEFINED_COMMAND)  # file control is not emulated
         handler = self._commands().get(request.command)
