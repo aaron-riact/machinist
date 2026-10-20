@@ -523,15 +523,6 @@ class YaskawaController:
             raise CommandRefusedError(Refusal.BAD_TOOL, f"tool {tool}")
         return tool
 
-    def check_user_frame(self, number: int) -> None:
-        """User frames exist by number. Commands do not work in one yet, so even a
-        taught one is refused as not defined."""
-        if 1 <= number <= self.profile.user_frames:
-            raise CommandRefusedError(
-                Refusal.UNDEFINED_USER_FRAME, f"user frame {number} is not defined"
-            )
-        raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
-
     def taught_user_frame(self, number: int) -> UserFrame:
         """User frame *number* as taught; one not taught is refused."""
         if not 1 <= number <= self.profile.user_frames:

@@ -19,6 +19,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import IntEnum
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ....kinematics.api import Pose
 from ....kinematics.dh_backend import pose_to_mat
 from ....kinematics.units import Meters, Radians
@@ -45,7 +48,10 @@ from .controller import (
     Refusal,
     SpeedSelection,
     YaskawaController,
+    frame_step,
+    from_frame,
     stepped,
+    to_frame,
 )
 
 
@@ -110,7 +116,7 @@ CARTESIAN_AXES = ("X", "Y", "Z", "Rx", "Ry", "Rz")
 #: as n + 1), and the coordinate type the answer names (2 base, 3 robot, 4 user).
 ROBOT_GROUPS = 0
 BASE_FRAME, ROBOT_FRAME = 0, 1
-UAPI_BASE, UAPI_ROBOT = 2, 3
+UAPI_BASE, UAPI_ROBOT, UAPI_USER = 2, 3, 4
 #: A position's data type (3.3.6): pulses, or base coordinates.
 PULSE_DATA, BASE_COORDINATE_DATA = 0, 16
 #: The IO instances (3.3.9): a signal's number / 10, by the kind of signal.
@@ -405,11 +411,13 @@ class HighSpeedEthernetServer:
         if (kind, index) != (ROBOT_GROUPS, 0):
             raise _added(AddedStatus.CONTROL_GROUP_ERROR)
         self.controller.check_tool(tool)
+        pose = self.controller.arm.state.view.pose
+        coordinate, user = (UAPI_BASE if frame == BASE_FRAME else UAPI_ROBOT), 0
         if frame not in (BASE_FRAME, ROBOT_FRAME):
-            self.controller.check_user_frame(frame - 1)
-        coordinate = UAPI_BASE if frame == BASE_FRAME else UAPI_ROBOT
-        axes = _micrometres_and_ten_thousandths(self.controller.arm.state.view.pose)
-        return struct.pack("<i2h2I8i", coordinate, 0, tool, self.controller.form, 0,
+            coordinate, user = UAPI_USER, frame - 1
+            pose = to_frame(self.controller.user_frame_transform(user), pose)
+        axes = _micrometres_and_ten_thousandths(pose)
+        return struct.pack("<i2h2I8i", coordinate, user, tool, self.controller.form, 0,
                            *_pad(axes, AXIS_ELEMENTS, 0))
 
     # --- System parameter reading (0x39C, YRC1000 and newer) ---------------------
@@ -810,11 +818,16 @@ class HighSpeedEthernetServer:
         speed_class, speed = _speed(kind, values[2], values[3])
         coordinate = values[4]
         tool = self.controller.check_tool(values[15])
-        self._check_move_coordinate(kind, coordinate, user_frame=values[16])
+        frame = self._move_frame(kind, coordinate, user_frame=values[16])
         target = _pose_from(values[5:11])
-        if kind is MoveKind.STRAIGHT_INCREMENT:
-            here = self.controller.arm.state.view.pose
-            target = stepped(here, pose_to_mat(target), in_tool=coordinate == TOOL_COORDINATE)
+        if kind is not MoveKind.STRAIGHT_INCREMENT:
+            assert frame is not None
+            target = from_frame(frame, target)
+        elif frame is None:
+            target = stepped(self.controller.arm.state.view.pose, pose_to_mat(target), in_tool=True)
+        else:
+            step = frame_step(frame, pose_to_mat(target))
+            target = stepped(self.controller.arm.state.view.pose, step, in_tool=False)
         self.controller.form, self.controller.tool = values[13], tool
         if kind is MoveKind.JOINT:
             self.controller.move_joints(self.controller.arm.inverse(target), speed)
@@ -839,17 +852,20 @@ class HighSpeedEthernetServer:
             self.controller.move_linear(self.controller.arm.forward(target), speed_class, speed)
         return b""
 
-    def _check_move_coordinate(self, kind: MoveKind, coordinate: int, *, user_frame: int) -> None:
-        """Base and robot coordinates are one frame; no user frame is taught; the tool
-        coordinate only makes sense for a step."""
+    def _move_frame(
+        self, kind: MoveKind, coordinate: int, *, user_frame: int
+    ) -> NDArray[np.float64] | None:
+        """The frame a move's pose is given in, in base coordinates; None for the
+        tool's own. Base and robot coordinates are one frame; a user frame must be
+        taught; the tool coordinate only makes sense for a step."""
         if coordinate in (BASE_COORDINATE, ROBOT_COORDINATE):
-            return
+            return np.eye(4)
         if coordinate == USER_COORDINATE:
             if not 1 <= user_frame <= self.controller.profile.user_frames:
                 raise _added(AddedStatus.USER_NUMBER_ERROR)
-            raise _added(AddedStatus.USER_COORDINATE_NOT_TAUGHT)
+            return self.controller.user_frame_transform(user_frame)
         if coordinate == TOOL_COORDINATE and kind is MoveKind.STRAIGHT_INCREMENT:
-            return
+            return None
         raise _added(AddedStatus.COORDINATE_SYSTEM_ERROR)
 
     # --- 3.3.19 Alarm reset / error cancel (0x82) ------------------------------

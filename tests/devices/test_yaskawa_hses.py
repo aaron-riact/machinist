@@ -12,7 +12,7 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import YaskawaOptions, YaskawaRobot
-from machinist.devices.robots.yaskawa.controller import Status1
+from machinist.devices.robots.yaskawa.controller import Status1, UserFrame
 from machinist.transport.message import UdpMessageTransport
 from machinist.transport.yaskawa_hses import (
     AddedStatus,
@@ -323,6 +323,32 @@ def test_straight_increment_in_base_or_tool_coordinates(
     assert _cartesian_position(yrc)[2] == pytest.approx(805_000 + dz, abs=100)
 
 
+def _teach_frame_1(robot: YaskawaRobot) -> None:
+    """User frame 1: its origin at X 1000 mm, its X axis along base Y, its Y along -X."""
+    robot.controller.user_frames[1] = UserFrame(
+        org=(1.0, 0, 0, 0, 0, 0), xx=(1.0, 0.1, 0, 0, 0, 0), xy=(0.9, 0, 0, 0, 0, 0),
+        types=(0, 0, 0), tool=0, external=(0,) * 6,
+    )
+
+
+def test_a_straight_move_in_a_taught_user_frame(yrc: YaskawaRobot) -> None:
+    _teach_frame_1(yrc)
+    target = (50_000, -100_000, 805_000, 1_800_000, 0, 900_000)
+    move = _cartesian(2, target, coordinate=18, user=1)
+    assert _ask(yrc, 0x8A, 2, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    assert _cartesian_position(yrc)[:3] == pytest.approx((1_100_000, 50_000, 805_000), abs=100)
+
+
+def test_a_straight_increment_in_a_taught_user_frame(yrc: YaskawaRobot) -> None:
+    """A step along the frame's X goes along base Y."""
+    _teach_frame_1(yrc)
+    move = _cartesian(3, (10_000, 0, 0, 0, 0, 0), coordinate=18, user=1)
+    assert _ask(yrc, 0x8A, 3, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    assert _cartesian_position(yrc)[:3] == pytest.approx((1_170_000, 10_000, 805_000), abs=100)
+
+
 @pytest.mark.parametrize(
     ("instance", "data", "added_status"),
     [
@@ -332,7 +358,7 @@ def test_straight_increment_in_base_or_tool_coordinates(
         (2, _cartesian(2, HOME, speed_class=0), AddedStatus.SPEED_ERROR),
         (2, _cartesian(2, HOME, speed=0), AddedStatus.SPEED_ERROR),
         (2, _cartesian(2, HOME, tool=64), AddedStatus.TOOL_NUMBER_ERROR),
-        (2, _cartesian(2, HOME, coordinate=18, user=1), AddedStatus.USER_COORDINATE_NOT_TAUGHT),
+        (2, _cartesian(2, HOME, coordinate=18, user=2), AddedStatus.USER_COORDINATE_NOT_TAUGHT),
         (2, _cartesian(2, HOME, coordinate=18, user=65), AddedStatus.USER_NUMBER_ERROR),
         (2, _cartesian(2, HOME, coordinate=19), AddedStatus.COORDINATE_SYSTEM_ERROR),
         (2, _cartesian(2, HOME)[:-4], AddedStatus.DATA_SIZE_ERROR),
@@ -722,9 +748,18 @@ def test_the_answer_names_the_tool_asked_for(yrc: YaskawaRobot) -> None:
     assert struct.unpack_from("<h", _read_cartesian(yrc, frame=0, tool=5).data, 6) == (5,)
 
 
-def test_a_cartesian_read_in_a_user_frame_is_refused_untaught(yrc: YaskawaRobot) -> None:
-    """User frame 1 goes as frame 2; the emulator teaches no user frames."""
+def test_a_cartesian_read_in_a_user_frame_not_taught_is_refused(yrc: YaskawaRobot) -> None:
+    """User frame 1 goes as frame 2."""
     assert _read_cartesian(yrc, frame=2).added_status == AddedStatus.USER_COORDINATE_NOT_TAUGHT
+
+
+def test_a_cartesian_read_in_a_taught_user_frame(yrc: YaskawaRobot) -> None:
+    """Type 4 (user), user frame 1, and the pose seen in it: X 1170 mm in the base is
+    170 mm along the frame's -Y."""
+    _teach_frame_1(yrc)
+    answer = struct.unpack("<i2h2I8i", _read_cartesian(yrc, frame=2).data)
+    assert answer[:3] == (4, 1, 0)
+    assert answer[5:8] == pytest.approx((0, -170_000, 805_000), abs=100)
 
 
 def test_a_cartesian_read_of_a_missing_group_is_refused(yrc: YaskawaRobot) -> None:
