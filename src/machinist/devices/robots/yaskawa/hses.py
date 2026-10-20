@@ -37,6 +37,9 @@ from ....transport.yaskawa_hses import (
 from .controller import (
     ALARM_TIME_FORMAT,
     CYCLES,
+    POSITION_NUMBERS,
+    STANDARD_VARIABLES,
+    STRING_SIZE,
     Alarm,
     CommandRefusedError,
     Refusal,
@@ -180,10 +183,8 @@ class Numbered:
 
 #: Registers (3.3.10, 3.3.28): 0 to 999, of which 0 to 559 are writable.
 REGISTERS = Numbered("register", "H", range(1000), range(560), plural_max=237)
-#: Variables B, I, D and R (3.3.11-3.3.14, 3.3.29-3.3.32), 0 to 99 as the
-#: standard setting has them; extended variables are an option not emulated.
-#: A plural B command counts in twos.
-STANDARD_VARIABLES = range(100)
+#: Variables B, I, D and R (3.3.11-3.3.14, 3.3.29-3.3.32). A plural B command
+#: counts in twos.
 BYTE_VARIABLES = Numbered("B", "B", STANDARD_VARIABLES, None, plural_max=474, plural_step=2)
 INTEGER_VARIABLES = Numbered("I", "h", STANDARD_VARIABLES, None, plural_max=237)
 DOUBLE_VARIABLES = Numbered("D", "i", STANDARD_VARIABLES, None, plural_max=118)
@@ -220,8 +221,6 @@ class PositionKind:
         return record
 
 
-#: Position variables 0 to 127, the standard setting.
-POSITION_NUMBERS = range(128)
 #: P variables (3.3.16, 3.3.34): data type (pulses, or base, robot, user or tool
 #: coordinates), form, tool, user coordinate, extended form, eight axes.
 ROBOT_POSITIONS = PositionKind(
@@ -237,10 +236,8 @@ BASE_POSITIONS = PositionKind(
 EXTERNAL_POSITIONS = PositionKind(
     "EX", elements=9, data_types=frozenset({0}), plural_max=13, elementwise=True,
 )
-#: S variables (3.3.15, 3.3.41): 0 to 99, each 32 bytes on a DX200, of which
-#: the 16-byte commands carry the first 16. A plural command carries up to 29
-#: of 16 bytes or 14 of 32.
-STRING_SIZE = 32
+#: S variables (3.3.15, 3.3.41): the 16-byte commands carry the first 16 of
+#: each. A plural command carries up to 29 of 16 bytes or 14 of 32.
 PLURAL_STRINGS = {16: 29, 32: 14}
 #: Alarm history instances (3.3.2): the nth newest major failure (1 to 100),
 #: monitor alarm (1001-), system user alarm (2001-), user alarm (3001-) and

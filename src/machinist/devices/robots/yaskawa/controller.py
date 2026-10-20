@@ -195,6 +195,12 @@ class Status1(IntFlag):
     COMMAND_REMOTE = 0x80
 
 
+#: Variables B, I, D, R and S, 0 to 99 as the standard setting has them, and
+#: position variables P, BP and EX, 0 to 127; extended variables are an option
+#: not emulated. An S variable holds 32 bytes on a DX200.
+STANDARD_VARIABLES = range(100)
+POSITION_NUMBERS = range(128)
+STRING_SIZE = 32
 #: The modes MODE selects: 1 teach, 2 play.
 MODES = {1: Status1.TEACH, 2: Status1.PLAY}
 #: The cycles both servers number 1 step, 2 one cycle, 3 auto (CYCLE, HSES 0x84).
