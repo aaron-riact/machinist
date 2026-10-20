@@ -214,6 +214,11 @@ BASE_POSITIONS = PositionKind(
 EXTERNAL_POSITIONS = PositionKind(
     "EX", elements=9, data_types=frozenset({0}), plural_max=13, elementwise=True,
 )
+#: S variables (3.3.15, 3.3.41): 0 to 99, each 32 bytes on a DX200, of which
+#: the 16-byte commands carry the first 16. A plural command carries up to 29
+#: of 16 bytes or 14 of 32.
+STRING_SIZE = 32
+PLURAL_STRINGS = {16: 29, 32: 14}
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -291,6 +296,7 @@ class HighSpeedEthernetServer:
             0x7B: self._single(INTEGER_VARIABLES),
             0x7C: self._single(DOUBLE_VARIABLES),
             0x7D: self._single(REAL_VARIABLES),
+            0x7E: self._string_variable(16),
             0x7F: self._position_variable(ROBOT_POSITIONS),
             0x80: self._position_variable(BASE_POSITIONS),
             0x81: self._position_variable(EXTERNAL_POSITIONS),
@@ -300,15 +306,18 @@ class HighSpeedEthernetServer:
             0x89: self._system_information,
             0x8A: self._move_cartesian,
             0x8B: self._move_pulse,
+            0x8C: self._string_variable(32),
             0x300: self._plural_io,
             0x301: self._plural(REGISTERS),
             0x302: self._plural(BYTE_VARIABLES),
             0x303: self._plural(INTEGER_VARIABLES),
             0x304: self._plural(DOUBLE_VARIABLES),
             0x305: self._plural(REAL_VARIABLES),
+            0x306: self._plural_strings(16),
             0x307: self._plural_positions(ROBOT_POSITIONS),
             0x308: self._plural_positions(BASE_POSITIONS),
             0x309: self._plural_positions(EXTERNAL_POSITIONS),
+            0x30C: self._plural_strings(32),
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
@@ -495,6 +504,57 @@ class HighSpeedEthernetServer:
             raise HsesError(Status.UNDEFINED_COMMAND)
         return handle
 
+    # --- S variables: 16 or 32 bytes, one or many (3.3.15, 3.3.41, ...) ---------
+
+    def _string_variable(self, size: int) -> Handler:
+        def handle(request: Request) -> bytes:
+            number = _string_number(request.instance)
+            if request.attribute != 1:
+                raise _added(AddedStatus.ATTRIBUTE_ERROR)
+            if request.service in (Service.GET_SINGLE, Service.GET_ALL):
+                return self._string(number)[:size]
+            if request.service in (Service.SET_SINGLE, Service.SET_ALL):
+                if len(request.data) != size:
+                    raise _added(AddedStatus.DATA_SIZE_ERROR)
+                self._set_string(number, request.data)
+                return b""
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handle
+
+    def _plural_strings(self, size: int) -> Handler:
+        plural_max = PLURAL_STRINGS[size]
+
+        def handle(request: Request) -> bytes:
+            first = _string_number(request.instance)
+            if request.attribute != 0:
+                raise _added(AddedStatus.ATTRIBUTE_ERROR)
+            if len(request.data) < 4:
+                raise _added(AddedStatus.DATA_SIZE_ERROR)
+            (count,) = struct.unpack_from("<i", request.data)
+            if not 1 <= count <= plural_max:
+                raise _added(AddedStatus.OPERAND_RANGE)
+            numbers = range(first, first + count)
+            if numbers[-1] not in STANDARD_VARIABLES:
+                raise _added(AddedStatus.OUTSIDE_THE_DATA)
+            if request.service == Service.READ_PLURAL:
+                return int32s(count) + b"".join(self._string(n)[:size] for n in numbers)
+            if request.service == Service.WRITE_PLURAL:
+                values = request.data[4:]
+                if len(values) != size * count:
+                    raise _added(AddedStatus.DATA_SIZE_ERROR)
+                for i, number in enumerate(numbers):
+                    self._set_string(number, values[i * size : (i + 1) * size])
+                return b""
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        return handle
+
+    def _string(self, number: int) -> bytes:
+        return self.controller.strings.get(number, bytes(STRING_SIZE))
+
+    def _set_string(self, number: int, value: bytes) -> None:
+        """A 16-byte write replaces the whole string, so its last 16 bytes clear."""
+        self.controller.strings[number] = value.ljust(STRING_SIZE, b"\0")
+
     # --- 3.3.20 Hold / servo on/off (0x83) -------------------------------------
 
     def _hold_servo_hlock(self, request: Request) -> bytes:
@@ -675,6 +735,12 @@ def _pose_from(values: tuple[int, ...]) -> Pose:
 
 def _position_number(instance: int) -> int:
     if instance not in POSITION_NUMBERS:
+        raise _added(AddedStatus.INSTANCE_ERROR)
+    return instance
+
+
+def _string_number(instance: int) -> int:
+    if instance not in STANDARD_VARIABLES:
         raise _added(AddedStatus.INSTANCE_ERROR)
     return instance
 

@@ -508,3 +508,32 @@ def test_plural_bp_and_ex_variables_stop_at_13(yrc: YaskawaRobot, command: int) 
     assert _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", 13)).status is Status.OK
     answer = _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", 14))
     assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+def test_string_variable_32_bytes(yrc: YaskawaRobot) -> None:
+    value = b"PICK FROM PALLET 3".ljust(32, b"\0")
+    assert _ask(yrc, 0x8C, 4, 1, SET_SINGLE, value).status is Status.OK
+    assert _ask(yrc, 0x8C, 4, 1, GET_SINGLE).data == value
+
+
+def test_the_16_byte_command_carries_the_first_16(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x8C, 4, 1, SET_SINGLE, b"A" * 32)
+    assert _ask(yrc, 0x7E, 4, 1, GET_SINGLE).data == b"A" * 16
+    assert _ask(yrc, 0x7E, 4, 1, SET_SINGLE, b"B" * 16).status is Status.OK
+    assert _ask(yrc, 0x8C, 4, 1, GET_SINGLE).data == b"B" * 16 + bytes(16)
+
+
+def test_a_string_of_the_wrong_size_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x8C, 4, 1, SET_SINGLE, b"short")
+    assert answer.added_status == AddedStatus.DATA_SIZE_ERROR
+
+
+@pytest.mark.parametrize(("command", "size", "most"), [(0x306, 16, 29), (0x30C, 32, 14)])
+def test_plural_strings(yrc: YaskawaRobot, command: int, size: int, most: int) -> None:
+    values = b"X" * size + b"Y" * size
+    assert _ask(yrc, command, 0, 0, 0x34, struct.pack("<i", 2) + values).status is Status.OK
+    assert _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", 2)).data == (
+        struct.pack("<i", 2) + values
+    )
+    answer = _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", most + 1))
+    assert answer.added_status == AddedStatus.OPERAND_RANGE

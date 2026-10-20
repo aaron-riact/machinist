@@ -188,6 +188,8 @@ class YaskawaController:
     #: Position variables by kind ("P", "BP", "EX"), then number, each its
     #: data type, form and axes as the protocol carries them; unset ones read 0.
     positions: dict[str, dict[int, tuple[int, ...]]] = field(default_factory=dict)
+    #: S variables by number, as their bytes; an unset one is all NULs.
+    strings: dict[int, bytes] = field(default_factory=dict)
 
     # --- status -----------------------------------------------------------
 
