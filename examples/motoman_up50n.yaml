@@ -13,8 +13,9 @@
 
 devices:
   - name: up50n
-    kind: motoman_nx100
+    kind: yaskawa
     options:
+      controller: nx100
       robot: up50n
       # The flange pointing down, in front of the robot.
       start_joints_deg: [0, 0, 0, 0, -90, 0]

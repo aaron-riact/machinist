@@ -1,0 +1,22 @@
+# A Yaskawa arm on a YRC1000, serving the text Ethernet server on TCP port 80
+# and the High-Speed Ethernet Server (HSES) on UDP port 10040.
+#
+# Run with:
+#   uv run machinist run examples/yaskawa_yrc1000.yaml
+#
+# Port 80 needs root, unless net.ipv4.ip_unprivileged_port_start allows it.
+#
+# The YRC1000 profile takes the DX200's values (START reply, 4 decimals, 64
+# tools and user frames, network inputs #27010-#29567) until a real YRC1000
+# has been checked. The arm is the UP50N until the cell's own is in the
+# catalog.
+
+devices:
+  - name: yrc1000
+    kind: yaskawa
+    options:
+      controller: yrc1000
+      robot: up50n
+      protocols: [ethernet_server, hses]
+      # hses_port: 10040
+      start_joints_deg: [0, 0, 0, 0, -90, 0]
