@@ -60,6 +60,9 @@ JOB_NAMES_PER_LINE = 20
 ALL_JOBS = "*"
 #: The task SETMJ sets the master job of: CTASK selects none other here.
 MASTER_TASK = 0
+#: The control group commands act on, as RGROUP and CGROUP give it: a bit per
+#: robot (R1 is bit 0) and per station. The emulated cell has R1 alone.
+R1_GROUP, NO_STATIONS = 0b1, 0
 #: The last line JSEQ can set.
 MAX_JOB_LINE = 9999
 #: MDSP shows up to 30 bytes on the pendant's remote display.
@@ -116,6 +119,7 @@ class EthernetServer:
             "RALARM": self._ralarm,
             "RJSEQ": self._rjseq,
             "RJDIR": self._rjdir,
+            "RGROUP": self._rgroup,
             "SVON": self._svon,
             "HOLD": self._hold,
             "RESET": self._reset,
@@ -181,6 +185,11 @@ class EthernetServer:
         per_line = JOB_NAMES_PER_LINE
         lines = [names[i : i + per_line] for i in range(0, len(names), per_line)]
         return "\r".join(",".join(line) for line in lines)
+
+    def _rgroup(self, data: str) -> str:
+        """The robots and stations commands act on, and the task: always R1 and the
+        master task, as the cell has nothing else."""
+        return f"{R1_GROUP},{NO_STATIONS},{MASTER_TASK}"
 
     def _svon(self, data: str) -> None:
         self.controller.set_servo(_parse_switch(data))

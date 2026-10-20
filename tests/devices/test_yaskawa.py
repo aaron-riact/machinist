@@ -395,6 +395,10 @@ def test_jseq_while_the_arm_moves_is_an_error(with_jobs: YaskawaRobot) -> None:
     assert _answer(with_jobs, "JSEQ", "PICK,0") == b"ERROR:JSEQ is not successful (2010).\r\n"
 
 
+def test_rgroup_reads_r1_and_the_master_task(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "RGROUP") == b"1,0,0\r"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:
