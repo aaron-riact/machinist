@@ -213,7 +213,7 @@ def test_hold_shows_in_rstats_until_released(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "RSTATS") == b"194,64\r"
 
 
-@pytest.mark.parametrize("command", ["SVON", "HOLD"])
+@pytest.mark.parametrize("command", ["SVON", "HOLD", "HLOCK"])
 def test_a_switch_takes_only_0_or_1(motoman: YaskawaRobot, command: str) -> None:
     error = f"ERROR:{command} is not successful (5200).\r\n"
     assert _answer(motoman, command, "2") == error.encode()
@@ -233,6 +233,13 @@ def test_cycle_selects_step_one_cycle_or_auto(motoman: YaskawaRobot, cycle: str,
 
 def test_cycle_takes_only_1_to_3(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "CYCLE", "4") == b"ERROR:CYCLE is not successful (5200).\r\n"
+
+
+def test_hlock_sets_the_interlock(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "HLOCK", "1") == b"0000\r\n"
+    assert motoman.controller.hlock
+    assert _answer(motoman, "HLOCK", "0") == b"0000\r\n"
+    assert not motoman.controller.hlock
 
 
 def test_mode_selects_teach_or_play(motoman: YaskawaRobot) -> None:

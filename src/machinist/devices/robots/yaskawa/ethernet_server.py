@@ -107,6 +107,7 @@ class EthernetServer:
             "HOLD": self._hold,
             "RESET": self._reset,
             "CANCEL": self._cancel,
+            "HLOCK": self._hlock,
             "MODE": self._mode,
             "CYCLE": self._cycle,
             "PMOVJ": self._pmovj,
@@ -159,6 +160,10 @@ class EthernetServer:
 
     def _cancel(self, data: str) -> None:
         self.controller.cancel_error()
+
+    def _hlock(self, data: str) -> None:
+        """The interlock between the pendant and IO operation signals, 1 on, 0 off."""
+        self.controller.hlock = _parse_switch(data)
 
     def _mode(self, data: str) -> None:
         """1 teach, 2 play. A real controller takes MODE only when its external mode
