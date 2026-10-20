@@ -23,6 +23,8 @@ FAULT_ALARM = 4000
 MIN_MOVE_SECONDS = 0.02
 
 
+#: The RS parameters' type number in a system parameter read.
+PARAMETER_RS = 4
 #: An alarm's time as the controller shows it, e.g. 2011/10/10 15:49.
 ALARM_TIME_FORMAT = "%Y/%m/%d %H:%M"
 #: How many alarms the history keeps (HSES reads 1 to 100).
@@ -99,6 +101,9 @@ class ControllerProfile:
     #: generation from its first two characters (DS DX100, DN DX200, FS FS100,
     #: YA YRC1000, YB YRC1000micro).
     software_version: str
+    #: Whether HSES takes the commands YRC1000 and newer controllers add (YMConnect
+    #: calls them its UAPI): system parameters, and more not emulated yet.
+    yrc1000_commands: bool = False
 
     @property
     def last_user_coordinate(self) -> int:
@@ -138,6 +143,7 @@ CONTROLLERS["yrc1000"] = replace(
     CONTROLLERS["dx200"],
     server_name="OK: YR Information Server (1.00)",
     software_version="YAS2.80.00-00",  # MotoROS2's minimum for a YRC1000
+    yrc1000_commands=True,
 )
 
 
@@ -242,6 +248,12 @@ class YaskawaController:
     executing_job: str = ""
     executing_line: int = 0
     master_jobs: dict[int, str] = field(default_factory=dict)
+    #: System parameters by (type, group, number), the type as YMConnect numbers
+    #: them (4 is RS); an unset one reads 0. RS022 = 1 lets instance 0 address
+    #: variable 0, as the HSES manual says to set it (2.2).
+    parameters: dict[tuple[int, int, int], int] = field(
+        default_factory=lambda: {(PARAMETER_RS, 0, 22): 1}
+    )
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
     #: When the controller's power came on: when the device was made.

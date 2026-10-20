@@ -320,8 +320,11 @@ class HighSpeedEthernetServer:
         if request.ack:
             raise _added(AddedStatus.ACK_ERROR)
         if request.division is not Division.ROBOT:
-            raise HsesError(Status.UNDEFINED_COMMAND)  # file control is not emulated
-        handler = self._commands().get(request.command)
+            raise HsesError(Status.UNDEFINED_COMMAND)  # file control is on its own port
+        commands = self._commands()
+        if self.controller.profile.yrc1000_commands:
+            commands |= self._yrc1000_commands()
+        handler = commands.get(request.command)
         if handler is None:
             raise HsesError(Status.UNDEFINED_COMMAND)
         return handler(request)
@@ -371,6 +374,24 @@ class HighSpeedEthernetServer:
             0x30B: self._alarm_history_with_sub_codes,
             0x30C: self._plural_strings(32),
         }
+
+    def _yrc1000_commands(self) -> dict[int, Handler]:
+        """Commands YRC1000 and newer controllers add, which the DX200 manual does not
+        have; their formats are as YMConnect, Yaskawa's own client, sends and reads them."""
+        return {
+            0x39C: self._system_parameter,
+        }
+
+    # --- System parameter reading (0x39C, YRC1000 and newer) ---------------------
+
+    def _system_parameter(self, request: Request) -> bytes:
+        """The parameter type, group and number, as 32-bit integers, in; its value out."""
+        if request.service != Service.GET_ALL:
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        if len(request.data) != 12:
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        key = struct.unpack("<3i", request.data)
+        return int32s(self.controller.parameters.get(key, 0))
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
 

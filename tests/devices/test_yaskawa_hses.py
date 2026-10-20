@@ -671,3 +671,22 @@ def test_a_single_variable_takes_attribute_0_or_1(yrc: YaskawaRobot, attribute: 
 def test_the_software_version_tells_the_generation(yrc: YaskawaRobot) -> None:
     """YMConnect reads the controller generation from the version's first two letters."""
     assert _ask(yrc, 0x89, 11, 1, GET_SINGLE).data.rstrip(b"\0") == b"YAS2.80.00-00"
+
+
+def test_a_yrc1000_reads_system_parameters(yrc: YaskawaRobot) -> None:
+    """0x39C, as YMConnect reads RS022 when it connects: type 4 (RS), group 0, number 22."""
+    assert _ints(_ask(yrc, 0x39C, 0, 0, GET_ALL, struct.pack("<3i", 4, 0, 22))) == (1,)
+    assert _ints(_ask(yrc, 0x39C, 0, 0, GET_ALL, struct.pack("<3i", 1, 0, 541))) == (0,)
+
+
+def test_a_dx200_has_no_system_parameter_read() -> None:
+    options = YaskawaOptions(controller="dx200", robot="up50n", protocols=("hses",),
+                             hses_port=free_port(), hses_file_port=free_port())
+    m = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    m.start()
+    try:
+        wait_running(m)
+        answer = _ask(m, 0x39C, 0, 0, GET_ALL, struct.pack("<3i", 4, 0, 22))
+        assert answer.status is Status.UNDEFINED_COMMAND
+    finally:
+        m.stop()
