@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import socket
+import threading
 import time
 from collections.abc import Iterator
 
@@ -667,19 +668,58 @@ def _wait_all_moves(robot: YaskawaRobot) -> None:
         time.sleep(0.02)
 
 
+class _Background:
+    """A command sent on its own connection, whose answer arrives later."""
+
+    def __init__(self, robot: YaskawaRobot, command: str, data: str) -> None:
+        self.answer: bytes | None = None
+        self._thread = threading.Thread(target=self._send, args=(robot, command, data))
+        self._thread.start()
+
+    def _send(self, robot: YaskawaRobot, command: str, data: str) -> None:
+        self.answer = _answer(robot, command, data)
+
+    def result(self) -> bytes | None:
+        self._thread.join(5)
+        return self.answer
+
+
+def _until_buffered(robot: YaskawaRobot, count: int) -> None:
+    deadline = time.monotonic() + 2
+    while robot.controller.buffered_moves < count:
+        assert time.monotonic() < deadline, "the move was not buffered"
+        time.sleep(0.005)
+
+
 def test_a_move_sent_while_moving_runs_after(dx200: YaskawaRobot) -> None:
     assert _answer(dx200, "PMOVJ", TO_ZERO) == b"0000\r\n"
     assert _answer(dx200, "PMOVJ", S_TO_10) == b"0000\r\n"
-    assert dx200.controller.buffered_moves == 1
     _wait_all_moves(dx200)
     assert _answer(dx200, "RPOSJ") == b"14166,0,0,0,0,0,0,0,0,0,0,0\r"
 
 
+def test_a_dx200_answers_a_buffered_move_when_it_starts(dx200: YaskawaRobot) -> None:
+    """The YRC1000 manual (11.1.3) holds the response until the move starts."""
+    _answer(dx200, "PMOVJ", TO_ZERO)
+    sent = time.monotonic()
+    assert _answer(dx200, "PMOVJ", S_TO_10) == b"0000\r\n"
+    assert time.monotonic() - sent > 0.3
+    assert dx200.controller.buffered_moves == 0
+
+
+def test_an_nx100_answers_a_buffered_move_at_once(motoman: YaskawaRobot) -> None:
+    _answer(motoman, "PMOVJ", TO_ZERO)
+    assert _answer(motoman, "PMOVJ", S_TO_10) == b"0000\r\n"
+    assert motoman.controller.buffered_moves == 1
+
+
 def test_rstats_shows_running_until_the_buffered_move_ends(dx200: YaskawaRobot) -> None:
     _answer(dx200, "PMOVJ", TO_ZERO)
-    _answer(dx200, "PMOVJ", S_TO_10)
+    second = _Background(dx200, "PMOVJ", S_TO_10)
+    _until_buffered(dx200, 1)
     while dx200.controller.buffered_moves:
         assert _answer(dx200, "RSTATS").startswith(b"202,")  # running
+    assert second.result() == b"0000\r\n"
     _wait_all_moves(dx200)
     assert _answer(dx200, "RSTATS").startswith(b"194,")
 
@@ -687,8 +727,10 @@ def test_rstats_shows_running_until_the_buffered_move_ends(dx200: YaskawaRobot) 
 def test_a_dx200_takes_one_move_behind_the_running_one(dx200: YaskawaRobot) -> None:
     """The YRC1000 manual (11.1.3) accepts a single command while moving."""
     _answer(dx200, "PMOVJ", TO_ZERO)
-    _answer(dx200, "PMOVJ", S_TO_10)
+    second = _Background(dx200, "PMOVJ", S_TO_10)
+    _until_buffered(dx200, 1)
     assert _answer(dx200, "PMOVJ", TO_ZERO) == b"ERROR:PMOVJ is not successful (2010).\r\n"
+    assert second.result() == b"0000\r\n"
 
 
 def test_an_nx100_takes_many_moves_behind_the_running_one(motoman: YaskawaRobot) -> None:
@@ -750,9 +792,12 @@ def test_a_dx200_shows_a_buffered_move_in_rstats(dx200: YaskawaRobot) -> None:
 
 
 def test_hold_drops_the_buffered_moves(dx200: YaskawaRobot) -> None:
+    """A held answer to a dropped move is an error: 2050, command hold."""
     _answer(dx200, "PMOVJ", TO_ZERO)
-    _answer(dx200, "PMOVJ", S_TO_10)
+    second = _Background(dx200, "PMOVJ", S_TO_10)
+    _until_buffered(dx200, 1)
     _answer(dx200, "HOLD", "1")
+    assert second.result() == b"ERROR:PMOVJ is not successful (2050).\r\n"
     assert dx200.controller.buffered_moves == 0
     assert not dx200.arm.state.view.moving
 

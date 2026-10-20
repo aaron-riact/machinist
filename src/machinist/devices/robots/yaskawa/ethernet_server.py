@@ -45,6 +45,7 @@ from .controller import (
     POSITION_NUMBERS,
     STANDARD_VARIABLES,
     STRING_SIZE,
+    BufferedMove,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
@@ -407,7 +408,7 @@ class EthernetServer:
         speed = _joint_speed(values[0])
         target = self.controller.joints_at(values[1:7])
         self.controller.tool = self.controller.check_tool(_integer(values[7]))
-        self.controller.move_joints(target, speed)
+        self._answer_when_started(self.controller.move_joints(target, speed))
 
     def _pmovl(self, data: str) -> None:
         """Speed selection, speed, six pulses, tool, six external axes."""
@@ -415,7 +416,7 @@ class EthernetServer:
         selection, speed = _linear_speed(values[0], values[1])
         target = self.controller.arm.forward(self.controller.joints_at(values[2:8]))
         self.controller.tool = self.controller.check_tool(_integer(values[8]))
-        self.controller.move_linear(target, selection, speed)
+        self._answer_when_started(self.controller.move_linear(target, selection, speed))
 
     def _movj(self, data: str) -> None:
         """Speed (%), coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
@@ -424,7 +425,7 @@ class EthernetServer:
         target = from_frame(self._frame(_integer(values[1])), _pose(values[2:8]))
         self.controller.form = _integer(values[8])
         self.controller.tool = self.controller.check_tool(_integer(values[9]))
-        self.controller.move_joints_to_pose(target, speed)
+        self._answer_when_started(self.controller.move_joints_to_pose(target, speed))
 
     def _movl(self, data: str) -> None:
         """Speed selection, speed, coordinate, X Y Z Rx Ry Rz, type, tool, six external axes."""
@@ -433,7 +434,7 @@ class EthernetServer:
         target = from_frame(self._frame(_integer(values[2])), _pose(values[3:9]))
         self.controller.form = _integer(values[9])
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
-        self.controller.move_linear(target, selection, speed)
+        self._answer_when_started(self.controller.move_linear(target, selection, speed))
 
     def _imov(self, data: str) -> None:
         """Speed selection, speed, coordinate, the step in X Y Z Rx Ry Rz, reserved, tool,
@@ -451,7 +452,15 @@ class EthernetServer:
         if not in_tool:
             step = frame_step(self._frame(coordinate), step)
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
-        self.controller.step_linear(step, in_tool=in_tool, selection=selection, speed=speed)
+        self._answer_when_started(self.controller.step_linear(
+            step, in_tool=in_tool, selection=selection, speed=speed
+        ))
+
+    def _answer_when_started(self, move: BufferedMove | None) -> None:
+        """A move that waits in the buffer is answered when it starts, on a
+        controller that holds the answer (the YRC1000 manual, 11.1.3)."""
+        if move is not None and self.controller.profile.holds_buffered_answer:
+            move.wait_started()
 
     def _start(self, data: str) -> None:
         """Start the executing job from its line, or the job named from its start."""

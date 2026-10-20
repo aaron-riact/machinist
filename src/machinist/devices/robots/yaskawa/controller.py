@@ -134,6 +134,10 @@ class ControllerProfile:
     #: From a real NX100, as remembered; believed fixed on the DX200. No manual or
     #: public report describes it.
     running_bit_quirk: bool = False
+    #: Whether the Ethernet server holds its answer to a buffered move until the
+    #: move starts, as the YRC1000 manual (11.1.3) says; the DX200 is taken to do
+    #: the same. HSES answers at once: its manual says nothing of it.
+    holds_buffered_answer: bool = True
 
     @property
     def last_user_coordinate(self) -> int:
@@ -156,6 +160,7 @@ CONTROLLERS: dict[str, ControllerProfile] = {
         user_frames=24,
         move_buffer=None,
         running_bit_quirk=True,
+        holds_buffered_answer=False,
         network_inputs=range(22010, 23288),
     ),
     "dx200": ControllerProfile(
@@ -198,6 +203,22 @@ class Refusal(Enum):
     NOT_PERMITTED = auto()
     FRAME_NOT_SET = auto()
     ALARM = auto()
+
+
+@dataclass(slots=True)
+class BufferedMove:
+    """A move waiting behind the one running, until it starts or is dropped."""
+
+    label: str
+    start: Callable[[], None]
+    started: threading.Event = field(default_factory=threading.Event)
+    dropped: CommandRefusedError | None = None
+
+    def wait_started(self) -> None:
+        """Block until the move starts; raise why it was dropped if it never will."""
+        self.started.wait()
+        if self.dropped is not None:
+            raise self.dropped
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,7 +373,7 @@ class YaskawaController:
     #: Reports what the controller does that a host would not see, by kind and
     #: details (the device's log-only notes).
     note: Callable[..., None] = field(default=lambda kind, **details: None, repr=False)
-    _buffered: deque[tuple[str, Callable[[], None]]] = field(default_factory=deque, repr=False)
+    _buffered: deque[BufferedMove] = field(default_factory=deque, repr=False)
     _motion_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
@@ -487,7 +508,7 @@ class YaskawaController:
             self.arm.set_servo(True)
         else:
             with self._motion_lock:
-                self._drop_buffered("servo off")
+                self._drop_buffered(Refusal.SERVO_OFF, "servo off")
             self.arm.stop()
             self.arm.set_servo(False)
 
@@ -495,7 +516,7 @@ class YaskawaController:
         self.hold = on
         if on:
             with self._motion_lock:
-                self._drop_buffered("hold")
+                self._drop_buffered(Refusal.HELD, "hold")
             self.arm.stop()
 
     def reset_alarm(self) -> None:
@@ -591,14 +612,14 @@ class YaskawaController:
         frame.transform()
         self.user_frames[number] = frame
 
-    def move_joints(self, target: Joints, speed_percent: float) -> None:
+    def move_joints(self, target: Joints, speed_percent: float) -> BufferedMove | None:
         """Joint-space move at *speed_percent* of each joint's top speed."""
         self._check_can_move()
-        self._run_or_buffer("joint move", lambda: self.arm.movej(
+        return self._run_or_buffer("joint move", lambda: self.arm.movej(
             target, duration=self._joint_move_seconds(target, speed_percent)
         ))
 
-    def move_joints_to_pose(self, target: Pose, speed_percent: float) -> None:
+    def move_joints_to_pose(self, target: Pose, speed_percent: float) -> BufferedMove | None:
         """Joint-space move to the joints that put the arm at *target*, found when the
         move starts."""
         self._check_can_move()
@@ -606,21 +627,25 @@ class YaskawaController:
         def start() -> None:
             joints = self.arm.inverse(target)
             self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed_percent))
-        self._run_or_buffer("joint move", start)
+        return self._run_or_buffer("joint move", start)
 
     def step_linear(self, step: NDArray[np.float64], *, in_tool: bool,
-                    selection: SpeedSelection, speed: float) -> None:
+                    selection: SpeedSelection, speed: float) -> BufferedMove | None:
         """Straight-line move by *step* from where the arm is when the move starts: in
         the tool's own frame, or along and about the base axes."""
         self._check_can_move()
-        self._run_or_buffer("straight step", lambda: self._start_linear(
+        return self._run_or_buffer("straight step", lambda: self._start_linear(
             stepped(self.arm.state.view.pose, step, in_tool=in_tool), selection, speed
         ))
 
-    def move_linear(self, target: Pose, selection: SpeedSelection, speed: float) -> None:
+    def move_linear(
+        self, target: Pose, selection: SpeedSelection, speed: float
+    ) -> BufferedMove | None:
         """Straight-line move, *speed* in mm/s (V) or degrees/s (VR)."""
         self._check_can_move()
-        self._run_or_buffer("straight move", lambda: self._start_linear(target, selection, speed))
+        return self._run_or_buffer(
+            "straight move", lambda: self._start_linear(target, selection, speed)
+        )
 
     @property
     def buffered_moves(self) -> int:
@@ -641,24 +666,26 @@ class YaskawaController:
         except NoLinearPath as exc:
             raise CommandRefusedError(Refusal.NO_LINEAR_PATH, str(exc)) from exc
 
-    def _run_or_buffer(self, label: str, start: Callable[[], None]) -> None:
+    def _run_or_buffer(self, label: str, start: Callable[[], None]) -> BufferedMove | None:
         """Start a move now if the arm is still, or put it in the buffer to start when
-        the moves before it end; refused when the buffer is full."""
+        the moves before it end, and return it; refused when the buffer is full."""
         with self._motion_lock:
             if not self.arm.state.view.moving:
                 if self._buffered:
                     # The arm stopped without finishing (a stop, a fault): a real
                     # controller would have dropped what waited.
-                    self._drop_buffered("the arm stopped before they started")
+                    self._drop_buffered(Refusal.MOVING, "the arm stopped before they started")
                 start()
                 self._move_shows_running = True
-                return
+                return None
             if self.move_buffer is not None and len(self._buffered) >= self.move_buffer:
                 raise CommandRefusedError(
                     Refusal.MOVING, f"{len(self._buffered)} moves already wait"
                 )
-            self._buffered.append((label, start))
+            move = BufferedMove(label, start)
+            self._buffered.append(move)
             self.note("move_buffered", move=label, waiting=len(self._buffered))
+            return move
 
     def _start_buffered(self) -> None:
         """The arm finished a move: start the next one waiting, if it still can."""
@@ -667,23 +694,27 @@ class YaskawaController:
                 return
             # Started before it leaves the buffer, so the status never sees the
             # arm still with nothing waiting in between.
-            label, start = self._buffered[0]
+            move = self._buffered[0]
             try:
                 self._check_can_move()
-                start()
+                move.start()
             except CommandRefusedError as exc:
-                self._drop_buffered(str(exc))
+                self._drop_buffered(exc.refusal, str(exc))
                 return
             self._buffered.popleft()
-            self.note("move_from_buffer", move=label, waiting=len(self._buffered))
+            move.started.set()
+            self.note("move_from_buffer", move=move.label, waiting=len(self._buffered))
             if self.running_bit_quirk:
                 self._move_shows_running = False
-                self.note("quirk", quirk="running_bit", move=label,
+                self.note("quirk", quirk="running_bit", move=move.label,
                           detail="RSTATS shows not running while this buffered move runs")
 
-    def _drop_buffered(self, reason: str) -> None:
+    def _drop_buffered(self, refusal: Refusal, reason: str) -> None:
         if self._buffered:
             self.note("move_buffer_dropped", moves=len(self._buffered), reason=reason)
+        for move in self._buffered:
+            move.dropped = CommandRefusedError(refusal, f"dropped from the buffer: {reason}")
+            move.started.set()
         self._buffered.clear()
 
     def read_io(self, signals: list[int]) -> list[int]:
