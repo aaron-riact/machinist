@@ -208,6 +208,10 @@ class YaskawaController:
     positions: dict[str, dict[int, tuple[int, ...]]] = field(default_factory=dict)
     #: S variables by number, as their bytes; an unset one is all NULs.
     strings: dict[int, bytes] = field(default_factory=dict)
+    #: The message a host last put on the pendant's remote display.
+    pendant_message: str = ""
+    #: When the controller's power came on: when the device was made.
+    powered_on: datetime = field(default_factory=datetime.now)
 
     # --- status -----------------------------------------------------------
 

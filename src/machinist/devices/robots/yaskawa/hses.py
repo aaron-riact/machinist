@@ -16,6 +16,7 @@ import math
 import struct
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import IntEnum
 
 from ....kinematics.api import Pose
@@ -34,6 +35,7 @@ from ....transport.yaskawa_hses import (
     request_id_of,
 )
 from .controller import (
+    ALARM_TIME_FORMAT,
     Alarm,
     CommandRefusedError,
     Refusal,
@@ -227,6 +229,18 @@ MAJOR_FAILURES = range(1, 101)
 ALARM_HISTORY_INSTANCES = tuple(
     n for start in (1, 1001, 2001, 3001, 4001) for n in range(start, start + 100)
 )
+#: The pendant's remote display takes 30 characters in a 32-byte field (3.3.22).
+PENDANT_CHARACTERS, PENDANT_FIELD = 30, 32
+#: Management time instances (3.3.25): control power, then servo power, playback
+#: and motion time (total, per robot, per station), then operation time per
+#: application.
+CONTROL_POWER_TIME = 1
+MANAGEMENT_TIMES = (
+    CONTROL_POWER_TIME,
+    *(n for base in (0, 100, 200) for n in (base + 10, *range(base + 11, base + 19),
+                                            *range(base + 21, base + 45))),
+    *range(301, 309),
+)
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -312,6 +326,8 @@ class HighSpeedEthernetServer:
             0x82: self._reset_or_cancel,
             0x83: self._hold_servo_hlock,
             0x84: self._cycle,
+            0x85: self._pendant_message,
+            0x88: self._management_time,
             0x89: self._system_information,
             0x8A: self._move_cartesian,
             0x8B: self._move_pulse,
@@ -617,6 +633,36 @@ class HighSpeedEthernetServer:
         self.controller.cycle = CYCLES[cycle]
         return b""
 
+    # --- 3.3.22 Character string display to the pendant (0x85) -----------------
+
+    def _pendant_message(self, request: Request) -> bytes:
+        """Up to 30 characters for the pendant's remote display, in a 32-byte field."""
+        _instance(request, 1)
+        if request.service != Service.SET_SINGLE:
+            raise HsesError(Status.UNDEFINED_COMMAND)
+        if request.attribute != 1:
+            raise _added(AddedStatus.ATTRIBUTE_ERROR)
+        if len(request.data) != PENDANT_FIELD:
+            raise _added(AddedStatus.DATA_SIZE_ERROR)
+        message = request.data.split(b"\0", 1)[0]
+        if len(message) > PENDANT_CHARACTERS:
+            raise _added(AddedStatus.OPERAND_RANGE)
+        self.controller.pendant_message = message.decode("ascii", errors="replace")
+        return b""
+
+    # --- 3.3.25 Management time acquiring (0x88) -------------------------------
+
+    def _management_time(self, request: Request) -> bytes:
+        """When a counter started (16 characters) and how long it has run (12, as
+        hhhhhh:mm'ss). Only the control power time is counted; the emulator keeps
+        no servo, playback, motion or operation times, so those show 0 run."""
+        instance = _instance(request, *MANAGEMENT_TIMES)
+        started = self.controller.powered_on
+        elapsed = datetime.now() - started if instance == CONTROL_POWER_TIME else timedelta(0)
+        return _read(request, [
+            text(16, started.strftime(ALARM_TIME_FORMAT)), text(12, _elapsed(elapsed)),
+        ])
+
     # --- 3.3.26 System information acquiring (0x89) ---------------------------
 
     def _system_information(self, request: Request) -> bytes:
@@ -814,6 +860,12 @@ def _alarm_fields(alarm: Alarm | None) -> list[bytes]:
 
 #: A stand-in alarm has no sub code, so its sub code strings are empty.
 _SUB_CODE_FIELDS = (text(16), text(96), text(96))
+
+
+def _elapsed(elapsed: timedelta) -> str:
+    """A run time as the controller shows it: hours, minutes and seconds, 000123:45'06."""
+    seconds = int(elapsed.total_seconds())
+    return f"{seconds // 3600:06d}:{seconds // 60 % 60:02d}'{seconds % 60:02d}"
 
 
 def _write(request: Request, *, count: int) -> tuple[int, ...]:

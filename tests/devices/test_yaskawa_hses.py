@@ -570,3 +570,25 @@ def test_alarms_with_sub_codes_add_three_strings(yrc: YaskawaRobot, command: int
     assert struct.unpack("<i", answer.data[:4]) == (4000,)
     assert answer.data[60:] == bytes(208)
     assert _ask(yrc, command, 1, 7, GET_SINGLE).data == bytes(96)
+
+
+def test_pendant_message(yrc: YaskawaRobot) -> None:
+    message = b"PALLET 3 DONE".ljust(32, b"\0")
+    assert _ask(yrc, 0x85, 1, 1, SET_SINGLE, message).status is Status.OK
+    assert yrc.controller.pendant_message == "PALLET 3 DONE"
+
+
+def test_a_pendant_message_past_30_characters_is_refused(yrc: YaskawaRobot) -> None:
+    answer = _ask(yrc, 0x85, 1, 1, SET_SINGLE, b"X" * 31 + b"\0")
+    assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+def test_control_power_time_counts_from_the_start(yrc: YaskawaRobot) -> None:
+    data = _ask(yrc, 0x88, 1, 0, GET_ALL).data
+    assert time.strptime(data[:16].decode(), "%Y/%m/%d %H:%M")
+    assert data[16:].decode().startswith("000000:00'")
+
+
+def test_other_management_times_show_zero_run(yrc: YaskawaRobot) -> None:
+    assert _ask(yrc, 0x88, 211, 2, GET_SINGLE).data == b"000000:00'00"
+    assert _ask(yrc, 0x88, 2, 0, GET_ALL).added_status == AddedStatus.INSTANCE_ERROR
