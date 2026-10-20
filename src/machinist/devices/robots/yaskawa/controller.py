@@ -174,6 +174,7 @@ class Refusal(Enum):
     NO_SUCH_JOB = auto()
     NO_EXECUTING_JOB = auto()
     WRONG_MODE = auto()
+    MOVING = auto()
 
 
 class Status1(IntFlag):
@@ -419,7 +420,10 @@ class YaskawaController:
         )
 
     def select_job(self, name: str, line: int = 0, *, master_of_task: int | None = None) -> None:
-        """Set the executing job (and its line), or a task's master job."""
+        """Set the executing job (and its line), or a task's master job; not while
+        the arm moves."""
+        if self.arm.state.view.moving:
+            raise CommandRefusedError(Refusal.MOVING, "the manipulator is operating")
         if name not in self.jobs:
             raise CommandRefusedError(Refusal.NO_SUCH_JOB, f"no job {name!r}")
         if master_of_task is not None:

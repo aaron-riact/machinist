@@ -284,6 +284,26 @@ def test_rjseq_without_an_executing_job_reads_no_name(motoman: YaskawaRobot) -> 
     assert _answer(motoman, "RJSEQ") == b",0,0\r"
 
 
+def test_jseq_sets_the_executing_job_and_line(with_jobs: YaskawaRobot) -> None:
+    assert _answer(with_jobs, "JSEQ", "PICK,5") == b"0000\r\n"
+    assert _answer(with_jobs, "RJSEQ") == b"PICK,5,0\r"
+
+
+def test_jseq_of_a_job_the_controller_lacks_is_an_error(with_jobs: YaskawaRobot) -> None:
+    assert _answer(with_jobs, "JSEQ", "NOPE,0") == b"ERROR:JSEQ is not successful (4040).\r\n"
+
+
+@pytest.mark.parametrize("data", ["PICK,10000", "PICK", "PICK,x"])
+def test_jseq_with_bad_data_is_an_error(with_jobs: YaskawaRobot, data: str) -> None:
+    assert _answer(with_jobs, "JSEQ", data) == b"ERROR:JSEQ is not successful (5200).\r\n"
+
+
+def test_jseq_while_the_arm_moves_is_an_error(with_jobs: YaskawaRobot) -> None:
+    """2010: manipulator operating (the interlock table, 11.1.1)."""
+    _answer(with_jobs, "PMOVJ", "1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0")
+    assert _answer(with_jobs, "JSEQ", "PICK,0") == b"ERROR:JSEQ is not successful (2010).\r\n"
+
+
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
     while motoman.arm.state.view.moving:

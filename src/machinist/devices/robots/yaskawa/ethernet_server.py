@@ -54,6 +54,8 @@ BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 ALARM_SLOTS = 4
 
 
+#: The last line JSEQ can set.
+MAX_JOB_LINE = 9999
 #: MDSP shows up to 30 bytes on the pendant's remote display.
 PENDANT_MESSAGE_BYTES = 30
 #: Joint speed in percent of the maximum, and linear speed in mm/s or degrees/s.
@@ -81,6 +83,7 @@ INTERPRETER_MESSAGES: dict[Refusal, int] = {
     Refusal.NO_SUCH_JOB: 4040,
     Refusal.NO_EXECUTING_JOB: 4060,
     Refusal.WRONG_MODE: 2080,
+    Refusal.MOVING: 2010,  # manipulator operating
 }
 
 
@@ -119,6 +122,7 @@ class EthernetServer:
             "MOVJ": self._movj,
             "MOVL": self._movl,
             "IMOV": self._imov,
+            "JSEQ": self._jseq,
             "IOREAD": self._ioread,
             "IOWRITE": self._iowrite,
         }
@@ -249,6 +253,13 @@ class EthernetServer:
         here = self.controller.arm.state.view.pose
         self.controller.move_linear(stepped(here, step, in_tool=in_tool), selection, speed)
 
+    def _jseq(self, data: str) -> None:
+        """A job name and line No. to set as the executing job."""
+        name, line = _parse_job_and_number(data)
+        if not 0 <= line <= MAX_JOB_LINE:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"line {line}")
+        self.controller.select_job(name, line)
+
     def _ioread(self, data: str) -> str:
         """First signal and signal count → one value per byte."""
         start, count = _parse_ints(data, count=2)
@@ -321,6 +332,13 @@ def _parse_numbers(data: str, *, count: int) -> list[float]:
     if len(values) != count:
         raise CommandRefusedError(Refusal.BAD_DATA, f"{len(values)} fields, expected {count}")
     return values
+
+
+def _parse_job_and_number(data: str) -> tuple[str, int]:
+    """A job name, then an integer."""
+    name, _, number = data.partition(",")
+    (value,) = _parse_ints(number, count=1)
+    return name.strip(), value
 
 
 def _parse_switch(data: str) -> bool:

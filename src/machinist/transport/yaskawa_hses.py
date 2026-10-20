@@ -66,6 +66,7 @@ class AddedStatus(IntEnum):
     """Added status codes (chapter 5) the emulator answers with."""
 
     OPERAND_RANGE = 0x1012
+    MANIPULATOR_OPERATING = 0x2010
     COMMAND_HOLD = 0x2050
     ALARM = 0x2060
     INCORRECT_MODE = 0x2080
