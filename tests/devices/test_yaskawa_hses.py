@@ -138,3 +138,44 @@ def test_error_cancel_answers_normally(yrc: YaskawaRobot) -> None:
 def test_a_write_without_its_data_is_refused(yrc: YaskawaRobot) -> None:
     answer = _ask(yrc, 0x82, 1, 1, SET_SINGLE)
     assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.DATA_SIZE_ERROR)
+
+
+def _set(robot: YaskawaRobot, command: int, instance: int, value: int) -> Answer:
+    return _ask(robot, command, instance, 1, SET_SINGLE, struct.pack("<i", value))
+
+
+def test_hold_on_and_off(yrc: YaskawaRobot) -> None:
+    assert _set(yrc, 0x83, 1, 1).status is Status.OK
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x48,)
+    assert _set(yrc, 0x83, 1, 2).status is Status.OK
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x40,)
+
+
+def test_servo_off_and_on(yrc: YaskawaRobot) -> None:
+    assert _set(yrc, 0x83, 2, 2).status is Status.OK
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x00,)
+    assert _set(yrc, 0x83, 2, 1).status is Status.OK
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x40,)
+
+
+def test_servo_on_during_an_emergency_stop_is_refused(yrc: YaskawaRobot) -> None:
+    yrc.arm.estop()
+    answer = _set(yrc, 0x83, 2, 1)
+    assert (answer.status, answer.added_status) == (Status.VENDOR,
+                                                    AddedStatus.SERVO_CANNOT_TURN_ON)
+
+
+def test_hlock_is_remembered(yrc: YaskawaRobot) -> None:
+    assert _set(yrc, 0x83, 3, 1).status is Status.OK
+    assert yrc.controller.hlock
+
+
+def test_a_switch_takes_1_or_2(yrc: YaskawaRobot) -> None:
+    answer = _set(yrc, 0x83, 1, 0)
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.OPERAND_RANGE)
+
+
+@pytest.mark.parametrize(("cycle", "bit"), [(1, 0x01), (2, 0x02), (3, 0x04)])
+def test_cycle_switching_shows_in_the_status(yrc: YaskawaRobot, cycle: int, bit: int) -> None:
+    assert _set(yrc, 0x84, 2, cycle).status is Status.OK
+    assert _ints(_ask(yrc, 0x72, 1, 1, GET_SINGLE)) == (0xC0 | bit,)

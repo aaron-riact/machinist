@@ -169,6 +169,9 @@ class YaskawaController:
     tool: int = 0
     #: HOLD from a command: the arm stops and takes no move until it is released.
     hold: bool = False
+    #: HLOCK: on a real controller it locks out the pendant and IO operation
+    #: signals. The emulator has neither, so it is only remembered.
+    hlock: bool = False
     ladder_copies: dict[int, int] = field(default_factory=dict)
     #: Each IO byte by the number of its first signal; an unset byte reads 0.
     io: dict[int, int] = field(default_factory=dict)

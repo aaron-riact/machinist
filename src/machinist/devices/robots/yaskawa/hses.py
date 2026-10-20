@@ -29,7 +29,7 @@ from ....transport.yaskawa_hses import (
     parse_request,
     request_id_of,
 )
-from .controller import CommandRefusedError, Refusal, YaskawaController
+from .controller import CommandRefusedError, Refusal, Status1, YaskawaController
 
 
 class Service(IntEnum):
@@ -73,6 +73,10 @@ def _added(added_status: AddedStatus) -> HsesError:
 Handler = Callable[[Request], bytes]
 
 
+#: The data of an on/off switch (3.3.20).
+ON, OFF = 1, 2
+#: The cycles 0x84 switches to (3.3.21).
+CYCLES = {1: Status1.STEP, 2: Status1.ONE_CYCLE, 3: Status1.AUTO}
 #: An alarm's data shown as a decimal number (3.3.1, alarm type 1).
 ALARM_TYPE_DECIMAL = 1
 #: The name a faulted arm's alarm shows; the arm does not know the cause.
@@ -137,6 +141,8 @@ class HighSpeedEthernetServer:
             0x70: self._alarm,
             0x72: self._status,
             0x82: self._reset_or_cancel,
+            0x83: self._hold_servo_hlock,
+            0x84: self._cycle,
         }
 
     # --- 3.3.1 Alarm data reading (0x70) ---------------------------------------
@@ -153,6 +159,33 @@ class HighSpeedEthernetServer:
             int32s(code), int32s(data), int32s(ALARM_TYPE_DECIMAL), text(16),
             text(32, FAULT_ALARM_NAME),
         ])
+
+    # --- 3.3.20 Hold / servo on/off (0x83) -------------------------------------
+
+    def _hold_servo_hlock(self, request: Request) -> bytes:
+        """HOLD (instance 1), servo power (2) or HLOCK (3), each 1 for on and 2 for off."""
+        which = _instance(request, 1, 2, 3)
+        (switch,) = _write(request, count=1)
+        if switch not in (ON, OFF):
+            raise _added(AddedStatus.OPERAND_RANGE)
+        on = switch == ON
+        if which == 1:
+            self.controller.set_hold(on)
+        elif which == 2:
+            self.controller.set_servo(on)
+        else:
+            self.controller.hlock = on
+        return b""
+
+    # --- 3.3.21 Step / cycle / continuous switching (0x84) ----------------------
+
+    def _cycle(self, request: Request) -> bytes:
+        _instance(request, 2)
+        (cycle,) = _write(request, count=1)
+        if cycle not in CYCLES:
+            raise _added(AddedStatus.OPERAND_RANGE)
+        self.controller.cycle = CYCLES[cycle]
+        return b""
 
     # --- 3.3.19 Alarm reset / error cancel (0x82) ------------------------------
 
