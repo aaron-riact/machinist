@@ -43,6 +43,12 @@ def motoman() -> Iterator[YaskawaRobot]:
 
 
 @pytest.fixture
+def with_jobs() -> Iterator[YaskawaRobot]:
+    yield from _running(YaskawaOptions(controller="nx100", start_joints_deg=START,
+                                       jobs=("MAIN", "PICK"), **UP50N_AXES))
+
+
+@pytest.fixture
 def dx200() -> Iterator[YaskawaRobot]:
     yield from _running(YaskawaOptions(controller="dx200", start_joints_deg=START, **UP50N_AXES))
 
@@ -267,6 +273,15 @@ def test_a_move_in_teach_mode_is_an_error(motoman: YaskawaRobot) -> None:
     _answer(motoman, "MODE", "1")
     move = "10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
     assert _answer(motoman, "PMOVJ", move) == b"ERROR:PMOVJ is not successful (2080).\r\n"
+
+
+def test_rjseq_reads_the_executing_job_line_and_step(with_jobs: YaskawaRobot) -> None:
+    with_jobs.controller.select_job("PICK", 12)
+    assert _answer(with_jobs, "RJSEQ") == b"PICK,12,0\r"
+
+
+def test_rjseq_without_an_executing_job_reads_no_name(motoman: YaskawaRobot) -> None:
+    assert _answer(motoman, "RJSEQ") == b",0,0\r"
 
 
 def _wait_idle(motoman: YaskawaRobot) -> None:

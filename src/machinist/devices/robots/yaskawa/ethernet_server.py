@@ -105,6 +105,7 @@ class EthernetServer:
             "RPOSJ": self._rposj,
             "RPOSC": self._rposc,
             "RALARM": self._ralarm,
+            "RJSEQ": self._rjseq,
             "SVON": self._svon,
             "HOLD": self._hold,
             "RESET": self._reset,
@@ -151,6 +152,11 @@ class EthernetServer:
         showing = self.controller.alarms()[:ALARM_SLOTS]
         alarms = [v for alarm in showing for v in (alarm.code, alarm.data)]
         return ",".join(str(v) for v in [0, 0, *_pad(alarms, ALARM_SLOTS * 2)])
+
+    def _rjseq(self, data: str) -> str:
+        """The executing job's name, line and step. The emulator keeps no steps, so
+        the step reads 0, as in HSES 0x73."""
+        return f"{self.controller.executing_job},{self.controller.executing_line},0"
 
     def _svon(self, data: str) -> None:
         self.controller.set_servo(_parse_switch(data))
