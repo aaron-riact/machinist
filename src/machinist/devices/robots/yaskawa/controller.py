@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum, IntEnum, IntFlag, auto
 from pathlib import Path
 
@@ -20,6 +21,20 @@ from ..arm import NoLinearPath, RobotArm
 FAULT_ALARM = 4000
 #: A move takes at least this long, so a move to where the arm is still runs.
 MIN_MOVE_SECONDS = 0.02
+
+
+#: An alarm's time as the controller shows it, e.g. 2011/10/10 15:49.
+ALARM_TIME_FORMAT = "%Y/%m/%d %H:%M"
+#: How many alarms the history keeps (HSES reads 1 to 100).
+ALARM_HISTORY = 100
+
+
+@dataclass(frozen=True, slots=True)
+class Alarm:
+    code: int
+    #: The sub code that says more, 0 when there is none.
+    data: int
+    time: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +200,9 @@ class YaskawaController:
     #: Registers and variables by kind ("register", "B", "I", ...), then number;
     #: an unset one reads 0.
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
+    #: The alarm showing, and every alarm so far, newest first.
+    active_alarm: Alarm | None = None
+    alarm_history: list[Alarm] = field(default_factory=list)
     #: Position variables by kind ("P", "BP", "EX"), then number, each its
     #: data type, form and axes as the protocol carries them; unset ones read 0.
     positions: dict[str, dict[int, tuple[int, ...]]] = field(default_factory=dict)
@@ -207,9 +225,23 @@ class YaskawaController:
             data2 |= Status2.HOLD_COMMAND
         return data1, data2
 
-    def alarms(self) -> list[tuple[int, int]]:
-        """The alarms showing, newest first, each as (code, data)."""
-        return [(FAULT_ALARM, 0)] if self.arm.state.view.faulted else []
+    def alarms(self) -> list[Alarm]:
+        """The alarms showing, newest first.
+
+        The arm does not tell the controller when it faults, so a fault becomes
+        an alarm, and enters the history, when the controller first looks; a
+        fault cleared before anyone looked leaves no trace.
+        """
+        faulted = self.arm.state.view.faulted
+        if faulted and self.active_alarm is None:
+            self.active_alarm = Alarm(
+                code=FAULT_ALARM, data=0, time=datetime.now().strftime(ALARM_TIME_FORMAT)
+            )
+            self.alarm_history.insert(0, self.active_alarm)
+            del self.alarm_history[ALARM_HISTORY:]
+        if not faulted:
+            self.active_alarm = None
+        return [] if self.active_alarm is None else [self.active_alarm]
 
     def pulses(self) -> list[int]:
         """Each robot axis's position in encoder pulses."""
@@ -244,6 +276,7 @@ class YaskawaController:
 
     def reset_alarm(self) -> None:
         self.arm.clear_fault()
+        self.active_alarm = None
 
     def cancel_error(self) -> None:
         """Cancels an error. The emulator raises none, so there is nothing to cancel."""

@@ -34,6 +34,7 @@ from ....transport.yaskawa_hses import (
     request_id_of,
 )
 from .controller import (
+    Alarm,
     CommandRefusedError,
     Refusal,
     SpeedSelection,
@@ -219,6 +220,13 @@ EXTERNAL_POSITIONS = PositionKind(
 #: of 16 bytes or 14 of 32.
 STRING_SIZE = 32
 PLURAL_STRINGS = {16: 29, 32: 14}
+#: Alarm history instances (3.3.2): the nth newest major failure (1 to 100),
+#: monitor alarm (1001-), system user alarm (2001-), user alarm (3001-) and
+#: off-line alarm (4001-).
+MAJOR_FAILURES = range(1, 101)
+ALARM_HISTORY_INSTANCES = tuple(
+    n for start in (1, 1001, 2001, 3001, 4001) for n in range(start, start + 100)
+)
 #: The data of an on/off switch (3.3.20).
 ON, OFF = 1, 2
 #: The cycles 0x84 switches to (3.3.21).
@@ -285,6 +293,7 @@ class HighSpeedEthernetServer:
     def _commands(self) -> dict[int, Handler]:
         return {
             0x70: self._alarm,
+            0x71: self._alarm_history,
             0x72: self._status,
             0x74: self._axis_configuration,
             0x75: self._position,
@@ -327,13 +336,19 @@ class HighSpeedEthernetServer:
         time and name."""
         newest = _instance(request, 1, 2, 3, 4)
         alarms = self.controller.alarms()
-        if newest > len(alarms):
-            return _read(request, [int32s(0), int32s(0), int32s(0), text(16), text(32)])
-        code, data = alarms[newest - 1]
-        return _read(request, [
-            int32s(code), int32s(data), int32s(ALARM_TYPE_DECIMAL), text(16),
-            text(32, FAULT_ALARM_NAME),
-        ])
+        return _read(request, _alarm_fields(alarms[newest - 1] if newest <= len(alarms) else None))
+
+    # --- 3.3.2 Alarm history reading (0x71) ------------------------------------
+
+    def _alarm_history(self, request: Request) -> bytes:
+        """The alarm history, newest first: major failures (instances 1 to 100), then
+        monitor, system user, user and off-line alarms, which the emulator never
+        raises. Each as code, data, type, time and name."""
+        instance = _instance(request, *ALARM_HISTORY_INSTANCES)
+        self.controller.alarms()  # notice a fault that has not been looked at yet
+        history = self.controller.alarm_history if instance in MAJOR_FAILURES else []
+        nth = instance % 1000
+        return _read(request, _alarm_fields(history[nth - 1] if nth <= len(history) else None))
 
     # --- 3.3.5 Axis configuration information reading (0x74) ---------------------
 
@@ -765,6 +780,16 @@ def _io_signal(instance: int) -> int:
     if not any(instance in instances for instances in IO_INSTANCES):
         raise _added(AddedStatus.INSTANCE_ERROR)
     return instance * 10
+
+
+def _alarm_fields(alarm: Alarm | None) -> list[bytes]:
+    """An alarm's code, data, type, time (16 characters) and name (32); all zero for none."""
+    if alarm is None:
+        return [int32s(0), int32s(0), int32s(0), text(16), text(32)]
+    return [
+        int32s(alarm.code), int32s(alarm.data), int32s(ALARM_TYPE_DECIMAL),
+        text(16, alarm.time), text(32, FAULT_ALARM_NAME),
+    ]
 
 
 def _write(request: Request, *, count: int) -> tuple[int, ...]:

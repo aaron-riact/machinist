@@ -537,3 +537,25 @@ def test_plural_strings(yrc: YaskawaRobot, command: int, size: int, most: int) -
     )
     answer = _ask(yrc, command, 0, 0, 0x33, struct.pack("<i", most + 1))
     assert answer.added_status == AddedStatus.OPERAND_RANGE
+
+
+def test_an_alarm_carries_the_time_it_was_noticed(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    when = _ask(yrc, 0x70, 1, 4, GET_SINGLE).data.decode()
+    assert time.strptime(when, "%Y/%m/%d %H:%M")
+
+
+def test_alarm_history_keeps_alarms_after_their_reset(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    _ask(yrc, 0x70, 1, 0, GET_ALL)
+    _ask(yrc, 0x82, 1, 1, SET_SINGLE, struct.pack("<i", 1))
+    yrc.arm.fault()
+    assert _ints(_ask(yrc, 0x71, 1, 1, GET_SINGLE)) == (4000,)
+    assert _ints(_ask(yrc, 0x71, 2, 1, GET_SINGLE)) == (4000,)
+    assert _ask(yrc, 0x71, 3, 0, GET_ALL).data == bytes(60)
+
+
+def test_alarm_history_of_other_kinds_is_empty(yrc: YaskawaRobot) -> None:
+    yrc.arm.fault()
+    assert _ask(yrc, 0x71, 1001, 0, GET_ALL).data == bytes(60)
+    assert _ask(yrc, 0x71, 101, 0, GET_ALL).added_status == AddedStatus.INSTANCE_ERROR

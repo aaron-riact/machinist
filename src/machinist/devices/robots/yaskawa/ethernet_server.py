@@ -134,7 +134,8 @@ class EthernetServer:
         return ",".join(fields)
 
     def _ralarm(self, data: str) -> str:
-        alarms = [v for alarm in self.controller.alarms()[:ALARM_SLOTS] for v in alarm]
+        showing = self.controller.alarms()[:ALARM_SLOTS]
+        alarms = [v for alarm in showing for v in (alarm.code, alarm.data)]
         return ",".join(str(v) for v in [0, 0, *_pad(alarms, ALARM_SLOTS * 2)])
 
     def _svon(self, data: str) -> None:
