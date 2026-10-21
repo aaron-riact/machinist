@@ -125,6 +125,21 @@ def test_delete(yrc: YaskawaRobot, host: socket.socket) -> None:
     assert yrc.controller.jobs == {"PICK"}
 
 
+def test_a_deleted_file_is_noted(yrc: YaskawaRobot, host: socket.socket) -> None:
+    notes: list[tuple[str, dict[str, object]]] = []
+    yrc.controller.note = lambda kind, **details: notes.append((kind, details))
+    _send(host, DELETE, b"MAIN.JBI")
+    assert notes == [("hses file", {"action": "deleted", "name": "MAIN.JBI"})]
+
+
+def test_a_loaded_file_is_noted(yrc: YaskawaRobot, host: socket.socket) -> None:
+    notes: list[tuple[str, dict[str, object]]] = []
+    yrc.controller.note = lambda kind, **details: notes.append((kind, details))
+    _send(host, LOAD, b"NEW.JBI")
+    _send(host, LOAD, b"NOP\r\nEND\r\n", ack=True, block=LAST_BLOCK + 1)
+    assert notes == [("hses file", {"action": "loaded", "name": "NEW.JBI", "size": 10})]
+
+
 @pytest.mark.parametrize("service", [DELETE, SAVE])
 def test_a_file_the_controller_lacks_is_not_found(host: socket.socket, service: int) -> None:
     answer = _send(host, service, b"NONE.JBI")

@@ -87,6 +87,31 @@ ADDED_STATUS: dict[Refusal, AddedStatus] = {
 }
 
 
+#: Each robot control command's name, after the manual's titles (table 3-1) and,
+#: for the YRC1000's additions, YMConnect's use of them; for the device's notes.
+COMMAND_NAMES = {
+    0x70: "alarm read", 0x71: "alarm history read", 0x72: "status read",
+    0x73: "executing job read", 0x74: "axis configuration read", 0x75: "position read",
+    0x76: "position error read", 0x77: "torque read", 0x78: "IO", 0x79: "register",
+    0x7A: "B variable", 0x7B: "I variable", 0x7C: "D variable", 0x7D: "R variable",
+    0x7E: "S variable (16)", 0x7F: "P variable", 0x80: "BP variable", 0x81: "EX variable",
+    0x82: "alarm reset / error cancel", 0x83: "hold / servo / HLOCK", 0x84: "cycle",
+    0x85: "pendant message", 0x86: "job start", 0x87: "job select",
+    0x88: "management time", 0x89: "system information", 0x8A: "move (Cartesian)",
+    0x8B: "move (pulses)", 0x8C: "S variable (32)", 0x300: "IO (plural)",
+    0x301: "registers (plural)", 0x302: "B variables (plural)",
+    0x303: "I variables (plural)", 0x304: "D variables (plural)",
+    0x305: "R variables (plural)", 0x306: "S variables (plural, 16)",
+    0x307: "P variables (plural)", 0x308: "BP variables (plural)",
+    0x309: "EX variables (plural)", 0x30A: "alarm with sub code",
+    0x30B: "alarm history with sub code", 0x30C: "S variables (plural, 32)",
+    0x33D: "Cartesian position read", 0x39C: "system parameter read",
+}
+#: The services that write. A driver reads many times a second, so the device
+#: notes only these, and every refusal.
+WRITE_SERVICES = frozenset({0x02, 0x10, 0x34})
+
+
 class HsesError(Exception):
     """A request the server answers with *status* (and *added_status*, if any)."""
 
@@ -315,19 +340,36 @@ class HighSpeedEthernetServer:
         try:
             data = self._run(request)
         except HsesError as exc:
+            self._note("refused", request, status=exc.status.name,
+                       added_status=f"{exc.added_status:#06x}" if exc.added_status else None)
             return encode_answer(Answer(
                 division=answer.division, request_id=answer.request_id, service=answer.service,
                 status=exc.status, added_status=exc.added_status,
             ))
         except CommandRefusedError as exc:
+            self._note("refused", request, added_status=f"{ADDED_STATUS[exc.refusal]:#06x}",
+                       reason=str(exc))
             return encode_answer(Answer(
                 division=answer.division, request_id=answer.request_id, service=answer.service,
                 status=Status.VENDOR, added_status=ADDED_STATUS[exc.refusal],
             ))
+        if request.service in WRITE_SERVICES:
+            self._note("command", request)
         return encode_answer(Answer(
             division=answer.division, request_id=answer.request_id, service=answer.service,
             data=data,
         ))
+
+    def _note(self, kind: str, request: Request, **details: object) -> None:
+        """Note a command on the device's log: its name, instance and data, the data as
+        32-bit integers where it divides into them, else as text."""
+        data: object = request.data.rstrip(b"\0").decode("ascii", "replace")
+        if request.data and len(request.data) % 4 == 0:
+            data = list(struct.unpack(f"<{len(request.data) // 4}i", request.data))
+        self.controller.note(
+            f"hses {kind}", command=COMMAND_NAMES.get(request.command, f"{request.command:#05x}"),
+            instance=request.instance, data=data, **details,
+        )
 
     def _run(self, request: Request) -> bytes:
         if request.ack:

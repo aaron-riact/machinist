@@ -110,6 +110,7 @@ class HsesFileServer:
         if name not in self.controller.files:
             return _refuse(Division.FILE, request.request_id, DELETE, AddedStatus.FILE_NOT_FOUND)
         del self.controller.files[name]
+        self.controller.note("hses file", action="deleted", name=name)
         return _answer(request, DELETE, block=LAST_BLOCK)
 
     def _save(self, request: Request, sender: Address, name: str) -> bytes:
@@ -167,6 +168,8 @@ class HsesFileServer:
         receiving.received.append(data.data)
         if data.block & LAST_BLOCK:
             self.controller.files[receiving.name] = b"".join(receiving.received)
+            self.controller.note("hses file", action="loaded", name=receiving.name,
+                                 size=len(self.controller.files[receiving.name]))
             del self._transfers[sender]
         return _answer(data, LOAD, block=data.block)
 
