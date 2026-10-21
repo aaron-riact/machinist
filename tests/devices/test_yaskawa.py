@@ -166,6 +166,46 @@ def _answer(motoman: YaskawaRobot, command: str, data: str = "") -> bytes:
     return received.split(f"OK: {command}\r\n".encode(), 1)[1]
 
 
+def _noting(robot: YaskawaRobot) -> list[tuple[str, dict[str, object]]]:
+    notes: list[tuple[str, dict[str, object]]] = []
+    robot.controller.note = lambda kind, **details: notes.append((kind, details))
+    return notes
+
+
+def test_a_command_that_changes_something_is_noted(motoman: YaskawaRobot) -> None:
+    notes = _noting(motoman)
+    _answer(motoman, "HOLD", "1")
+    assert ("command", {"command": "HOLD", "data": "1", "answer": "0000"}) in notes
+
+
+def test_a_poll_is_not_noted(motoman: YaskawaRobot) -> None:
+    notes = _noting(motoman)
+    _answer(motoman, "RSTATS")
+    assert notes == []
+
+
+def test_a_session_for_several_commands_is_noted(motoman: YaskawaRobot) -> None:
+    notes = _noting(motoman)
+    _session(motoman, b"CONNECT Robot_access Keep-Alive:2\r\nHOSTCTRL_REQUEST RSTATS 0\r\n"
+                      b"HOSTCTRL_REQUEST RSTATS 0\r\n")
+    assert notes == [("session", {"keep_alive": 2})]
+
+
+def test_a_refusal_is_noted_with_its_reason(motoman: YaskawaRobot) -> None:
+    notes = _noting(motoman)
+    _answer(motoman, "SVON", "2")
+    kind, details = notes[-1]
+    assert kind == "refused"
+    assert details["answer"] == "ERROR:SVON is not successful (5200)."
+    assert details["reason"] == "switch 2"
+
+
+def test_an_unknown_command_is_noted_as_refused(motoman: YaskawaRobot) -> None:
+    notes = _noting(motoman)
+    _session(motoman, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST NOPE 0\r\n")
+    assert notes[-1] == ("refused", {"answer": "NG: unknown command NOPE", "command": "NOPE"})
+
+
 def test_rposj_answers_twelve_axes_in_pulses(motoman: YaskawaRobot) -> None:
     """S, L, U, R, B, T in encoder pulses, then six external axes."""
     assert _answer(motoman, "RPOSJ") == b"14166,38908,-59831,0,36653,-37676,0,0,0,0,0,0\r"
