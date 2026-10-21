@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from machinist.core.eventlog import ConsoleLog, EventLog, to_jsonable
 from machinist.core.events import EventBus, LifecycleChanged, Note
 from machinist.core.io import Direction, SignalChanged
 from machinist.core.types import DeviceState
-from machinist.devices.robots.arm import ArmChanged, RobotArm
+from machinist.devices.robots.arm import ArmChanged, ArmMode, RobotArm
 
 
 def test_events_are_appended_as_json_lines(tmp_path: Path) -> None:
@@ -38,22 +39,44 @@ def test_nested_views_are_written_as_plain_objects() -> None:
 def test_the_console_log_prints_each_event_on_a_line() -> None:
     bus, out = EventBus(), io.StringIO()
     ConsoleLog(out).attach(bus)
-    bus.publish(Note(device="up50n", name="rx", data={"line": "HOSTCTRL_REQUEST RSTATS 0"}))
-    assert out.getvalue() == '[up50n] rx {"line":"HOSTCTRL_REQUEST RSTATS 0"}\n'
+    bus.publish(Note(device="up50n", name="command", data={"command": "SVON", "data": "1"}))
+    assert out.getvalue() == '[up50n] command {"command":"SVON","data":"1"}\n'
 
 
-def test_the_console_log_leaves_arm_states_out_unless_asked() -> None:
-    arm = RobotArm(joint_count=2)
-    for include_arm, lines in ((False, 0), (True, 1)):
+def test_the_console_log_shows_lines_sent_and_received_only_when_debugging() -> None:
+    for debug, lines in ((False, 0), (True, 1)):
         bus, out = EventBus(), io.StringIO()
-        ConsoleLog(out, include_arm=include_arm).attach(bus)
-        bus.publish(ArmChanged(device="a", view=arm.state.view))
+        ConsoleLog(out, debug=debug).attach(bus)
+        bus.publish(Note(device="up50n", name="rx", data={"line": "HOSTCTRL_REQUEST RSTATS 0"}))
         assert len(out.getvalue().splitlines()) == lines
+
+
+def test_the_console_log_shows_the_arm_when_its_mode_changes() -> None:
+    arm = RobotArm(joint_count=2)
+    bus, out = EventBus(), io.StringIO()
+    ConsoleLog(out).attach(bus)
+    idle = arm.state.view
+    moving = replace(idle, mode=ArmMode.MOVING, joints=(0.5, 0.0))
+    for view in (idle, idle, moving, replace(moving, joints=(0.6, 0.0)), idle):
+        bus.publish(ArmChanged(device="a", view=view))
+    lines = out.getvalue().splitlines()
+    assert [line.split(",")[0] for line in lines] == [
+        "[a] arm idle", "[a] arm moving", "[a] arm idle",
+    ]
+
+
+def test_the_console_log_shows_every_arm_report_when_asked() -> None:
+    arm = RobotArm(joint_count=2)
+    bus, out = EventBus(), io.StringIO()
+    ConsoleLog(out, include_arm=True).attach(bus)
+    for _ in range(3):
+        bus.publish(ArmChanged(device="a", view=arm.state.view))
+    assert len(out.getvalue().splitlines()) == 3
 
 
 def test_the_console_log_spares_a_device_that_prints_its_own_lines() -> None:
     bus, out = EventBus(), io.StringIO()
-    ConsoleLog(out, own_lines=["dobot"]).attach(bus)
+    ConsoleLog(out, debug=True, own_lines=["dobot"]).attach(bus)
     bus.publish(Note(device="dobot", name="rx", data={"line": "GetPose()"}))
     bus.publish(Note(device="dobot", name="quirk", data={}))
     assert out.getvalue() == "[dobot] quirk {}\n"
