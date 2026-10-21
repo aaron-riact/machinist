@@ -13,6 +13,7 @@ import threading
 from collections.abc import Collection, Mapping
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+from math import degrees
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -74,18 +75,24 @@ LINE_KINDS = frozenset({"rx", "tx"})
 
 
 class ConsoleLog:
-    """Print every event on a bus, one line each: device, kind and payload.
+    """Print the events on a bus that say what is happening, one line each.
 
-    An arm reports its state at its tick rate, so arm events are left out unless
-    *include_arm*. Devices named in *own_lines* print their own received lines,
-    so their rx and tx events are left out rather than shown twice.
+    Polls make most of the traffic: a driver asking for status and position many
+    times a second. The lines a device sends and receives (rx, tx) are therefore
+    left out unless *debug*. An arm reports its state at its tick rate, so it is
+    shown only when its mode or servo changes (started or stopped moving, faulted,
+    servo off), unless *include_arm* shows every report. Devices named in
+    *own_lines* print their own received lines, so their rx and tx are left out
+    rather than shown twice.
     """
 
-    def __init__(self, stream: TextIO, *, include_arm: bool = False,
+    def __init__(self, stream: TextIO, *, debug: bool = False, include_arm: bool = False,
                  own_lines: Collection[str] = ()) -> None:
         self._stream = stream
+        self._debug = debug
         self._include_arm = include_arm
         self._own_lines = frozenset(own_lines)
+        self._arm_states: dict[str, tuple[Any, Any]] = {}
         self._lock = threading.Lock()
         self._unsubscribe: Any = None
 
@@ -94,13 +101,35 @@ class ConsoleLog:
         self._unsubscribe = bus.subscribe(self.record)
 
     def record(self, event: Event) -> None:
+        if event.kind in LINE_KINDS and (not self._debug or event.device in self._own_lines):
+            return
         if event.kind == "arm" and not self._include_arm:
+            line = self._arm_change(event)
+        else:
+            payload = json.dumps(to_jsonable(event.payload), separators=(",", ":"))
+            line = f"[{event.device}] {event.kind} {payload}"
+        if line is None:
             return
-        if event.kind in LINE_KINDS and event.device in self._own_lines:
-            return
-        payload = json.dumps(to_jsonable(event.payload), separators=(",", ":"))
         with self._lock:
-            print(f"[{event.device}] {event.kind} {payload}", file=self._stream, flush=True)
+            print(line, file=self._stream, flush=True)
+
+    def _arm_change(self, event: Event) -> str | None:
+        """A line when the arm's mode or servo changed since its last report, else None."""
+        view = event.payload.get("view")
+        if view is None:
+            return None
+        state = (view.mode, view.servo_on)
+        with self._lock:
+            if self._arm_states.get(event.device) == state:
+                return None
+            self._arm_states[event.device] = state
+        x, y, z, rx, ry, rz = view.pose
+        pose = (f"{x * 1000:.1f} {y * 1000:.1f} {z * 1000:.1f} mm "
+                f"{degrees(rx):.1f} {degrees(ry):.1f} {degrees(rz):.1f} deg")
+        joints = " ".join(f"{degrees(j):.1f}" for j in view.joints)
+        servo = "on" if view.servo_on else "off"
+        return (f"[{event.device}] arm {to_jsonable(view.mode)}, servo {servo}, "
+                f"at {pose}, joints {joints} deg")
 
     def close(self) -> None:
         if self._unsubscribe is not None:

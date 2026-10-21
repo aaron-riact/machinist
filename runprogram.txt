@@ -1,0 +1,36 @@
+5819 [292.540] f5824 O->T:
+           byte44 work#/program: '9' -> '15'
+5845 [293.667] f5847 O->T:
+           byte12 bit1 -> 1  (0x00->0x02) DI102 cycle start command
+[293.764] f5848 T->O:
+           byte12 bit3 -> 0  (0x0B->0x03) DO104 (ctrl bit3)
+5881 [295.582] f5885 O->T:
+           byte12 bit1 -> 0  (0x02->0x00) DI102 cycle start command
+5885 [295.664] f5886 T->O:
+           byte12 bit1 -> 0  (0x03->0x05) DO102 cycle-start permission
+           byte12 bit2 -> 1  (0x03->0x05) DO103 machine operating (is_processing)
+6120 [307.564] f6123 T->O:
+           byte12 bit2 -> 0  (0x05->0x09) DO103 machine operating (is_processing)
+           byte12 bit3 -> 1  (0x05->0x09) DO104 (ctrl bit3)
+6147 [309.064] f6149 T->O:
+           byte12 bit1 -> 1  (0x09->0x0B) DO102 cycle-start permission
+6448 
+
+
+
+success:
+
+9158 [661.660] f9162 O->T:
+           byte12 bit0 -> 1  (0x00->0x01) DI101 work-number search start
+           byte44 work#/program: '' -> '8'
+9162 [661.746] f9163 T->O:
+           byte12 bit0 -> 0  (0x03->0x02) DO101 work-number search finished
+9172 [662.246] f9173 T->O:
+           byte12 bit0 -> 1  (0x02->0x01) DO101 work-number search finished
+           byte12 bit1 -> 0  (0x02->0x01) DO102 cycle-start permission
+           byte44 work#/program: '9' -> '8'
+[662.265] f9174 O->T:
+           byte12 bit0 -> 0  (0x01->0x00) DI101 work-number search start
+9188 [663.246] f9193 T->O:
+           byte12 bit1 -> 1  (0x01->0x03) DO102 cycle-start permission
+

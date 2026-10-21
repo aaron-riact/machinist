@@ -1,0 +1,27 @@
+# The UP50N-35 of riact's cell on a DX200, for trying the Motoman driver's
+# DX200 support (riact_arms feature/motoman-controller-profiles).
+#
+# Run with:
+#   uv run machinist run up50n_dx200.yaml --no-tui --log-stderr
+#
+# The Ethernet server is on TCP port 80, HSES on UDP 10040 and 10041.
+
+devices:
+  - name: up50n
+    kind: yaskawa
+    options:
+      # A DX200 answers "OK: DX Information Server", reports rotations to 4
+      # decimals, has tools 0-63, and holds its answer to a move sent while
+      # the arm moves until that move starts. No running bit quirk.
+      controller: dx200
+      protocols: [ethernet_server, hses]
+      robot: up50n_35
+      # The flange pointing down, in front of the robot.
+      start_joints_deg: [0, 0, 0, 0, -90, 0]
+      jobs: [MAIN]
+      # The driver writes DO1-DO8 to the first network-input byte (#27010 on a
+      # DX200) and DO11-DO18 to the next (#27020), and reads them back where
+      # the cell's ladder copies them: #30040 and #30010.
+      ladder_copies:
+        27010: 30040
+        27020: 30010

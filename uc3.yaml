@@ -1,0 +1,28 @@
+# Example Machinist scene.
+#
+# Run with:
+#   uv run machinist run examples/scene.yaml --no-tui
+# or with the TUI:
+#   uv run machinist run examples/scene.yaml
+
+devices:
+  - name: dobot
+    kind: dobot_dashboard         # default port 29999
+    options:
+      robot_type: cr20a
+      # UC3's "Dobot CR20A:home" waypoint
+      start_joints_deg: [169.93, 36.04, -77.56, 31.46, 93.99, -83.61]
+  - name: mazak
+    kind: mazak_smooth
+    options:
+      variant: smoothai
+      interfaces: [ethernetip]
+      ethernetip:
+        mode: adapter
+        behaviour: mazak
+        # Real-time header formats for the Mazak SmoothAI adapter. These are the
+        # `behaviour: mazak` defaults anyway; shown here for clarity.
+        o_t_realtime_format: header32bit
+        # T→O is always modeless per the CIP spec (hardcoded in adapter).
+        udp_port: 2222
+      mtconnect_port: 5054

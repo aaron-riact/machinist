@@ -1,0 +1,16 @@
+Hi Thomas,
+
+This looks like UC4.
+And I assume the lines boxed in red are the entries you are querying.
+
+The first one, from 21:45:46 to 06:34:39, is consistent with what the logs are showing on that machine.
+A machine tending task was started at that time, and ran until the operator pressed request access the following morning.
+
+
+The second one, starting at 06:58:02 with no matched end time, I can see in the logs that there was a corresponding end event at 22:03:27, but at that time, the event could not be send likely due to a network error.
+If I try to manually call the TopFlow endpoint (via the proxy that was setup), I get a "502 Bad Gateway" response, suggesting the proxy cannot establish a connection to TopFlow.
+Can you check the proxy server and TopFlow networking is working correctly?  Then the events should start flowing again.
+
+Cheers,
+Aaron
+

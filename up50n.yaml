@@ -1,0 +1,27 @@
+# A Motoman YR-UP50N, for running the riact Motoman driver against.
+#
+# Run with:
+#   uv run machinist run up50n.yaml
+#
+# The Ethernet server is on TCP port 80; this machine allows unprivileged
+# ports from 0, so no root is needed.
+
+devices:
+  - name: up50n
+    kind: yaskawa
+    options:
+      # The NX100 as riact's cell had it: Ethernet server only, the running
+      # bit quirk on, no limit on buffered moves. For a DX200 with HSES, use:
+      #   controller: dx200
+      #   protocols: [ethernet_server, hses]
+      # (its network inputs start at #27010, so the ladder copies below change).
+      controller: nx100
+      robot: up50n_35
+      # The flange pointing down, in front of the robot.
+      start_joints_deg: [0, 0, 0, 0, -90, 0]
+      jobs: [MAIN]
+      # The riact driver's digital outputs: DO1-DO8 at #22010 show at #30040,
+      # DO11-DO18 at #22020 at #30010, as the cell's ladder mapped them.
+      ladder_copies:
+        22010: 30040
+        22020: 30010
