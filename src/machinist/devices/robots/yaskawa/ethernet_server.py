@@ -97,6 +97,12 @@ MASTER_TASK = 0
 R1_GROUP, NO_STATIONS = 0b1, 0
 #: The last line JSEQ can set.
 MAX_JOB_LINE = 9999
+#: Commands that only read. A driver sends these many times a second, so the
+#: device notes the others: what changes the controller, and every refusal.
+READ_COMMANDS = frozenset({
+    "RSTATS", "RPOSJ", "RPOSC", "RALARM", "RJSEQ", "RGROUP", "RJDIR", "RUFRAME", "SAVEV",
+    "IOREAD",
+})
 #: MDSP shows up to 30 bytes on the pendant's remote display.
 PENDANT_MESSAGE_BYTES = 30
 #: Joint speed in percent of the maximum, and linear speed in mm/s or degrees/s.
@@ -666,18 +672,29 @@ class _Session:
 
     # --- START request ------------------------------------------------
 
+    def _note(self, kind: str, **details: object) -> None:
+        self.server.controller.note(kind, **details)
+
+    def _refuse(self, answer: str, **details: object) -> Hangup:
+        """Answer an NG or ERROR line, which ends the session, and note it."""
+        self._note("refused", answer=answer, **details)
+        return Hangup([answer + "\r\n"])
+
     def _start(self, message: str) -> Reply:
         words = message.split()
         if words[:2] != ["CONNECT", "Robot_access"] or len(words) > 3:
-            return Hangup([START_ERROR + "\r\n"])
+            return self._refuse(START_ERROR, request=message)
         server_name = self.server.controller.profile.server_name
         if len(words) == 2:
+            # One command per connection: a client polling this way would note a
+            # session per poll, so only sessions for several commands are noted.
             self.keep_alive = 1
             return server_name + ".\r\n"
         keep_alive = _parse_keep_alive(words[2])
         if keep_alive is None:
-            return Hangup([START_ERROR + "\r\n"])
+            return self._refuse(START_ERROR, request=message)
         self.keep_alive = keep_alive
+        self._note("session", keep_alive=keep_alive)
         return f"{server_name} Keep-Alive:{keep_alive}.\r\n"
 
     # --- command ------------------------------------------------------
@@ -685,11 +702,11 @@ class _Session:
     def _request(self, message: str) -> Reply:
         words = message.split()
         if len(words) != 3 or words[0] != "HOSTCTRL_REQUEST" or not words[2].isdigit():
-            return Hangup([f"NG: bad request {message!r}\r\n"])
+            return self._refuse(f"NG: bad request {message!r}", request=message)
         name, size = words[1], int(words[2])
         run = self.server.command(name)
         if run is None:
-            return Hangup([f"NG: unknown command {name}\r\n"])
+            return self._refuse(f"NG: unknown command {name}", command=name)
         request = _Request(name=name, size=size, run=run)
         ok = f"OK: {name}\r\n"
         if request.size > 0:
@@ -706,12 +723,17 @@ class _Session:
         # the framer drops it.
         data_size = len(data.encode())
         if request.size > 0 and request.size - data_size not in (1, 2):
-            return Hangup([f"NG: size {request.size} for {data_size + 1} bytes\r\n"])
+            return self._refuse(f"NG: size {request.size} for {data_size + 1} bytes",
+                                command=request.name, data=data)
         try:
             answer = request.run(data)
         except CommandRefusedError as exc:
             code = INTERPRETER_MESSAGES[exc.refusal]
-            return Hangup([f"ERROR:{request.name} is not successful ({code:04d}).\r\n"])
+            return self._refuse(f"ERROR:{request.name} is not successful ({code:04d}).",
+                                command=request.name, data=data, reason=str(exc))
+        if request.name not in READ_COMMANDS:
+            self._note("command", command=request.name, data=data,
+                       answer=NORMAL_ANSWER if answer is None else answer)
         reply = NORMAL_ANSWER + "\r\n" if answer is None else answer + "\r"
         self.answered += 1
         if self.keep_alive != -1 and self.answered >= (self.keep_alive or 1):
