@@ -386,6 +386,35 @@ def test_no_move_while_servo_is_off_or_held(
     assert (answer.status, answer.added_status) == (Status.VENDOR, added_status)
 
 
+def _noting(robot: YaskawaRobot) -> list[tuple[str, dict[str, object]]]:
+    notes: list[tuple[str, dict[str, object]]] = []
+    robot.controller.note = lambda kind, **details: notes.append((kind, details))
+    return notes
+
+
+def test_a_write_is_noted_by_name(yrc: YaskawaRobot) -> None:
+    notes = _noting(yrc)
+    _set(yrc, 0x83, 1, 1)
+    assert notes == [("hses command", {"command": "hold / servo / HLOCK", "instance": 1,
+                                       "data": [1]})]
+
+
+def test_a_read_is_not_noted(yrc: YaskawaRobot) -> None:
+    notes = _noting(yrc)
+    _ask(yrc, 0x72, 1, 0, GET_ALL)
+    assert notes == []
+
+
+def test_a_refusal_is_noted_with_its_added_status(yrc: YaskawaRobot) -> None:
+    notes = _noting(yrc)
+    yrc.arm.fault()
+    _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
+    kind, details = notes[-1]
+    assert (kind, details["command"], details["added_status"]) == (
+        "hses refused", "move (pulses)", "0x2060",
+    )
+
+
 def test_no_move_during_an_alarm(yrc: YaskawaRobot) -> None:
     yrc.arm.fault()
     answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
