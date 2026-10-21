@@ -99,6 +99,16 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(170.0, 170.0, 170.0, 250.0, 250.0, 350.0),
         model="YR-UP50N-A00",
     ),
+    # The long-reach UP50N-35, as riact's model of it: the same axes and
+    # pulses, longer arms (1.150 m L to U, 1.225 m U to the wrist), and S, L
+    # and U at 140 degrees/s. Its model name is not known, so it reports the
+    # UP50N's.
+    "up50n_35": YaskawaArm(
+        urdf=_URDF_DIR / "yr_up50n_35.urdf",
+        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        max_joint_speed_deg_s=(140.0, 140.0, 140.0, 250.0, 250.0, 350.0),
+        model="YR-UP50N-A00",
+    ),
 }
 
 

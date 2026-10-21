@@ -969,6 +969,15 @@ def test_ladder_copies_name_network_input_bytes(copies: dict[int, int]) -> None:
 # --- DX200 (HW1481823): what differs from the NX100 -------------------------
 
 
+def test_the_up50n_35_reaches_as_riacts_model_of_it() -> None:
+    """The long-reach UP50N: 1.150 m L to U and 1.225 m U to the wrist, so with the
+    flange down at zero it is 1.370 m out and 1.085 m up, where riflex draws it."""
+    options = YaskawaOptions(controller="nx100", robot="up50n_35",
+                             start_joints_deg=(0, 0, 0, 0, -90, 0))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSC", "0,0").startswith(b"1370.000,0.000,1085.000,")
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
