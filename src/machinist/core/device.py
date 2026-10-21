@@ -42,6 +42,9 @@ class Device(ABC):
 
     #: Human-readable kind (e.g. ``"ur_dashboard"``). Subclasses set this.
     kind: str = "device"
+    #: Whether the device prints the lines it receives to stderr itself, under
+    #: ``--log-stderr``; the console log then leaves its rx and tx out.
+    prints_own_lines: bool = False
 
     def __init__(self, name: str, endpoint: Endpoint, bus: EventBus) -> None:
         self.name = name

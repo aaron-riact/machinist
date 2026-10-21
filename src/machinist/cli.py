@@ -23,7 +23,7 @@ from rich.table import Table
 
 from . import __version__, devices  # noqa: F401  (devices import = registration)
 from .core.config import DEFAULT_HOST, DeviceConfig, SystemConfig, load_config
-from .core.eventlog import EventLog
+from .core.eventlog import ConsoleLog, EventLog
 from .core.registry import default_registry
 from .core.world import WorldBuilder
 from .projection import Projection
@@ -75,6 +75,12 @@ def urdf_to_dh(
     console.print(table)
 
 
+_LOG_STDERR_HELP = (
+    "Print every device's events to stderr: commands, replies and notes, and arm "
+    "states with MACHINIST_LOG_STDERR=2 (use --no-tui to avoid TUI interference)."
+)
+
+
 @app.command()
 def run(
     configs: Annotated[list[Path], typer.Argument(help="One or more YAML config files.")],
@@ -91,7 +97,7 @@ def run(
     ] = None,
     tui: Annotated[bool, typer.Option(help="Launch the Textual UI.")] = True,
     web: Annotated[bool, typer.Option(help="Serve the live web UI.")] = False,
-    log_stderr: Annotated[bool, typer.Option("--log-stderr", help="Print received commands to stderr (use --no-tui to avoid TUI interference).")] = False,
+    log_stderr: Annotated[bool, typer.Option("--log-stderr", help=_LOG_STDERR_HELP)] = False,
     web_host: Annotated[str, typer.Option(help="Host the web UI binds to.")] = "127.0.0.1",
     web_port: Annotated[int, typer.Option(help="Port the web UI binds to.")] = 8080,
     event_log: Annotated[
@@ -107,7 +113,8 @@ def run(
 ) -> None:
     """Start a fleet of emulated devices from one or more YAML files."""
     if log_stderr:
-        os.environ["MACHINIST_LOG_STDERR"] = "1"
+        # A level set beforehand (2 for everything) is kept.
+        os.environ.setdefault("MACHINIST_LOG_STDERR", "1")
     config = _build_config(configs, inline=device or [])
     world = WorldBuilder().build(config)
     recorder = None
@@ -115,6 +122,7 @@ def run(
         recorder = EventLog(event_log)
         recorder.attach(world.bus)
         console.print(f"[bold green]Event log[/] {event_log}")
+    console_log = _console_log(world) if log_stderr else None
     checker = _ProjectionChecker(world) if check_projection else None
     console.print(f"[bold green]Starting[/] {len(world.devices)} device(s):")
     for d in world.devices:
@@ -151,6 +159,26 @@ def run(
             checker.close()
         if recorder is not None:
             recorder.close()
+        if console_log is not None:
+            console_log.close()
+
+
+def _console_log(world) -> ConsoleLog:  # type: ignore[no-untyped-def]
+    """Every device's events on stderr; arm states only at level 2."""
+    log = ConsoleLog(
+        sys.stderr, include_arm=_log_level() >= 2,
+        own_lines=[d.name for d in world.devices if d.prints_own_lines],
+    )
+    log.attach(world.bus)
+    return log
+
+
+def _log_level() -> int:
+    """MACHINIST_LOG_STDERR's level: 1 by default, 2 to include arm states."""
+    try:
+        return int(os.environ.get("MACHINIST_LOG_STDERR", "1"))
+    except ValueError:
+        return 1
 
 
 class _ProjectionChecker:

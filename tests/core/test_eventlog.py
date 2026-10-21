@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
-from machinist.core.eventlog import EventLog, to_jsonable
+from machinist.core.eventlog import ConsoleLog, EventLog, to_jsonable
 from machinist.core.events import EventBus, LifecycleChanged, Note
 from machinist.core.io import Direction, SignalChanged
 from machinist.core.types import DeviceState
@@ -32,3 +33,27 @@ def test_nested_views_are_written_as_plain_objects() -> None:
     record = to_jsonable(ArmChanged(device="a", view=arm.state.view).payload)
     assert record["view"]["mode"] == "idle"
     assert record["view"]["joints"] == [0.0, 0.0]
+
+
+def test_the_console_log_prints_each_event_on_a_line() -> None:
+    bus, out = EventBus(), io.StringIO()
+    ConsoleLog(out).attach(bus)
+    bus.publish(Note(device="up50n", name="rx", data={"line": "HOSTCTRL_REQUEST RSTATS 0"}))
+    assert out.getvalue() == '[up50n] rx {"line":"HOSTCTRL_REQUEST RSTATS 0"}\n'
+
+
+def test_the_console_log_leaves_arm_states_out_unless_asked() -> None:
+    arm = RobotArm(joint_count=2)
+    for include_arm, lines in ((False, 0), (True, 1)):
+        bus, out = EventBus(), io.StringIO()
+        ConsoleLog(out, include_arm=include_arm).attach(bus)
+        bus.publish(ArmChanged(device="a", view=arm.state.view))
+        assert len(out.getvalue().splitlines()) == lines
+
+
+def test_the_console_log_spares_a_device_that_prints_its_own_lines() -> None:
+    bus, out = EventBus(), io.StringIO()
+    ConsoleLog(out, own_lines=["dobot"]).attach(bus)
+    bus.publish(Note(device="dobot", name="rx", data={"line": "GetPose()"}))
+    bus.publish(Note(device="dobot", name="quirk", data={}))
+    assert out.getvalue() == "[dobot] quirk {}\n"

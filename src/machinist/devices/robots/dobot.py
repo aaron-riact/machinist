@@ -540,6 +540,7 @@ class DobotDashboard(LineServerDevice, HasArm, HasIO, HasFlange):
     """Emulated Dobot TCP/IP dashboard (port 29999)."""
 
     kind = "dobot_dashboard"
+    prints_own_lines = True
     DEFAULT_PORT = DOBOT_DASHBOARD_PORT
     FRAMER = PAREN
     _quiet_commands = frozenset(

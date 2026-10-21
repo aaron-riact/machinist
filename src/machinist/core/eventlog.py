@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from .events import Event, EventBus
 
@@ -67,3 +67,42 @@ class EventLog:
         with self._lock:
             if not self._file.closed:
                 self._file.close()
+
+
+#: Lines a device sends and receives; a device that prints its own is spared them.
+LINE_KINDS = frozenset({"rx", "tx"})
+
+
+class ConsoleLog:
+    """Print every event on a bus, one line each: device, kind and payload.
+
+    An arm reports its state at its tick rate, so arm events are left out unless
+    *include_arm*. Devices named in *own_lines* print their own received lines,
+    so their rx and tx events are left out rather than shown twice.
+    """
+
+    def __init__(self, stream: TextIO, *, include_arm: bool = False,
+                 own_lines: Collection[str] = ()) -> None:
+        self._stream = stream
+        self._include_arm = include_arm
+        self._own_lines = frozenset(own_lines)
+        self._lock = threading.Lock()
+        self._unsubscribe: Any = None
+
+    def attach(self, bus: EventBus) -> None:
+        """Start printing *bus*. Call :meth:`close` to stop."""
+        self._unsubscribe = bus.subscribe(self.record)
+
+    def record(self, event: Event) -> None:
+        if event.kind == "arm" and not self._include_arm:
+            return
+        if event.kind in LINE_KINDS and event.device in self._own_lines:
+            return
+        payload = json.dumps(to_jsonable(event.payload), separators=(",", ":"))
+        with self._lock:
+            print(f"[{event.device}] {event.kind} {payload}", file=self._stream, flush=True)
+
+    def close(self) -> None:
+        if self._unsubscribe is not None:
+            self._unsubscribe()
+            self._unsubscribe = None
