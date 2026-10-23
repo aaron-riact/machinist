@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from machinist.cli import app
+from machinist.cli import _device_listing, app
+from machinist.core.device import Device
+from machinist.core.events import EventBus
+from machinist.core.types import Endpoint
 
 
 def test_version() -> None:
@@ -54,3 +57,20 @@ def test_run_help_documents_web_options() -> None:
     assert result.exit_code == 0
     for flag in ("--web", "--web-host", "--web-port"):
         assert flag in result.stdout
+
+
+def test_the_start_up_listing_puts_each_devices_settings_under_it() -> None:
+    class _Set(Device):
+        def settings(self) -> list[str]:
+            return ["first", "second"]
+
+    class _Plain(Device):
+        pass
+
+    lines = _device_listing([_Set("a", Endpoint("127.0.0.1", 1), EventBus()),
+                             _Plain("b", Endpoint("127.0.0.1", 2), EventBus())])
+    assert len(lines) == 4
+    assert "a" in lines[0]
+    assert lines[1].endswith("first")
+    assert lines[2].endswith("second")
+    assert "b" in lines[3]
