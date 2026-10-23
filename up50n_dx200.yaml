@@ -18,6 +18,8 @@ devices:
       robot: up50n_35
       # The flange pointing down, in front of the robot.
       start_joints_deg: [0, 0, 0, 0, -90, 0]
+      # Servos off, as a controller is after power-up: the driver switches them on.
+      servo_on: false
       jobs: [MAIN]
       # The driver writes DO1-DO8 to the first network-input byte (#27010 on a
       # DX200) and DO11-DO18 to the next (#27020), and reads them back where
