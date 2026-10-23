@@ -9,6 +9,7 @@ arms robustly.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -66,6 +67,7 @@ class PinocchioKinematics(Kinematics):
         oMdes = _pose_to_se3(pin, pose)
         q = np.array(seed, dtype=float)
         for _ in range(max_iter):
+            time.sleep(0)  # hand the GIL over each iteration, as the other solvers do
             pin.forwardKinematics(self._model, self._data, q)
             pin.updateFramePlacements(self._model, self._data)
             err = pin.log6(self._data.oMf[self._ee_frame].inverse() * oMdes).vector

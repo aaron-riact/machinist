@@ -14,6 +14,7 @@ tip's offset (a flange or tool).
 from __future__ import annotations
 
 import math
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
@@ -59,6 +60,10 @@ class UrdfKinematics(Kinematics):
             raise ValueError(f"seed length {q.size} != joint_count {self.joint_count}")
 
         for _ in range(max_iter):
+            # Each iteration's small numpy calls drop the GIL and take it straight back,
+            # which keeps every other thread out for as long as the solve runs: up to
+            # 90 ms near a singularity. Hand it over once per iteration.
+            time.sleep(0)
             current = self._fk_matrix(q)
             err = _se3_error(target, current)
             if np.linalg.norm(err) < tolerance:
