@@ -189,6 +189,8 @@ class YaskawaRobot(Device, HasArm):
         lines.append(f"moves taken while moving: {'unlimited' if buffer is None else buffer}")
         if self.controller.running_bit_quirk:
             lines.append("running bit quirk on")
+        if not self.arm.state.view.servo_on:
+            lines.append("servos off")
         return lines
 
     def make_session(self) -> SessionHandler:
