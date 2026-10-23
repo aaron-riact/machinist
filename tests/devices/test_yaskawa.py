@@ -1213,3 +1213,8 @@ def test_a_controller_set_to_start_with_its_servos_off_reports_them_off() -> Non
                                          servo_on=False, **UP50N_AXES)):
         received = _session(robot, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
         assert received.endswith(b"OK: RSTATS\r\n194,0\r")
+
+
+def test_the_settings_say_when_the_servos_start_off() -> None:
+    assert "servos off" in _device(controller="dx200", servo_on=False).settings()
+    assert "servos off" not in _device(controller="dx200").settings()
