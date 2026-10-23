@@ -97,7 +97,10 @@ class Commands:
         return CommandResult(f"e-stop engaged on {name}")
 
     def reset(self, name: str) -> CommandResult:
-        self._arm(name).reset()
+        """Release an e-stop and clear a fault, as an operator would at the controller."""
+        arm = self._arm(name)
+        arm.reset()
+        arm.clear_fault()
         return CommandResult(f"reset {name}")
 
     def servo(self, name: str, on: bool) -> CommandResult:
