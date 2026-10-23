@@ -144,6 +144,8 @@ class YaskawaRobot(Device, HasArm):
         self.arm = arm_from_options(options, name=name, publish=self.publish)
         self.add_service(self.arm)
         self.protocols = options.protocols
+        self.controller_name = options.controller
+        self.robot = options.robot
         self.hses_port = options.hses_port
         self.hses_file_port = options.hses_file_port
         self.controller = YaskawaController(
@@ -172,6 +174,22 @@ class YaskawaRobot(Device, HasArm):
             self.add_service(
                 UdpDatagramServer(endpoint.host, self.hses_file_port, files.handle)
             )
+
+    def settings(self) -> list[str]:
+        """The controller and arm, each protocol it serves and where, and how it
+        takes moves."""
+        host = self.endpoint.host
+        arm = f", arm {self.robot}" if self.robot is not None else ""
+        lines = [f"controller {self.controller_name.upper()}{arm}"]
+        if "ethernet_server" in self.protocols:
+            lines.append(f"Ethernet server on TCP {host}:{self.endpoint.port}")
+        if "hses" in self.protocols:
+            lines.append(f"HSES on UDP {host}:{self.hses_port}, files on :{self.hses_file_port}")
+        buffer = self.controller.move_buffer
+        lines.append(f"moves taken while moving: {'unlimited' if buffer is None else buffer}")
+        if self.controller.running_bit_quirk:
+            lines.append("running bit quirk on")
+        return lines
 
     def make_session(self) -> SessionHandler:
         return _TracingSession(self, _Session(server=EthernetServer(self.controller)))
