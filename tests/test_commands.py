@@ -86,6 +86,29 @@ def test_without_a_name_or_a_selection_the_command_asks_for_one() -> None:
         commands.dispatch("estop")
 
 
+def _robot_world() -> tuple[Commands, World]:
+    world = WorldBuilder().build(
+        SystemConfig(devices=(DeviceConfig(name="r1", kind="robot", options={}),))
+    )
+    return Commands(world), world
+
+
+def test_reset_releases_an_estop() -> None:
+    commands, world = _robot_world()
+    arm = world.devices[0].arm  # type: ignore[attr-defined]
+    commands.dispatch("estop r1")
+    commands.dispatch("reset r1")
+    assert not arm.state.view.estopped
+
+
+def test_reset_clears_a_fault() -> None:
+    commands, world = _robot_world()
+    arm = world.devices[0].arm  # type: ignore[attr-defined]
+    arm.fault()
+    commands.dispatch("reset r1")
+    assert not arm.state.view.faulted
+
+
 def test_pstop_defaults_to_a_collision() -> None:
     commands, dobot = _dobot_world()
     result = commands.dispatch("pstop dobot1")
