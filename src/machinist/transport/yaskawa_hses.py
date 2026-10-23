@@ -63,10 +63,18 @@ class Status(IntEnum):
 
 
 class AddedStatus(IntEnum):
-    """Added status codes (chapter 5) the emulator answers with."""
+    """Added status codes (chapter 5) the emulator answers with, and those Yaskawa's
+    own client (YCom) names that the manual's table does not. Where the two give one
+    meaning different codes, the manual's stands: user frame not taught (YCom 0x3050)
+    and speed error (YCom 0xB00A)."""
 
+    #: YCom: the command is not valid.
+    COMMAND_INVALID = 0x1010
     OPERAND_RANGE = 0x1012
     MANIPULATOR_OPERATING = 0x2010
+    #: YCom: hold from the pendant, and from an external input.
+    PENDANT_HOLD = 0x2030
+    EXTERNAL_HOLD = 0x2040
     COMMAND_HOLD = 0x2050
     ALARM = 0x2060
     INCORRECT_MODE = 0x2080
@@ -82,9 +90,13 @@ class AddedStatus(IntEnum):
     ATTRIBUTE_ERROR = 0xA002
     DATA_SIZE_ERROR = 0xB003
     OUTSIDE_THE_DATA = 0xB004
+    #: YCom: the control group does not exist (0xB008: it cannot be used here).
+    CONTROL_GROUP_NOT_EXISTING = 0xB007
     CONTROL_GROUP_ERROR = 0xB008
     SPEED_ERROR = 0xB009
     COORDINATE_SYSTEM_ERROR = 0xB00B
+    #: YCom: the position's type is not valid.
+    TYPE_ERROR = 0xB00C
     TOOL_NUMBER_ERROR = 0xB00D
     USER_NUMBER_ERROR = 0xB00E
     FILE_NOT_FOUND = 0xE2B3
@@ -94,6 +106,9 @@ class AddedStatus(IntEnum):
     HEADER_SIZE_ERROR = 0xE4A5
     IDENTIFIER_ERROR = 0xE4A6
     FRAME_SIZE_MISMATCH = 0xE4A7
+    #: YCom: the controller is busy; it sends the request again until it is not.
+    BUSY = 0xE444
+    BUSY_TOO = 0xFFF6
 
 
 @dataclass(frozen=True, slots=True)
