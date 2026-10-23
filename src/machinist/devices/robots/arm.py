@@ -79,6 +79,9 @@ class ArmOptions(Options):
     #: The joints the arm starts at, in degrees. Left out means all zero, or
     #: the vendor's default where a vendor robot has one.
     start_joints_deg: tuple[float, ...] | None = None
+    #: Whether the arm starts with its servos on. Off, it takes no move until a
+    #: client or the operator switches them on.
+    servo_on: bool = True
 
 
 class ArmMode(StrEnum):
@@ -172,13 +175,14 @@ class ArmState:
     """
 
     def __init__(
-        self, *, joints: Joints, pose: Pose, owner: str = "arm", publish: Publish | None = None
+        self, *, joints: Joints, pose: Pose, owner: str = "arm", publish: Publish | None = None,
+        servo_on: bool = True,
     ) -> None:
         self._owner = owner
         self._publish = publish
         self._lock = threading.Lock()
         self._view = ArmStateView(
-            joints=joints, pose=pose, mode=ArmMode.IDLE, servo_on=True,
+            joints=joints, pose=pose, mode=ArmMode.IDLE, servo_on=servo_on,
             program_running=False, speed_fraction=1.0,
         )
 
@@ -400,6 +404,7 @@ class RobotArm(Service):
         owner: str = "arm",
         publish: Publish | None = None,
         start_joints: Joints | None = None,
+        servo_on: bool = True,
     ) -> None:
         home_joints: Joints = start_joints or (Radians(0.0),) * joint_count
         if len(home_joints) != joint_count:
@@ -412,6 +417,7 @@ class RobotArm(Service):
             pose=self._kinematics.forward(home_joints),
             owner=owner,
             publish=publish,
+            servo_on=servo_on,
         )
         self._lock = threading.Lock()
         self._move: _Move | None = None
@@ -689,6 +695,7 @@ def arm_from_options(
         start_joints=None if options.start_joints_deg is None else tuple(
             Radians(math.radians(j)) for j in options.start_joints_deg
         ),
+        servo_on=options.servo_on,
     )
     arm.move_logger = move_logger_from_env(name)
     return arm

@@ -1,4 +1,4 @@
-"""An arm starts at all-zero joints unless its options name others."""
+"""An arm starts at all-zero joints with its servos on, unless its options say otherwise."""
 from __future__ import annotations
 
 import math
@@ -20,3 +20,11 @@ def test_an_arm_starts_at_the_joints_its_options_name() -> None:
 def test_start_joints_for_another_joint_count_are_refused() -> None:
     with pytest.raises(ValueError):
         RobotArm(joint_count=6, start_joints=(0.0,) * 5)  # type: ignore[arg-type]
+
+
+def test_an_arm_starts_with_its_servos_on_by_default() -> None:
+    assert arm_from_options(ArmOptions()).state.view.servo_on
+
+
+def test_an_arm_starts_with_its_servos_off_when_its_options_say_so() -> None:
+    assert not arm_from_options(ArmOptions(servo_on=False)).state.view.servo_on
