@@ -535,6 +535,10 @@ class RobotArm(Service):
             point[:3, :3] = start[:3, :3] @ _rotation_matrix(t * rotation)
             point[:3, 3] = start[:3, 3] + t * travel
             solved = self._kinematics.inverse(_mat_to_pose(point), seed=joints)
+            # The solve's many small numpy calls each drop the GIL and take it straight
+            # back, which keeps every other thread out until the line is planned:
+            # the device's servers among them. Hand it over once per step.
+            time.sleep(0)
             jump = max(abs(a - b) for a, b in zip(solved, joints, strict=True))
             if jump > LINE_MAX_JOINT_STEP:
                 raise NoLinearPath(
