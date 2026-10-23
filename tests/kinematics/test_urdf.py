@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -176,3 +179,25 @@ def test_urdf_ignores_joints_off_the_path(tmp_path: Path) -> None:
     ))
     kin = build_kinematics(KinematicsOptions(backend="urdf", urdf_path=urdf, tip_link="tip"))
     assert kin.joint_count == 2
+
+
+def _longest_wait_while(work: Callable[[], object]) -> float:
+    """The longest another thread waits to run while *work* runs on a thread of its own."""
+    worker = threading.Thread(target=work)
+    started = time.perf_counter()
+    worker.start()  # blocks until this thread gets the GIL back
+    longest = time.perf_counter() - started
+    while worker.is_alive():
+        started = time.perf_counter()
+        time.sleep(0.001)
+        longest = max(longest, time.perf_counter() - started)
+    return longest
+
+
+def test_a_solve_lets_other_threads_run() -> None:
+    """A pose out of reach runs every iteration; each one hands over the GIL."""
+    kin = build_kinematics(KinematicsOptions(
+        backend="urdf", urdf_path=EXAMPLES / "cr5.urdf", tip_link="Link6",
+    ))
+    out_of_reach = (10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    assert _longest_wait_while(lambda: kin.inverse(out_of_reach, seed=(0.0,) * 6)) < 0.02

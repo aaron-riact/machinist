@@ -16,6 +16,7 @@ Mathematical conventions:
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -128,6 +129,10 @@ class DHKinematics(Kinematics):
         best_q = q.copy()
         best_norm = math.inf
         for _ in range(max_iter):
+            # Each iteration's small numpy calls drop the GIL and take it straight back,
+            # which keeps every other thread out for as long as the solve runs: up to
+            # 90 ms near a singularity. Hand it over once per iteration.
+            time.sleep(0)
             current = self._fk_matrix(tuple(q.tolist()))
             err = _se3_error(target, current)
             norm = float(np.linalg.norm(err))
