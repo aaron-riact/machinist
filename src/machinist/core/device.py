@@ -123,6 +123,12 @@ class Device(ABC):
         """
         return Panel()
 
+    def settings(self) -> list[str]:
+        """How the scene set the device up, one short line each, for the
+        start-up listing: the protocols it serves and where, and the options
+        that change how it answers. Empty by default."""
+        return []
+
     def _signal_bank(self) -> SignalBank | None:
         """The device's IO bank if it declares :class:`HasIO`, else ``None``."""
         return self.io if isinstance(self, HasIO) else None

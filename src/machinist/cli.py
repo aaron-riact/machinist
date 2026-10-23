@@ -14,6 +14,7 @@ import os
 import signal
 import sys
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -23,6 +24,7 @@ from rich.table import Table
 
 from . import __version__, devices  # noqa: F401  (devices import = registration)
 from .core.config import DEFAULT_HOST, DeviceConfig, SystemConfig, load_config
+from .core.device import Device
 from .core.eventlog import ConsoleLog, EventLog
 from .core.registry import default_registry
 from .core.world import WorldBuilder
@@ -130,10 +132,8 @@ def run(
     console_log = _console_log(world, debug=debug) if log_stderr else None
     checker = _ProjectionChecker(world) if check_projection else None
     console.print(f"[bold green]Starting[/] {len(world.devices)} device(s):")
-    for d in world.devices:
-        console.print(
-            f"  [cyan]{d.name:>20}[/]  {d.kind:<24} [magenta]{d.endpoint}[/]"
-        )
+    for line in _device_listing(world.devices):
+        console.print(line)
     world.start()
 
     web_server = None
@@ -166,6 +166,15 @@ def run(
             recorder.close()
         if console_log is not None:
             console_log.close()
+
+
+def _device_listing(started: Sequence[Device]) -> list[str]:
+    """Each device's name, kind and endpoint, then its settings indented below."""
+    lines = []
+    for d in started:
+        lines.append(f"  [cyan]{d.name:>20}[/]  {d.kind:<24} [magenta]{d.endpoint}[/]")
+        lines.extend(f"  {'':>20}    {setting}" for setting in d.settings())
+    return lines
 
 
 def _console_log(world, *, debug: bool) -> ConsoleLog:  # type: ignore[no-untyped-def]
