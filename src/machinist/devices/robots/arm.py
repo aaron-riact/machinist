@@ -483,9 +483,12 @@ class RobotArm(Service):
         self._begin_move(target, duration=duration, kind="movej")
 
     def movel(
-        self, target_pose: Pose, *, duration: float = 1.0, follows_speed_factor: bool = True
+        self, target_pose: Pose, *, duration: float = 1.0, follows_speed_factor: bool = True,
+        planned: Joints | None = None,
     ) -> None:
-        target_joints = self._inverse_along_line(target_pose)
+        """Straight move to *target_pose*; *planned* are its end joints from
+        :meth:`plan_line`, when the line was planned beforehand."""
+        target_joints = self._inverse_along_line(target_pose) if planned is None else planned
         self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose,
                          follows_speed_factor=follows_speed_factor)
 
@@ -516,6 +519,13 @@ class RobotArm(Service):
         target_joints = self._inverse_along_line(target_pose)
         self._begin_move(target_joints, duration=duration, kind="servop", requested_pose=target_pose,
                          follows_speed_factor=False)
+
+    def plan_line(self, target_pose: Pose) -> Joints:
+        """The joints a straight move from where the arm is ends at, for :meth:`movel`.
+
+        Raises :class:`NoLinearPath` where following the line would flip a joint.
+        """
+        return self._inverse_along_line(target_pose)
 
     def _inverse_along_line(self, target_pose: Pose) -> Joints:
         """The joints at *target_pose*, reached along the straight line from where the arm is.

@@ -380,6 +380,10 @@ class YaskawaController:
     #: Whether the move under way shows in RSTATS: under the quirk, only a move
     #: that started with the arm still.
     _move_shows_running: bool = field(default=True, repr=False)
+    #: A straight move accepted and still being planned: it counts as running.
+    _planning: bool = field(default=False, repr=False)
+    #: Counts hold and servo off, which cancel a straight move still being planned.
+    _stops: int = field(default=0, repr=False)
     #: Reports what the controller does that a host would not see, by kind and
     #: details (the device's log-only notes).
     note: Callable[..., None] = field(default=lambda kind, **details: None, repr=False)
@@ -460,10 +464,11 @@ class YaskawaController:
         waiting = bool(self._buffered) and view.servo_on and not (
             view.estopped or view.faulted or self.hold
         )
+        moving = self.moving
         if self.running_bit_quirk:
-            running = view.moving and self._move_shows_running
+            running = moving and self._move_shows_running
         else:
-            running = view.moving or waiting
+            running = moving or waiting
         if running:
             data1 |= Status1.RUNNING
         data2 = Status2(0)
@@ -518,6 +523,7 @@ class YaskawaController:
             self.arm.set_servo(True)
         else:
             with self._motion_lock:
+                self._stops += 1
                 self._drop_buffered(Refusal.SERVO_OFF, "servo off")
             self.arm.stop()
             self.arm.set_servo(False)
@@ -526,6 +532,7 @@ class YaskawaController:
         self.hold = on
         if on:
             with self._motion_lock:
+                self._stops += 1
                 self._drop_buffered(Refusal.HELD, "hold")
             self.arm.stop()
 
@@ -658,6 +665,11 @@ class YaskawaController:
         )
 
     @property
+    def moving(self) -> bool:
+        """The arm moves, or a straight move it accepted is still being planned."""
+        return self.arm.state.view.moving or self._planning
+
+    @property
     def buffered_moves(self) -> int:
         """How many moves wait behind the one running."""
         return len(self._buffered)
@@ -670,17 +682,42 @@ class YaskawaController:
         else:
             turn = start[:3, :3].T @ end[:3, :3]
             travel = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(turn) - 1) / 2))))
+        duration = max(travel / speed, MIN_MOVE_SECONDS)
+        self._planning = True
+        threading.Thread(target=self._plan_linear, args=(target, duration, self._stops),
+                         name="yaskawa-plan-line", daemon=True).start()
+
+    def _plan_linear(self, target: Pose, duration: float, stops: int) -> None:
+        """Plan a straight move after its command was answered, as a controller
+        answers at once however long the line: planning a long one takes the
+        emulator a few hundred ms, longer than a host waits for an answer. A
+        hold or servo off meanwhile cancels the move; a line the arm cannot
+        follow faults it, which shows as an alarm."""
         try:
-            self.arm.movel(target, duration=max(travel / speed, MIN_MOVE_SECONDS),
-                           follows_speed_factor=False)
-        except NoLinearPath as exc:
-            raise CommandRefusedError(Refusal.NO_LINEAR_PATH, str(exc)) from exc
+            try:
+                joints = self.arm.plan_line(target)
+            except NoLinearPath as exc:
+                self.note("no_linear_path", detail=str(exc))
+                self.arm.fault()
+                return
+            with self._motion_lock:
+                if self._stops != stops:
+                    self.note("move_cancelled", move="straight move",
+                              reason="stopped while planned")
+                    return
+                try:
+                    self.arm.movel(target, duration=duration, follows_speed_factor=False,
+                                   planned=joints)
+                except RuntimeError as exc:
+                    self.note("move_cancelled", move="straight move", reason=str(exc))
+        finally:
+            self._planning = False
 
     def _run_or_buffer(self, label: str, start: Callable[[], None]) -> BufferedMove | None:
         """Start a move now if the arm is still, or put it in the buffer to start when
         the moves before it end, and return it; refused when the buffer is full."""
         with self._motion_lock:
-            if not self.arm.state.view.moving:
+            if not self.moving:
                 if self._buffered:
                     # The arm stopped without finishing (a stop, a fault): a real
                     # controller would have dropped what waited.
