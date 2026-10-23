@@ -1174,3 +1174,35 @@ def test_the_ok_line_and_the_answer_arrive_apart(motoman: YaskawaRobot) -> None:
         s.sendall(b"HOSTCTRL_REQUEST RSTATS 0\r\n")
         assert s.recv(1024) == b"OK: RSTATS\r\n"
         assert s.recv(1024) == b"194,64\r"
+
+
+def _device(**options: object) -> YaskawaRobot:
+    return YaskawaRobot("r1", Endpoint("127.0.0.1", 8000), EventBus(),
+                        YaskawaOptions(start_joints_deg=START, **UP50N_AXES, **options))
+
+
+def test_the_settings_name_the_controller_and_the_arm() -> None:
+    settings = _device(controller="dx200", robot="up50n").settings()
+    assert settings[0] == "controller DX200, arm up50n"
+
+
+def test_the_settings_name_each_protocol_and_where_it_serves() -> None:
+    settings = _device(controller="dx200", protocols=("ethernet_server", "hses"),
+                       hses_port=9000, hses_file_port=9001).settings()
+    assert "Ethernet server on TCP 127.0.0.1:8000" in settings
+    assert "HSES on UDP 127.0.0.1:9000, files on :9001" in settings
+
+
+def test_the_settings_leave_out_a_protocol_not_served() -> None:
+    settings = _device(controller="dx200", protocols=("hses",)).settings()
+    assert not any(line.startswith("Ethernet server") for line in settings)
+
+
+def test_the_settings_give_the_move_buffer() -> None:
+    assert "moves taken while moving: 1" in _device(controller="dx200").settings()
+    assert "moves taken while moving: unlimited" in _device(controller="nx100").settings()
+
+
+def test_the_settings_name_the_running_bit_quirk_only_when_on() -> None:
+    assert any("running bit quirk" in line for line in _device(controller="nx100").settings())
+    assert not any("running bit quirk" in line for line in _device(controller="dx200").settings())
