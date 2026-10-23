@@ -11,8 +11,9 @@ import pytest
 
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
+from machinist.devices.robots.arm import NoLinearPath
 from machinist.devices.robots.yaskawa import YaskawaOptions, YaskawaRobot
-from machinist.devices.robots.yaskawa.controller import Status1, UserFrame
+from machinist.devices.robots.yaskawa.controller import Status1, Status2, UserFrame
 from machinist.transport.message import UdpMessageTransport
 from machinist.transport.yaskawa_hses import (
     AddedStatus,
@@ -272,7 +273,7 @@ def _pulses(pulses: tuple[int, ...], *, speed_class: int = 0, speed: int = 10_00
 
 def _settle(robot: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
-    while robot.arm.state.view.moving:
+    while robot.controller.moving:
         assert time.monotonic() < deadline, "the move did not finish"
         time.sleep(0.02)
 
@@ -301,6 +302,45 @@ def test_cartesian_straight_move(yrc: YaskawaRobot) -> None:
     _settle(yrc)
     x, y, z, *_ = _cartesian_position(yrc)
     assert (x, y, z) == pytest.approx((1_170_000, 0, 905_000), abs=100)
+
+
+#: Across the base, 2.3 m from HOME: planning it takes the emulator a few hundred ms.
+ACROSS = (-1_170_000, 0, 805_000, *HOME[3:])
+
+
+def test_a_long_straight_move_is_answered_before_it_is_planned(yrc: YaskawaRobot) -> None:
+    started = time.monotonic()
+    assert _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, ACROSS, speed=50_000)).status is Status.OK
+    assert time.monotonic() - started < 0.05
+    _settle(yrc)
+    x, y, z, *_ = _cartesian_position(yrc)
+    assert (x, y, z) == pytest.approx(ACROSS[:3], abs=100)
+
+
+def test_a_straight_move_being_planned_shows_as_running(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, ACROSS, speed=50_000))
+    assert _ints(_ask(yrc, 0x72, 1, 1, GET_SINGLE))[0] & Status1.RUNNING
+    _settle(yrc)
+
+
+def test_a_hold_while_a_straight_move_is_planned_cancels_it(yrc: YaskawaRobot) -> None:
+    _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, ACROSS, speed=50_000))
+    _set(yrc, 0x83, 1, 1)
+    _settle(yrc)
+    x, y, z, *_ = _cartesian_position(yrc)
+    assert (x, y, z) == pytest.approx(HOME[:3], abs=100)
+
+
+def test_a_straight_line_the_arm_cannot_follow_raises_an_alarm(
+    yrc: YaskawaRobot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_line(target: object) -> None:
+        raise NoLinearPath("joints would flip")
+
+    monkeypatch.setattr(yrc.arm, "plan_line", no_line)
+    assert _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, ACROSS)).status is Status.OK
+    _settle(yrc)
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE))[0] & Status2.ALARM
 
 
 def test_cartesian_joint_move(yrc: YaskawaRobot) -> None:

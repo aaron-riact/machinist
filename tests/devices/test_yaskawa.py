@@ -682,7 +682,7 @@ def test_loadv_with_bad_data_is_an_error(motoman: YaskawaRobot, data: str) -> No
 
 def _wait_idle(motoman: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
-    while motoman.arm.state.view.moving:
+    while motoman.controller.moving:
         assert time.monotonic() < deadline, "the move did not finish"
         time.sleep(0.02)
 
@@ -703,7 +703,7 @@ S_TO_10 = "50, 14166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0"
 
 def _wait_all_moves(robot: YaskawaRobot) -> None:
     deadline = time.monotonic() + 5
-    while robot.arm.state.view.moving or robot.controller.buffered_moves:
+    while robot.controller.moving or robot.controller.buffered_moves:
         assert time.monotonic() < deadline, "the moves did not finish"
         time.sleep(0.02)
 
