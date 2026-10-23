@@ -1206,3 +1206,10 @@ def test_the_settings_give_the_move_buffer() -> None:
 def test_the_settings_name_the_running_bit_quirk_only_when_on() -> None:
     assert any("running bit quirk" in line for line in _device(controller="nx100").settings())
     assert not any("running bit quirk" in line for line in _device(controller="dx200").settings())
+
+
+def test_a_controller_set_to_start_with_its_servos_off_reports_them_off() -> None:
+    for robot in _running(YaskawaOptions(controller="nx100", start_joints_deg=START,
+                                         servo_on=False, **UP50N_AXES)):
+        received = _session(robot, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
+        assert received.endswith(b"OK: RSTATS\r\n194,0\r")
