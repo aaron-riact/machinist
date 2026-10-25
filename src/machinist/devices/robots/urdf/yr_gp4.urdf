@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<!-- Motoman GP4 kinematic chain, without meshes.
+
+     Joint origins, axes, limits and top speeds are those of
+     ROS-Industrial's motoman_gp4_support (gp4_macro.xacro), which riact's
+     model of the arm repeats: 0.260 m L to U, 0.015 m up and 0.290 m out
+     from U to the wrist, 0.072 m from B to the flange, 0.550 m reach.
+     The root is the controller's robot base frame, 0.33 m above the
+     macro's base_link.
+
+     The flange frame turns +90 degrees about Y from the base frame, so
+     at the zero position its Z points out of the flange along base +X.
+     This follows Yaskawa's flange convention as far as we know it; check
+     it against RPOSC on a real controller before relying on Rx Ry Rz. -->
+<robot name="yr_gp4">
+  <link name="base"/>
+  <link name="link_1_s"/>
+  <link name="link_2_l"/>
+  <link name="link_3_u"/>
+  <link name="link_4_r"/>
+  <link name="link_5_b"/>
+  <link name="link_6_t"/>
+  <link name="flange"/>
+
+  <joint name="joint_1_s" type="revolute">
+    <parent link="base"/>
+    <child link="link_1_s"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.96706" upper="2.96706" effort="220.5" velocity="8.11578"/>
+  </joint>
+  <joint name="joint_2_l" type="revolute">
+    <parent link="link_1_s"/>
+    <child link="link_2_l"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.91986" upper="2.26893" effort="305.76" velocity="8.11578"/>
+  </joint>
+  <joint name="joint_3_u" type="revolute">
+    <parent link="link_2_l"/>
+    <child link="link_3_u"/>
+    <origin xyz="0 0 0.260" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="-1.13446" upper="3.49066" effort="95.55" velocity="9.16298"/>
+  </joint>
+  <joint name="joint_4_r" type="revolute">
+    <parent link="link_3_u"/>
+    <child link="link_4_r"/>
+    <origin xyz="0.290 0 0.015" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-3.49066" upper="3.49066" effort="48.02" velocity="9.86111"/>
+  </joint>
+  <joint name="joint_5_b" type="revolute">
+    <parent link="link_4_r"/>
+    <child link="link_5_b"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="-2.14675" upper="2.14675" effort="38.42" velocity="9.86111"/>
+  </joint>
+  <joint name="joint_6_t" type="revolute">
+    <parent link="link_5_b"/>
+    <child link="link_6_t"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="-7.94125" upper="7.94125" effort="16.46" velocity="17.45329"/>
+  </joint>
+  <joint name="joint_6_t-flange" type="fixed">
+    <parent link="link_6_t"/>
+    <child link="flange"/>
+    <origin xyz="0.072 0 0" rpy="0 1.5707963 0"/>
+  </joint>
+</robot>
