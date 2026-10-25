@@ -1064,6 +1064,15 @@ def test_the_gp7_reaches_as_its_model() -> None:
         assert _answer(robot, "RPOSC", "0,0").startswith(b"480.000,0.000,405.000,")
 
 
+def test_the_hc10dtp_reaches_as_its_model() -> None:
+    """0.700 m L to U, 0.500 m U to R, B 0.162 m to the side, 0.170 m to the flange:
+    with the flange down at zero it is 0.500 m out, 0.162 m aside and 0.530 m up."""
+    options = YaskawaOptions(controller="yrc1000", robot="hc10dtp",
+                             start_joints_deg=(0, 0, 0, 0, -90, 0))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSC", "0,0").startswith(b"500.000,162.000,530.000,")
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
