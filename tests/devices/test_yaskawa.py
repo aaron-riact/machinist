@@ -1036,6 +1036,16 @@ def test_the_mh50_35_reaches_as_its_data_sheet() -> None:
         assert _answer(robot, "RPOSC", "0,0").startswith(b"1370.000,0.000,1185.000,")
 
 
+def test_the_mh50_20_reaches_as_its_data_sheet() -> None:
+    """1.150 m L to U, 0.200 m up and 1.800 m out to the wrist, 0.105 m to the flange:
+    at zero the flange points out, 2.050 m out and 1.350 m up. Its B stops at -50
+    degrees, so it cannot start flange down as the others do."""
+    options = YaskawaOptions(controller="nx100", robot="mh50_20",
+                             start_joints_deg=(0, 0, 0, 0, 0, 0))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSC", "0,0").startswith(b"2050.000,0.000,1350.000,")
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
