@@ -1018,6 +1018,15 @@ def test_the_up50n_35_reaches_as_riacts_model_of_it() -> None:
         assert _answer(robot, "RPOSC", "0,0").startswith(b"1370.000,0.000,1085.000,")
 
 
+def test_the_mh50_reaches_as_its_data_sheet() -> None:
+    """0.870 m L to U, 0.210 m up and 1.025 m out to the wrist, 0.175 m to the flange:
+    with the flange down at zero it is 1.170 m out and 0.905 m up."""
+    options = YaskawaOptions(controller="nx100", robot="mh50",
+                             start_joints_deg=(0, 0, 0, 0, -90, 0))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSC", "0,0").startswith(b"1170.000,0.000,905.000,")
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
@@ -1085,7 +1094,7 @@ def test_a_scene_overrides_what_the_robot_fills_in() -> None:
 
 
 def test_an_unknown_robot_is_refused() -> None:
-    with pytest.raises(ValueError, match="unknown robot 'up5o'; known: up50n"):
+    with pytest.raises(ValueError, match=r"unknown robot 'up5o'; known: .*up50n"):
         YaskawaOptions(controller="nx100", robot="up5o")
 
 

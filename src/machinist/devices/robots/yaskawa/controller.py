@@ -109,6 +109,14 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(140.0, 140.0, 140.0, 250.0, 250.0, 350.0),
         model="YR-UP50N-A00",
     ),
+    # The MH50, the UP50N's successor, from the MH50 II data sheet. Its pulses
+    # are not known, so it counts with the UP50N's.
+    "mh50": YaskawaArm(
+        urdf=_URDF_DIR / "yr_mh50.urdf",
+        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        max_joint_speed_deg_s=(180.0, 178.0, 178.0, 250.0, 250.0, 360.0),
+        model="YR-MH00050II-J00",
+    ),
 }
 
 
