@@ -125,6 +125,14 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(180.0, 140.0, 178.0, 250.0, 250.0, 360.0),
         model="YR-MH00050II-J20",
     ),
+    # The MH50-20: the longest arms (1.150 m L to U, 1.800 m U to the wrist)
+    # for 20 kg, and a faster wrist. Its type is the manual's (HW0485622).
+    "mh50_20": YaskawaArm(
+        urdf=_URDF_DIR / "yr_mh50_20.urdf",
+        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        max_joint_speed_deg_s=(180.0, 178.0, 178.0, 400.0, 400.0, 600.0),
+        model="YR-MH00050-A10",
+    ),
 }
 
 
