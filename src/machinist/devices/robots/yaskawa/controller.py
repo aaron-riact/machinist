@@ -141,6 +141,14 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(465.0, 465.0, 525.0, 565.0, 565.0, 1000.0),
         model="YR-1-06VX4-A00",
     ),
+    # The GP7, a 7 kg arm of 0.927 m reach, as ROS-Industrial's model of it.
+    # Its pulses are not known, so it counts with the UP50N's.
+    "gp7": YaskawaArm(
+        urdf=_URDF_DIR / "yr_gp7.urdf",
+        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        max_joint_speed_deg_s=(375.0, 315.0, 410.0, 550.0, 550.0, 1000.0),
+        model="YR-1-06VX7-A00",
+    ),
 }
 
 
