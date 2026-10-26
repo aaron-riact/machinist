@@ -193,9 +193,17 @@ def test_axis_configuration_names_r1s_axes(yrc: YaskawaRobot) -> None:
 
 
 def test_position_in_pulses(yrc: YaskawaRobot) -> None:
-    """Data type 0, form, tool, user coordinate, extended form, eight axes."""
+    """Data type 0, form, tool, user coordinate, extended form, then the arm's six axes:
+    a real YRC1000 (an HC10DTP's) answered 44 bytes."""
     assert _ints(_ask(yrc, 0x75, 1, 0, GET_ALL)) == (
-        0, 0, 0, 0, 0, 0, 0, 0, 0, -73307, 0, 0, 0)
+        0, 0, 0, 0, 0, 0, 0, 0, 0, -73307, 0)
+
+
+def test_a_seventh_and_eighth_pulse_axis_read_empty(yrc: YaskawaRobot) -> None:
+    """The same controller answered attributes 12 and 13 OK, with no data."""
+    for attribute in (12, 13):
+        answer = _ask(yrc, 0x75, 1, attribute, GET_SINGLE)
+        assert (answer.status, answer.data) == (Status.OK, b"")
 
 
 def test_position_in_base_coordinates(yrc: YaskawaRobot) -> None:
