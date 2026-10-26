@@ -23,6 +23,9 @@ from ..arm import NoLinearPath, RobotArm
 #: The alarm a faulted arm reports. A real controller names the cause; the
 #: arm only knows that it faulted, so this is a stand-in.
 FAULT_ALARM = 4000
+#: The alarm a move whose end lies past a soft limit raises: its data has a bit per
+#: axis past its limit (1 S, 2 L, 4 U, 8 R, 16 B, 32 T), as on a real HC10DTP.
+DESTINATION_PULSE_LIMIT = 4980
 #: A move takes at least this long, so a move to where the arm is still runs.
 MIN_MOVE_SECONDS = 0.02
 
@@ -83,6 +86,8 @@ class YaskawaArm:
     max_joint_speed_deg_s: tuple[float, ...]
     #: The model name the controller reports (HSES system information).
     model: str
+    #: Each axis's soft limit, in pulses either side of zero; None where not known.
+    soft_limit_pulses: tuple[int, ...] | None = None
 
 
 _URDF_DIR = Path(__file__).parent.parent / "urdf"
@@ -160,6 +165,8 @@ ROBOTS: dict[str, YaskawaArm] = {
         pulses_per_degree=(2671.305, 2671.306, 2347.416, 1619.146, 1619.146, 1619.146),
         max_joint_speed_deg_s=(130.0, 130.0, 180.0, 180.0, 250.0, 250.0),
         model="1-06VXCP10-A0*(H",
+        # That one's soft limits (ALL.PRM S1C1G 800-815): 210, 180, 290, 210, 130, 250 deg.
+        soft_limit_pulses=(560974, 480835, 680751, 340021, 210488, 404786),
     ),
 }
 
@@ -412,6 +419,11 @@ class YaskawaController:
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
     #: The alarm showing, and every alarm so far, newest first.
     active_alarm: Alarm | None = None
+    #: Each axis's soft limit in pulses either side of zero, None for none: a move whose
+    #: end lies past one is taken, then raises DESTINATION_PULSE_LIMIT without moving.
+    soft_limit_pulses: tuple[int, ...] | None = None
+    #: That alarm, while it shows. Unlike a fault it leaves the servos on.
+    limit_alarm: Alarm | None = None
     alarm_history: list[Alarm] = field(default_factory=list)
     #: Position variables by kind ("P", "BP", "EX"), then number, each its
     #: data type, form and axes as the protocol carries them; unset ones read 0.
@@ -539,7 +551,7 @@ class YaskawaController:
         data2 = Status2(0)
         if view.servo_on and not view.estopped:
             data2 |= Status2.SERVO_ON
-        if view.faulted:
+        if view.faulted or self.limit_alarm is not None:
             data2 |= Status2.ALARM
         if self.hold:
             data2 |= Status2.HOLD_COMMAND
@@ -561,7 +573,7 @@ class YaskawaController:
             del self.alarm_history[ALARM_HISTORY:]
         if not faulted:
             self.active_alarm = None
-        return [] if self.active_alarm is None else [self.active_alarm]
+        return [alarm for alarm in (self.limit_alarm, self.active_alarm) if alarm is not None]
 
     def pulses(self) -> list[int]:
         """Each robot axis's position in encoder pulses."""
@@ -604,6 +616,25 @@ class YaskawaController:
     def reset_alarm(self) -> None:
         self.arm.clear_fault()
         self.active_alarm = None
+        self.limit_alarm = None
+
+    def _past_soft_limits(self, joints: Joints) -> bool:
+        """Whether *joints* lie past a soft limit; if so, the alarm is raised."""
+        if self.soft_limit_pulses is None:
+            return False
+        pulses = [round(math.degrees(joint) * ratio)
+                  for joint, ratio in zip(joints, self.pulses_per_degree, strict=True)]
+        axes = sum(1 << axis for axis, (pulse, limit)
+                   in enumerate(zip(pulses, self.soft_limit_pulses, strict=True))
+                   if abs(pulse) > limit)
+        if not axes:
+            return False
+        self.limit_alarm = Alarm(code=DESTINATION_PULSE_LIMIT, data=axes,
+                                 time=datetime.now().strftime(ALARM_TIME_FORMAT))
+        self.alarm_history.insert(0, self.limit_alarm)
+        del self.alarm_history[ALARM_HISTORY:]
+        self.note("alarm", code=DESTINATION_PULSE_LIMIT, axes=axes)
+        return True
 
     def cancel_error(self) -> None:
         """Cancels an error. The emulator raises none, so there is nothing to cancel."""
@@ -698,9 +729,11 @@ class YaskawaController:
                     queue: bool = True) -> BufferedMove | None:
         """Joint-space move at *speed_percent* of each joint's top speed."""
         self._check_can_move()
-        return self._run_or_buffer("joint move", lambda: self.arm.movej(
-            target, duration=self._joint_move_seconds(target, speed_percent)
-        ), queue=queue)
+
+        def start() -> None:
+            if not self._past_soft_limits(target):
+                self.arm.movej(target, duration=self._joint_move_seconds(target, speed_percent))
+        return self._run_or_buffer("joint move", start, queue=queue)
 
     def move_joints_to_pose(self, target: Pose, speed_percent: float, *,
                             queue: bool = True) -> BufferedMove | None:
@@ -710,7 +743,8 @@ class YaskawaController:
 
         def start() -> None:
             joints = self.arm.inverse(target)
-            self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed_percent))
+            if not self._past_soft_limits(joints):
+                self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed_percent))
         return self._run_or_buffer("joint move", start, queue=queue)
 
     def step_linear(self, step: NDArray[np.float64], *, in_tool: bool,
@@ -767,6 +801,8 @@ class YaskawaController:
             except NoLinearPath as exc:
                 self.note("no_linear_path", detail=str(exc))
                 self.arm.fault()
+                return
+            if self._past_soft_limits(joints):
                 return
             with self._motion_lock:
                 if self._stops != stops:

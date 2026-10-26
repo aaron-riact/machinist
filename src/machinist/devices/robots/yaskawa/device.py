@@ -52,6 +52,9 @@ class YaskawaOptions(ArmOptions):
     #: Each joint's top speed in degrees per second, which 100 % of a joint
     #: move's speed means.
     max_joint_speed_deg_s: tuple[float, ...]
+    #: Each joint's soft limit in pulses either side of zero: a move whose end lies
+    #: past one raises alarm 4980 instead of moving. Unset, none is checked.
+    soft_limit_pulses: tuple[int, ...] | None = None
 
     #: What the cell's ladder copies: each network-input byte to another
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
@@ -85,6 +88,7 @@ class YaskawaOptions(ArmOptions):
             "urdf": str(arm.urdf),
             "pulses_per_degree": arm.pulses_per_degree,
             "max_joint_speed_deg_s": arm.max_joint_speed_deg_s,
+            "soft_limit_pulses": arm.soft_limit_pulses,
             **raw,
         }
 
@@ -117,9 +121,9 @@ class YaskawaOptions(ArmOptions):
 
     @model_validator(mode="after")
     def _one_value_per_joint(self) -> YaskawaOptions:
-        for name in ("pulses_per_degree", "max_joint_speed_deg_s"):
+        for name in ("pulses_per_degree", "max_joint_speed_deg_s", "soft_limit_pulses"):
             values = getattr(self, name)
-            if len(values) != self.joint_count:
+            if values is not None and len(values) != self.joint_count:
                 raise ValueError(f"{len(values)} {name} for {self.joint_count} joints")
         return self
 
@@ -153,6 +157,7 @@ class YaskawaRobot(Device, HasArm):
             profile=CONTROLLERS[options.controller],
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
+            soft_limit_pulses=options.soft_limit_pulses,
             ladder_copies=dict(options.ladder_copies),
             files={name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
