@@ -69,6 +69,15 @@ BASE_COORDINATE, ROBOT_COORDINATE = 0, 1
 ALARM_SLOTS = 4
 
 
+def _swap_form_bits(form: int) -> int:
+    """A form (posture) between HSES's numbering, which the controller keeps, and the
+    Ethernet server's, either way. A real YRC1000 (an HC10DTP's) read one posture as 4
+    over HSES (0x75, 0x33D, P variables) and as 1 here (RPOSC, SAVEV): HSES's bit 2 is
+    the Ethernet server's bit 0. That bit 0 is in turn HSES's bit 2, and that the other
+    bits agree, is assumed."""
+    return (form & ~0b101) | ((form & 1) << 2) | ((form >> 2) & 1)
+
+
 #: SAVEV and LOADV variable types 0 to 3: B, I, D and R, by the kind the
 #: controller keeps them under; 7 is S. The manual gives no format for a real
 #: value; a real YRC1000 (an HC10DTP's) answered 9.5 as 9.500000E+00 and zero
@@ -204,7 +213,7 @@ class EthernetServer:
             raise CommandRefusedError(Refusal.BAD_DATA, f"external axis flag {external}")
         fields = [
             *self._pose_fields(to_frame(frame, self.controller.arm.state.view.pose)),
-            str(self.controller.form),
+            str(_swap_form_bits(self.controller.form)),
             str(self.controller.tool),
         ]
         if external:
@@ -314,7 +323,7 @@ class EthernetServer:
             axes = [round(v * 1000) for v in (x, y, z)] + [round(v * 10000) for v in (rx, ry, rz)]
             fields = [data_type, *axes]
             if kind == ROBOT_POSITION:
-                fields = [data_type, _integer(values[8]), tool, user, 0, *axes]
+                fields = [data_type, _swap_form_bits(_integer(values[8])), tool, user, 0, *axes]
         return tuple(_pad(fields, POSITION_FIELDS[kind]))
 
     def _position_data_type(self, kind: str, coordinate: int) -> tuple[int, int]:
@@ -356,7 +365,7 @@ class EthernetServer:
             "1", str(coordinate[data_type]),
             *(f"{a / 1000:.3f}" for a in axes[:3]),
             *(f"{a / 10000:.{decimals}f}" for a in axes[3:6]),
-            str(form), str(tool),
+            str(_swap_form_bits(form)), str(tool),
         ]
 
     def _svon(self, data: str) -> None:
@@ -429,7 +438,7 @@ class EthernetServer:
         values = _parse_numbers(data, count=16)
         speed = _joint_speed(values[0])
         target = from_frame(self._frame(_integer(values[1])), _pose(values[2:8]))
-        self.controller.form = _integer(values[8])
+        self.controller.form = _swap_form_bits(_integer(values[8]))
         self.controller.tool = self.controller.check_tool(_integer(values[9]))
         self._answer_when_started(self.controller.move_joints_to_pose(target, speed))
 
@@ -438,7 +447,7 @@ class EthernetServer:
         values = _parse_numbers(data, count=17)
         selection, speed = _linear_speed(values[0], values[1])
         target = from_frame(self._frame(_integer(values[2])), _pose(values[3:9]))
-        self.controller.form = _integer(values[9])
+        self.controller.form = _swap_form_bits(_integer(values[9]))
         self.controller.tool = self.controller.check_tool(_integer(values[10]))
         self._answer_when_started(self.controller.move_linear(target, selection, speed))
 
