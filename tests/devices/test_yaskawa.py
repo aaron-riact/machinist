@@ -1073,6 +1073,15 @@ def test_the_hc10dtp_reaches_as_its_model() -> None:
         assert _answer(robot, "RPOSC", "0,0").startswith(b"500.000,162.000,530.000,")
 
 
+def test_the_hc10dtp_counts_pulses_as_a_real_one() -> None:
+    """A real HC10DTP's ALL.PRM: its top speeds in pulses/s and its soft limits give
+    2671.305, 2671.306, 2347.416 and 1619.146 pulses per degree."""
+    options = YaskawaOptions(controller="yrc1000", robot="hc10dtp",
+                             start_joints_deg=(10, 10, 10, 10, 10, 10))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSJ").startswith(b"26713,26713,23474,16191,16191,16191,")
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
