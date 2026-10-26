@@ -146,6 +146,14 @@ def test_a_file_the_controller_lacks_is_not_found(host: socket.socket, service: 
     assert answer.added_status == AddedStatus.FILE_NOT_FOUND
 
 
+@pytest.mark.parametrize(("service", "name"), [(SAVE, b"PICK.JBI\0"), (LIST, b"*.JBI\0")])
+def test_a_name_ending_in_nul_is_refused(host: socket.socket, service: int, name: bytes) -> None:
+    """A real YRC1000 (an HC10DTP's) refused ALL.PRM\\0 and *.JBI\\0 with 0xE49D,
+    "format error (data size 0)", and took both names without the NUL."""
+    answer = _send(host, service, name)
+    assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.DATA_SIZE_ZERO)
+
+
 def test_an_ack_for_the_wrong_block_ends_the_transfer(yrc: YaskawaRobot,
                                                       host: socket.socket) -> None:
     yrc.controller.files["BIG.DAT"] = bytes(1000)

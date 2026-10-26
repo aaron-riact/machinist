@@ -100,6 +100,8 @@ class AddedStatus(IntEnum):
     TOOL_NUMBER_ERROR = 0xB00D
     USER_NUMBER_ERROR = 0xB00E
     FILE_NOT_FOUND = 0xE2B3
+    #: "Format error (data size 0)": a real YRC1000 answers a file name ending in NUL so.
+    DATA_SIZE_ZERO = 0xE49D
     BLOCK_NUMBER_ERROR = 0xE4A1
     ACK_ERROR = 0xE4A2
     DIVISION_ERROR = 0xE4A3
