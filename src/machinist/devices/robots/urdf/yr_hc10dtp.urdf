@@ -9,10 +9,12 @@
      reach. The root is the controller's robot base frame, 0.275 m above
      the macro's base_link.
 
-     The flange frame turns +90 degrees about Y from the base frame, so
-     at the zero position its Z points out of the flange along base +X.
-     This follows Yaskawa's flange convention as far as we know it; check
-     it against RPOSC on a real controller before relying on Rx Ry Rz. -->
+     The flange frame is the one a real HC10DTP reports in a tool of all
+     zeros: at the zero position its Z points out of the flange along base
+     +X, its X along base +Z and its Y along base -Y. That is the other
+     arms' guess (+90 degrees about Y) turned 180 degrees about the flange's
+     own Z, checked at one pose. -->
+
 <robot name="yr_hc10dtp">
   <link name="base"/>
   <link name="link_1_s"/>
@@ -68,6 +70,6 @@
   <joint name="joint_6_t-flange" type="fixed">
     <parent link="link_6_t"/>
     <child link="flange"/>
-    <origin xyz="0.170 0 0" rpy="0 1.5707963 0"/>
+    <origin xyz="0.170 0 0" rpy="0 -1.5707963 3.1415927"/>
   </joint>
 </robot>

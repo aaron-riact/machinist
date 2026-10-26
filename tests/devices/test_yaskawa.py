@@ -1088,6 +1088,19 @@ def test_the_hc10dtp_reaches_as_its_model() -> None:
         assert _answer(robot, "RPOSC", "0,0").startswith(b"500.000,162.000,530.000,")
 
 
+def test_the_hc10dtp_flange_turns_as_a_real_ones() -> None:
+    """A real HC10DTP at these joints read its flange (tool 2, all zeros) at
+    517.391, -61.828, 296.519 and Rx -180, Ry 0, Rz -180: its X along base -X, its Y
+    along base +Y, its Z down."""
+    options = YaskawaOptions(controller="yrc1000", robot="hc10dtp",
+                             start_joints_deg=(-24.93, 4.27, -23.32, 0.0, -62.41, -155.07))
+    for robot in _running(options):
+        fields = [float(v) for v in _answer(robot, "RPOSC", "0,0").split(b",")[:6]]
+        assert fields[:3] == pytest.approx([517.391, -61.828, 296.519], abs=0.5)
+        rotation = pose_to_mat((0, 0, 0, *(math.radians(v) for v in fields[3:])))[:3, :3]
+        assert rotation == pytest.approx(np.diag([-1.0, 1.0, -1.0]), abs=1e-3)
+
+
 def test_the_hc10dtp_counts_pulses_as_a_real_one() -> None:
     """A real HC10DTP's ALL.PRM: its top speeds in pulses/s and its soft limits give
     2671.305, 2671.306, 2347.416 and 1619.146 pulses per degree."""
