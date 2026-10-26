@@ -482,6 +482,19 @@ def test_system_information_names_the_arm(yrc: YaskawaRobot) -> None:
     assert data[24:40].rstrip(b"\0") == b"YR-UP50N-A00"
 
 
+def test_an_hc10dtp_names_itself_as_a_real_one_did() -> None:
+    """A real HC10DTP's model field: its type without YR-, cut to the field's 16 bytes."""
+    options = YaskawaOptions(controller="yrc1000", robot="hc10dtp", protocols=("hses",),
+                             hses_port=free_port())
+    robot = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    robot.start()
+    try:
+        wait_running(robot)
+        assert _ask(robot, 0x89, 11, 0, GET_ALL).data[24:40] == b"1-06VXCP10-A0*(H"
+    finally:
+        robot.stop()
+
+
 def test_system_information_of_a_missing_group_is_empty(yrc: YaskawaRobot) -> None:
     assert _ask(yrc, 0x89, 12, 2, GET_SINGLE).data == bytes(16)
     assert _ask(yrc, 0x89, 101, 2, GET_SINGLE).data.rstrip(b"\0") == b"HANDLING"

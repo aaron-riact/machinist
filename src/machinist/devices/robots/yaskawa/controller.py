@@ -151,12 +151,13 @@ ROBOTS: dict[str, YaskawaArm] = {
     ),
     # The HC10DTP, a 10 kg collaborative arm of 1.200 m reach, as
     # ROS-Industrial's model of it. Its pulses are not known, so it counts with
-    # the UP50N's. Its type is 17 characters; HSES sends the first 16.
+    # the UP50N's. Its model is what a real one's HSES system information
+    # gave: its type without YR-, cut to the field's 16 bytes.
     "hc10dtp": YaskawaArm(
         urdf=_URDF_DIR / "yr_hc10dtp.urdf",
         pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
         max_joint_speed_deg_s=(130.0, 130.0, 180.0, 180.0, 250.0, 250.0),
-        model="YR-1-06VXCP10-B00",
+        model="1-06VXCP10-A0*(H",
     ),
 }
 
