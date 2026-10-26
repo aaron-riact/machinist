@@ -138,13 +138,18 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(180.0, 178.0, 178.0, 400.0, 400.0, 600.0),
         model="YR-MH00050-A10",
     ),
-    # The GP4, a 4 kg arm of 0.550 m reach, as ROS-Industrial's model of it.
-    # Its pulses are not known, so it counts with the UP50N's.
+    # The GP4, a 4 kg arm of 0.550 m reach, as ROS-Industrial's model of it. Its pulses
+    # and soft limits are a real one's ALL.PRM, on a YRC1000micro: from its top speeds at
+    # the data sheet's (RC1G 1070-1075), which put every limit on a whole degree.
     "gp4": YaskawaArm(
         urdf=_URDF_DIR / "yr_gp4.urdf",
-        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        pulses_per_degree=(1028.6559, 921.6, 796.4457, 844.0248, 773.6903, 455.112),
         max_joint_speed_deg_s=(465.0, 465.0, 525.0, 565.0, 565.0, 1000.0),
-        model="YR-1-06VX4-A00",
+        model="1-06VX4-A0*(GP4)",
+        # That one's soft limits (ALL.PRM S1C1G 800-815): S 170, L -110..130, U -65..200,
+        # R 200, B 123, T 455 deg.
+        soft_limit_pulses=((-174872, 174872), (-101376, 119808), (-51769, 159289),
+                           (-168805, 168805), (-95164, 95164), (-207076, 207076)),
     ),
     # The GP7, a 7 kg arm of 0.927 m reach, as ROS-Industrial's model of it.
     # Its pulses are not known, so it counts with the UP50N's.
