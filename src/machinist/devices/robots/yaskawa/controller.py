@@ -234,13 +234,13 @@ CONTROLLERS: dict[str, ControllerProfile] = {
         network_inputs=range(27010, 29568),
     ),
 }
-#: The YRC1000 names itself YR, as the NX100 says NX and the DX200 DX; the one
-#: YRC1000 client of the Ethernet server found (HslCommunication) expects
-#: "YR Information Server". MotoROS2 confirms its network inputs are the
-#: DX200's. The rest takes the DX200's values until a controller says otherwise.
+#: The YRC1000 names itself YR, as the NX100 says NX and the DX200 DX, and spaces
+#: its version as a real one (an HC10DTP's) did: "Server( 1.00)". MotoROS2
+#: confirms its network inputs are the DX200's. The rest takes the DX200's values
+#: until a controller says otherwise.
 CONTROLLERS["yrc1000"] = replace(
     CONTROLLERS["dx200"],
-    server_name="OK: YR Information Server (1.00)",
+    server_name="OK: YR Information Server( 1.00)",
     software_version="YAS2.80.00-00",  # MotoROS2's minimum for a YRC1000
     yrc1000_commands=True,
 )

@@ -1125,8 +1125,10 @@ def test_ladder_copies_follow_the_controllers_network_inputs() -> None:
 
 
 def test_the_yrc1000_names_itself_yr_and_otherwise_takes_the_dx200s_values() -> None:
+    """Its name as a real HC10DTP's YRC1000 gave it: no space before the bracket, one
+    inside it."""
     yrc1000, dx200 = CONTROLLERS["yrc1000"], CONTROLLERS["dx200"]
-    assert yrc1000.server_name == "OK: YR Information Server (1.00)"
+    assert yrc1000.server_name == "OK: YR Information Server( 1.00)"
     assert (yrc1000.rotation_decimals, yrc1000.max_tool, yrc1000.user_frames,
             yrc1000.network_inputs) == (dx200.rotation_decimals, dx200.max_tool,
                                         dx200.user_frames, dx200.network_inputs)
