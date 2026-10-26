@@ -71,7 +71,8 @@ ALARM_SLOTS = 4
 
 #: SAVEV and LOADV variable types 0 to 3: B, I, D and R, by the kind the
 #: controller keeps them under; 7 is S. The manual gives no format for a real
-#: value; the emulator answers it to float precision, 7 significant digits.
+#: value; a real YRC1000 (an HC10DTP's) answered 9.5 as 9.500000E+00 and zero
+#: as 0, and the emulator does the same on every controller.
 NUMBER_VARIABLES = {0: "B", 1: "I", 2: "D", 3: "R"}
 #: The integers B, I and D variables hold.
 INTEGER_RANGES = {"B": range(256), "I": range(-(2**15), 2**15), "D": range(-(2**31), 2**31)}
@@ -267,7 +268,9 @@ class EthernetServer:
             raise CommandRefusedError(Refusal.BAD_DATA, f"variable type {variable_type}")
         kind = NUMBER_VARIABLES[variable_type]
         value = self.controller.variables.get(kind, {}).get(_variable_number(number), 0)
-        return f"{value:.7g}" if kind == REAL_VARIABLE else str(int(value))
+        if kind != REAL_VARIABLE:
+            return str(int(value))
+        return f"{value:.6E}" if value else "0"
 
     def _loadv(self, data: str) -> None:
         """A variable's type and number, then its value."""

@@ -563,7 +563,7 @@ def test_ctask_needs_independent_control(motoman: YaskawaRobot) -> None:
 @pytest.mark.parametrize(
     ("variable_type", "kind", "value", "answer"),
     [(0, "B", 200, b"200"), (1, "I", -1234, b"-1234"), (2, "D", -123456789, b"-123456789"),
-     (3, "R", 1.5, b"1.5")],
+     (3, "R", 1.5, b"1.500000E+00")],
 )
 def test_savev_reads_a_number_variable(
     motoman: YaskawaRobot, variable_type: int, kind: str, value: float, answer: bytes
@@ -633,8 +633,14 @@ def test_loadv_writes_a_number_variable(
 
 
 def test_loadv_then_savev_reads_back(motoman: YaskawaRobot) -> None:
+    """A real number as a real YRC1000 (an HC10DTP's) gave R000 = 9.5: 9.500000E+00."""
     _answer(motoman, "LOADV", "3,1,0.1")
-    assert _answer(motoman, "SAVEV", "3,1") == b"0.1\r"
+    assert _answer(motoman, "SAVEV", "3,1") == b"1.000000E-01\r"
+
+
+def test_savev_reads_a_real_zero_as_0(motoman: YaskawaRobot) -> None:
+    """The same controller gave R001, zero, as a bare 0."""
+    assert _answer(motoman, "SAVEV", "3,2") == b"0\r"
 
 
 def test_loadv_writes_a_string_with_commas(motoman: YaskawaRobot) -> None:
