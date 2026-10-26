@@ -849,6 +849,11 @@ class HighSpeedEthernetServer:
 
     # --- 3.3.39 Move instruction, Cartesian (0x8A) -----------------------------
 
+    @property
+    def _queues(self) -> bool:
+        """Whether a move sent while the arm runs waits its turn, or is refused."""
+        return self.controller.profile.hses_queues_moves
+
     def _move_cartesian(self, request: Request) -> bytes:
         """Joint move (instance 1), straight move (2) or straight increment (3) to a
         pose: groups, speed class and speed, coordinate, X Y Z (µm), Rx Ry Rz
@@ -866,14 +871,14 @@ class HighSpeedEthernetServer:
         if kind is MoveKind.STRAIGHT_INCREMENT:
             step = pose_to_mat(target) if frame is None else frame_step(frame, pose_to_mat(target))
             self.controller.step_linear(step, in_tool=frame is None, selection=speed_class,
-                                        speed=speed)
+                                        speed=speed, queue=self._queues)
             return b""
         assert frame is not None
         target = from_frame(frame, target)
         if kind is MoveKind.JOINT:
-            self.controller.move_joints_to_pose(target, speed)
+            self.controller.move_joints_to_pose(target, speed, queue=self._queues)
         else:
-            self.controller.move_linear(target, speed_class, speed)
+            self.controller.move_linear(target, speed_class, speed, queue=self._queues)
         return b""
 
     # --- 3.3.40 Move instruction, pulse (0x8B) ---------------------------------
@@ -888,9 +893,10 @@ class HighSpeedEthernetServer:
         target = self.controller.joints_at([float(v) for v in values[4:12]])
         self.controller.tool = self.controller.check_tool(values[12])
         if kind is MoveKind.JOINT:
-            self.controller.move_joints(target, speed)
+            self.controller.move_joints(target, speed, queue=self._queues)
         else:
-            self.controller.move_linear(self.controller.arm.forward(target), speed_class, speed)
+            self.controller.move_linear(self.controller.arm.forward(target), speed_class, speed,
+                                        queue=self._queues)
         return b""
 
     def _move_frame(

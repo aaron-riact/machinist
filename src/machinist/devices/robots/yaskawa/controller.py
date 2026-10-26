@@ -200,6 +200,9 @@ class ControllerProfile:
     #: move starts, as the YRC1000 manual (11.1.3) says; the DX200 is taken to do
     #: the same. HSES answers at once: its manual says nothing of it.
     holds_buffered_answer: bool = True
+    #: Whether HSES queues a move sent while the arm runs, as the move buffer allows.
+    #: A real YRC1000 (an HC10DTP's) refuses it at once (0x2010); the DX200 is not known.
+    hses_queues_moves: bool = True
     #: RJDIR starts a new line, a CR, after this many job names: 20 by the
     #: manuals, 5 on a real YRC1000 (an HC10DTP's).
     job_names_per_line: int = 20
@@ -245,6 +248,7 @@ CONTROLLERS["yrc1000"] = replace(
     CONTROLLERS["dx200"],
     server_name="OK: YR Information Server( 1.00)",
     job_names_per_line=5,
+    hses_queues_moves=False,
     software_version="YAS2.80.00-00",  # MotoROS2's minimum for a YRC1000
     yrc1000_commands=True,
 )
@@ -685,14 +689,16 @@ class YaskawaController:
         frame.transform()
         self.user_frames[number] = frame
 
-    def move_joints(self, target: Joints, speed_percent: float) -> BufferedMove | None:
+    def move_joints(self, target: Joints, speed_percent: float, *,
+                    queue: bool = True) -> BufferedMove | None:
         """Joint-space move at *speed_percent* of each joint's top speed."""
         self._check_can_move()
         return self._run_or_buffer("joint move", lambda: self.arm.movej(
             target, duration=self._joint_move_seconds(target, speed_percent)
-        ))
+        ), queue=queue)
 
-    def move_joints_to_pose(self, target: Pose, speed_percent: float) -> BufferedMove | None:
+    def move_joints_to_pose(self, target: Pose, speed_percent: float, *,
+                            queue: bool = True) -> BufferedMove | None:
         """Joint-space move to the joints that put the arm at *target*, found when the
         move starts."""
         self._check_can_move()
@@ -700,24 +706,25 @@ class YaskawaController:
         def start() -> None:
             joints = self.arm.inverse(target)
             self.arm.movej(joints, duration=self._joint_move_seconds(joints, speed_percent))
-        return self._run_or_buffer("joint move", start)
+        return self._run_or_buffer("joint move", start, queue=queue)
 
     def step_linear(self, step: NDArray[np.float64], *, in_tool: bool,
-                    selection: SpeedSelection, speed: float) -> BufferedMove | None:
+                    selection: SpeedSelection, speed: float,
+                    queue: bool = True) -> BufferedMove | None:
         """Straight-line move by *step* from where the arm is when the move starts: in
         the tool's own frame, or along and about the base axes."""
         self._check_can_move()
         return self._run_or_buffer("straight step", lambda: self._start_linear(
             stepped(self.arm.state.view.pose, step, in_tool=in_tool), selection, speed
-        ))
+        ), queue=queue)
 
     def move_linear(
-        self, target: Pose, selection: SpeedSelection, speed: float
+        self, target: Pose, selection: SpeedSelection, speed: float, *, queue: bool = True
     ) -> BufferedMove | None:
         """Straight-line move, *speed* in mm/s (V) or degrees/s (VR)."""
         self._check_can_move()
         return self._run_or_buffer(
-            "straight move", lambda: self._start_linear(target, selection, speed)
+            "straight move", lambda: self._start_linear(target, selection, speed), queue=queue
         )
 
     @property
@@ -769,9 +776,11 @@ class YaskawaController:
         finally:
             self._planning = False
 
-    def _run_or_buffer(self, label: str, start: Callable[[], None]) -> BufferedMove | None:
+    def _run_or_buffer(self, label: str, start: Callable[[], None], *,
+                       queue: bool = True) -> BufferedMove | None:
         """Start a move now if the arm is still, or put it in the buffer to start when
-        the moves before it end, and return it; refused when the buffer is full."""
+        the moves before it end, and return it; refused when the buffer is full, or
+        while the arm moves when the protocol does not *queue*."""
         with self._motion_lock:
             if not self.moving:
                 if self._buffered:
@@ -781,6 +790,8 @@ class YaskawaController:
                 start()
                 self._move_shows_running = True
                 return None
+            if not queue:
+                raise CommandRefusedError(Refusal.MOVING, "the arm is moving")
             if self.move_buffer is not None and len(self._buffered) >= self.move_buffer:
                 raise CommandRefusedError(
                     Refusal.MOVING, f"{len(self._buffered)} moves already wait"
