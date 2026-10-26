@@ -1125,6 +1125,31 @@ def test_the_hc10dtp_counts_pulses_as_a_real_one() -> None:
         assert _answer(robot, "RPOSJ").startswith(b"26713,26713,23474,16191,16191,16191,")
 
 
+#: A real GP8's joints, and its flange (tool 3, all zeros) as its controller read it.
+GP8_JOINTS = (-53.69, 49.298, 6.273, -117.022, -64.038, -128.842)
+GP8_FLANGE = (421.904, -465.945, 22.228, 90.004, 1.793, 89.529)
+
+
+def test_the_gp8_flange_is_where_a_real_ones_is() -> None:
+    """Position to 0.001 mm on the real one; the frame turned as its controller reports it."""
+    options = YaskawaOptions(controller="yrc1000", robot="gp8", start_joints_deg=GP8_JOINTS)
+    for robot in _running(options):
+        fields = [float(v) for v in _answer(robot, "RPOSC", "0,0").split(b",")[:6]]
+        assert fields[:3] == pytest.approx(GP8_FLANGE[:3], abs=0.5)
+        rotation = pose_to_mat((0, 0, 0, *(math.radians(v) for v in fields[3:])))[:3, :3]
+        real = pose_to_mat((0, 0, 0, *(math.radians(v) for v in GP8_FLANGE[3:])))[:3, :3]
+        assert rotation == pytest.approx(real, abs=1e-3)
+
+
+def test_the_gp8_counts_pulses_and_names_itself_as_a_real_one() -> None:
+    """S at exactly 1024 pulses per degree; the model field as its HSES gives it."""
+    options = YaskawaOptions(controller="yrc1000", robot="gp8",
+                             start_joints_deg=(10, 10, 10, 10, 10, 10))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSJ").startswith(b"10240,12136,9102,8533,7282,4649,")
+        assert robot.controller.model == "1-06VX8-A0*(GP8)"
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
