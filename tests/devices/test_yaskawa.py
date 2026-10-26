@@ -1150,6 +1150,22 @@ def test_the_gp8_counts_pulses_and_names_itself_as_a_real_one() -> None:
         assert robot.controller.model == "1-06VX8-A0*(GP8)"
 
 
+#: A real GP4's joints, and its flange (tool 1, all zeros) as its YRC1000micro read it.
+GP4_JOINTS = (12.42, 4.574, -41.782, -2.23, -46.87, -342.226)
+GP4_FLANGE = (221.948, 50.973, -12.188, -177.5411, 2.6209, 28.6797)
+
+
+def test_the_gp4_flange_is_where_a_real_ones_is() -> None:
+    """Position to 0.001 mm on the real one; the frame turned as its controller reports it."""
+    options = YaskawaOptions(controller="yrc1000", robot="gp4", start_joints_deg=GP4_JOINTS)
+    for robot in _running(options):
+        fields = [float(v) for v in _answer(robot, "RPOSC", "0,0").split(b",")[:6]]
+        assert fields[:3] == pytest.approx(GP4_FLANGE[:3], abs=0.5)
+        rotation = pose_to_mat((0, 0, 0, *(math.radians(v) for v in fields[3:])))[:3, :3]
+        real = pose_to_mat((0, 0, 0, *(math.radians(v) for v in GP4_FLANGE[3:])))[:3, :3]
+        assert rotation == pytest.approx(real, abs=1e-3)
+
+
 def test_the_gp4_counts_pulses_and_names_itself_as_a_real_one() -> None:
     """A real GP4's ALL.PRM, on a YRC1000micro: S at 1028.6559 pulses per degree; the
     model field as its HSES gives it."""
