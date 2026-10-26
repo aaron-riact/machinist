@@ -389,6 +389,15 @@ def test_rjdir_starts_a_line_every_20_names(with_jobs: YaskawaRobot) -> None:
     assert [len(line.split(b",")) for line in lines] == [20, 1, 1]
 
 
+def test_a_yrc1000_starts_an_rjdir_line_every_5_names() -> None:
+    """As a real one (an HC10DTP's) listed its 52 jobs: ten lines of 5, then 2."""
+    options = YaskawaOptions(controller="yrc1000", start_joints_deg=START,
+                             jobs=tuple(f"J{n:02d}" for n in range(7)), **UP50N_AXES)
+    for robot in _running(options):
+        lines = _answer(robot, "RJDIR", "*").split(b"\r")
+        assert [len(line.split(b",")) for line in lines] == [5, 2, 1]
+
+
 def test_start_runs_the_executing_job(with_jobs: YaskawaRobot) -> None:
     with_jobs.controller.select_job("PICK", 3)
     assert _answer(with_jobs, "START") == b"0000\r\n"

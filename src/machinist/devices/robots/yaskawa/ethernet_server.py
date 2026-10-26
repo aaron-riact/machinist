@@ -86,9 +86,6 @@ POSITION_VARIABLES = {4: "P", 5: "BP", 6: "EX"}
 ROBOT_POSITION = "P"
 POSITION_FIELDS = {"P": 13, "BP": 9, "EX": 9}
 PULSE_DATA, BASE_DATA, ROBOT_DATA, USER_DATA, TOOL_DATA = 0, 16, 17, 18, 19
-#: RJDIR starts a new line after every 20 job names. The manual does not say
-#: which line feed; the emulator uses CR, the end of every answer line.
-JOB_NAMES_PER_LINE = 20
 ALL_JOBS = "*"
 #: The task SETMJ sets the master job of: CTASK selects none other here.
 MASTER_TASK = 0
@@ -229,7 +226,7 @@ class EthernetServer:
         names = sorted(self.controller.jobs) if parent == ALL_JOBS else (
             self.controller.related_jobs(parent)
         )
-        per_line = JOB_NAMES_PER_LINE
+        per_line = self.controller.profile.job_names_per_line
         lines = [names[i : i + per_line] for i in range(0, len(names), per_line)]
         return "\r".join(",".join(line) for line in lines)
 
