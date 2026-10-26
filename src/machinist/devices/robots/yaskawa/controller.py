@@ -920,9 +920,9 @@ class YaskawaController:
         if self.mode is not Status1.PLAY:
             raise CommandRefusedError(Refusal.WRONG_MODE, "the controller is in teach mode")
         self.check_no_alarm()
-        if view.estopped:
-            raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
-        if not view.servo_on:
+        # An emergency stop switches the servos off and raises no alarm: a real GP8's
+        # YRC1000, E-stopped during a jog, refused the next moves for the servos (0x2070).
+        if view.estopped or not view.servo_on:
             raise CommandRefusedError(Refusal.SERVO_OFF, "servo power is off")
         if self.hold:
             raise CommandRefusedError(Refusal.HELD, "the controller is held")
