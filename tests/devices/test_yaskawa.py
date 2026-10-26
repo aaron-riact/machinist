@@ -1150,6 +1150,16 @@ def test_the_gp8_counts_pulses_and_names_itself_as_a_real_one() -> None:
         assert robot.controller.model == "1-06VX8-A0*(GP8)"
 
 
+def test_the_gp4_counts_pulses_and_names_itself_as_a_real_one() -> None:
+    """A real GP4's ALL.PRM, on a YRC1000micro: S at 1028.6559 pulses per degree; the
+    model field as its HSES gives it."""
+    options = YaskawaOptions(controller="yrc1000", robot="gp4",
+                             start_joints_deg=(10, 10, 10, 10, 10, 10))
+    for robot in _running(options):
+        assert _answer(robot, "RPOSJ").startswith(b"10287,9216,7964,8440,7737,4551,")
+        assert robot.controller.model == "1-06VX4-A0*(GP4)"
+
+
 def test_dx200_names_itself_dx(dx200: YaskawaRobot) -> None:
     received = _session(dx200, b"CONNECT Robot_access\r\nHOSTCTRL_REQUEST RSTATS 0\r\n")
     assert received.startswith(b"OK: DX Information Server (1.00).\r\n")
