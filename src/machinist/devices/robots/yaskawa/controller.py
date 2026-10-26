@@ -203,6 +203,10 @@ class ControllerProfile:
     #: Whether HSES queues a move sent while the arm runs, as the move buffer allows.
     #: A real YRC1000 (an HC10DTP's) refuses it at once (0x2010); the DX200 is not known.
     hses_queues_moves: bool = True
+    #: Axes a pulse position read (0x75 instance 1) lists. The manual shows eight; a
+    #: real YRC1000 (an HC10DTP's) listed the arm's six, and answered the seventh and
+    #: eighth one by one with no data.
+    hses_pulse_axes: int = 8
     #: RJDIR starts a new line, a CR, after this many job names: 20 by the
     #: manuals, 5 on a real YRC1000 (an HC10DTP's).
     job_names_per_line: int = 20
@@ -249,6 +253,7 @@ CONTROLLERS["yrc1000"] = replace(
     server_name="OK: YR Information Server( 1.00)",
     job_names_per_line=5,
     hses_queues_moves=False,
+    hses_pulse_axes=6,
     software_version="YAS2.80.00-00",  # MotoROS2's minimum for a YRC1000
     yrc1000_commands=True,
 )

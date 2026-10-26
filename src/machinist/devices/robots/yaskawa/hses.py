@@ -134,6 +134,8 @@ Handler = Callable[[Request], bytes]
 R1_PULSE, R1_CARTESIAN = 1, 101
 #: Position answers carry eight axes; a six-axis arm's last two are 0.
 AXIS_ELEMENTS = 8
+#: A position read's words before its axes: data type, form, tool, user, extended form.
+POSITION_HEADER = 5
 PULSE_AXES = ("S", "L", "U", "R", "B", "T")
 CARTESIAN_AXES = ("X", "Y", "Z", "Rx", "Ry", "Rz")
 #: The Cartesian position read (0x33D) as YMConnect sends and reads it: the group
@@ -525,15 +527,19 @@ class HighSpeedEthernetServer:
 
     def _position(self, request: Request) -> bytes:
         """R1's position in pulses (instance 1) or base coordinates (101): data type,
-        form, tool, user coordinate, extended form, then eight axes."""
+        form, tool, user coordinate, extended form, then eight axes, or as many pulse
+        axes as the controller lists; the rest read one by one as no data."""
         if _instance(request, R1_PULSE, R1_CARTESIAN) == R1_PULSE:
-            data_type, axes = PULSE_DATA, self.controller.pulses()
+            data_type, count = PULSE_DATA, self.controller.profile.hses_pulse_axes
+            axes = _pad(self.controller.pulses(), AXIS_ELEMENTS, 0)[:count]
         else:
-            data_type, axes = BASE_COORDINATE_DATA, _micrometres_and_ten_thousandths(
+            data_type, axes = BASE_COORDINATE_DATA, _pad(_micrometres_and_ten_thousandths(
                 self.controller.arm.state.view.pose
-            )
-        values = [data_type, self.controller.form, self.controller.tool, 0, 0,
-                  *_pad(axes, AXIS_ELEMENTS, 0)]
+            ), AXIS_ELEMENTS, 0)
+        values = [data_type, self.controller.form, self.controller.tool, 0, 0, *axes]
+        if (request.service == Service.GET_SINGLE
+                and len(values) < request.attribute <= POSITION_HEADER + AXIS_ELEMENTS):
+            return b""
         return _read(request, [int32s(v) for v in values])
 
     # --- 3.3.7 Position error (0x76), 3.3.8 Torque (0x77) ----------------------
