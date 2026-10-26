@@ -335,6 +335,26 @@ def test_reset_clears_the_soft_limit_alarm(hc10dtp: YaskawaRobot) -> None:
     assert _ask(hc10dtp, 0x8B, 1, 1, SET_ALL, _pulses((*before, 0, 0))).status is Status.OK
 
 
+def test_a_soft_limit_may_differ_either_side() -> None:
+    """A real GP8's L runs -65 to +145 degrees: -78886 to 175977 pulses. A target inside
+    the high limit's distance but past the low one is still past its limit."""
+    limits = ((-174080, 174080), (-78886, 175977), (-63716, 172943), (-162134, 162134),
+              (-98304, 98304), (-167351, 167351))
+    options = YaskawaOptions(controller="yrc1000", robot="up50n", protocols=("hses",),
+                             hses_port=free_port(), start_joints_deg=(0, 0, 0, 0, -60, 0),
+                             soft_limit_pulses=limits)
+    robot = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    robot.start()
+    try:
+        wait_running(robot)
+        before = _ints(_ask(robot, 0x75, 1, 0, GET_ALL))[5:11]
+        _ask(robot, 0x8B, 1, 1, SET_ALL, _pulses((before[0], -100_000, *before[2:], 0, 0)))
+        _settle(robot)
+        assert struct.unpack_from("<2i", _ask(robot, 0x70, 1, 0, GET_ALL).data) == (4980, 2)
+    finally:
+        robot.stop()
+
+
 def test_pulse_joint_move(yrc: YaskawaRobot) -> None:
     move = _pulses((0, 0, 0, 0, -36654, 0, 0, 0))
     assert _ask(yrc, 0x8B, 1, 1, SET_ALL, move).status is Status.OK
