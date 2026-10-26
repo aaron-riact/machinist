@@ -200,6 +200,9 @@ class ControllerProfile:
     #: move starts, as the YRC1000 manual (11.1.3) says; the DX200 is taken to do
     #: the same. HSES answers at once: its manual says nothing of it.
     holds_buffered_answer: bool = True
+    #: RJDIR starts a new line, a CR, after this many job names: 20 by the
+    #: manuals, 5 on a real YRC1000 (an HC10DTP's).
+    job_names_per_line: int = 20
 
     @property
     def last_user_coordinate(self) -> int:
@@ -241,6 +244,7 @@ CONTROLLERS: dict[str, ControllerProfile] = {
 CONTROLLERS["yrc1000"] = replace(
     CONTROLLERS["dx200"],
     server_name="OK: YR Information Server( 1.00)",
+    job_names_per_line=5,
     software_version="YAS2.80.00-00",  # MotoROS2's minimum for a YRC1000
     yrc1000_commands=True,
 )
