@@ -169,6 +169,18 @@ ROBOTS: dict[str, YaskawaArm] = {
         soft_limit_pulses=((-560974, 560974), (-480835, 480835), (-680751, 680751),
                            (-340021, 340021), (-210488, 210488), (-404786, 404786)),
     ),
+    # The GP8, an 8 kg arm of 0.727 m reach, as Yaskawa's model of it. Its pulses and soft
+    # limits are a real one's ALL.PRM: S, L, U, R and B from its top speeds at the data
+    # sheet's (RC1G 1070-1075), which put every limit on a whole degree; T from its
+    # +-360 degree limit, which turning T matched to 0.001 degree, where 1000 deg/s did not.
+    "gp8": YaskawaArm(
+        urdf=_URDF_DIR / "yr_gp8.urdf",
+        pulses_per_degree=(1024.0, 1213.6312, 910.2231, 853.3345, 728.1782, 464.8639),
+        max_joint_speed_deg_s=(455.0, 385.0, 520.0, 550.0, 550.0, 1000.0),
+        model="1-06VX8-A0*(GP8)",
+        soft_limit_pulses=((-174080, 174080), (-78886, 175977), (-63716, 172943),
+                           (-162134, 162134), (-98304, 98304), (-167351, 167351)),
+    ),
 }
 
 
