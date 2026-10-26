@@ -10,6 +10,7 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import YaskawaOptions, YaskawaRobot
+from machinist.devices.robots.yaskawa.hses_files import TRANSFER_TIMEOUT, HsesFileServer
 from machinist.transport.yaskawa_hses import (
     LAST_BLOCK,
     AddedStatus,
@@ -152,6 +153,47 @@ def test_a_name_ending_in_nul_is_refused(host: socket.socket, service: int, name
     "format error (data size 0)", and took both names without the NUL."""
     answer = _send(host, service, name)
     assert (answer.status, answer.added_status) == (Status.VENDOR, AddedStatus.DATA_SIZE_ZERO)
+
+
+def test_a_request_while_a_transfer_is_open_is_an_ack_error(yrc: YaskawaRobot,
+                                                           host: socket.socket) -> None:
+    """A real YRC1000, a listing left unacknowledged, refused the same host's next
+    requests with 0xE4A2 and kept the transfer."""
+    yrc.controller.files["BIG.DAT"] = bytes(1000)
+    _send(host, SAVE, b"BIG.DAT")
+    assert _send(host, SAVE, b"PICK.JBI").added_status == AddedStatus.ACK_ERROR
+    assert _send(host, SAVE, ack=True, block=1).block == 2
+
+
+def test_another_host_is_told_the_controller_is_busy(yrc: YaskawaRobot,
+                                                     host: socket.socket) -> None:
+    """The same controller answered another socket's request with 0xE444."""
+    yrc.controller.files["BIG.DAT"] = bytes(1000)
+    _send(host, SAVE, b"BIG.DAT")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as other:
+        other.settimeout(1)
+        other.connect(("127.0.0.1", yrc.hses_file_port))
+        assert _send(other, LIST, b"*.JBI").added_status == AddedStatus.BUSY
+
+
+def test_an_abandoned_transfer_is_dropped(yrc: YaskawaRobot) -> None:
+    """The real one took requests again a minute or two later."""
+    now = [0.0]
+    files = HsesFileServer(yrc.controller, clock=lambda: now[0])
+    yrc.controller.files["BIG.DAT"] = bytes(1000)
+
+    def request(name: bytes) -> Answer:
+        datagram = files.handle(encode_request(Request(
+            division=Division.FILE, request_id=1, command=0, instance=0, attribute=0,
+            service=SAVE, data=name)), ("10.0.0.1", 1))
+        assert datagram is not None
+        return parse_answer(datagram)
+
+    request(b"BIG.DAT")
+    now[0] = TRANSFER_TIMEOUT - 1
+    assert request(b"PICK.JBI").added_status == AddedStatus.ACK_ERROR
+    now[0] = 2 * TRANSFER_TIMEOUT
+    assert request(b"PICK.JBI").status is Status.OK
 
 
 def test_an_ack_for_the_wrong_block_ends_the_transfer(yrc: YaskawaRobot,

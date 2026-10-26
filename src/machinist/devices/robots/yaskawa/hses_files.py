@@ -14,6 +14,11 @@ added, and each block is acknowledged by the side that receives it:
   the request (block 0), then each block, and keeps the file after the last
 - delete (0x09): the host names a file; the controller acknowledges
 
+One transfer runs at a time, controller-wide, as on a real YRC1000 (an
+HC10DTP's): a request while one is open is refused, 0xE4A2 to the host that
+opened it and 0xE444 (busy) to any other, until it ends or lies idle for
+TRANSFER_TIMEOUT.
+
 The manual's figures put file control on UDP 10041 in two places and on
 10040 in two others; this serves it on its own port, 10041 by default.
 """
@@ -21,6 +26,8 @@ The manual's figures put file control on UDP 10041 in two places and on
 from __future__ import annotations
 
 import fnmatch
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ....transport.yaskawa_hses import (
@@ -45,6 +52,10 @@ JOB_PATTERN = "*" + JOB_SUFFIX
 LIST_PATTERNS = {"": JOB_PATTERN, "*.*": JOB_PATTERN}
 
 Address = tuple[str, int]
+#: Seconds an open transfer may lie idle before it is dropped. A real YRC1000 let
+#: an abandoned listing go somewhere between one and two minutes; the exact time is
+#: not known.
+TRANSFER_TIMEOUT = 60.0
 
 
 @dataclass(slots=True)
@@ -66,11 +77,21 @@ class _Receiving:
 
 
 @dataclass(slots=True)
+class _Open:
+    """The transfer under way, whose host it is, and when it last moved."""
+
+    host: Address
+    state: _Sending | _Receiving
+    moved: float
+
+
+@dataclass(slots=True)
 class HsesFileServer:
-    """HSES file control for a :class:`YaskawaController`, one transfer per host."""
+    """HSES file control for a :class:`YaskawaController`, one transfer at a time."""
 
     controller: YaskawaController
-    _transfers: dict[Address, _Sending | _Receiving] = field(default_factory=dict)
+    clock: Callable[[], float] = time.monotonic
+    _open: _Open | None = None
 
     def handle(self, datagram: bytes, sender: Address) -> bytes | None:
         try:
@@ -82,16 +103,24 @@ class HsesFileServer:
                 division=packet.division, request_id=packet.request_id,
                 service=packet.service + ANSWER_SERVICE, status=Status.UNDEFINED_COMMAND,
             ))
-        if not packet.ack:
-            self._transfers.pop(sender, None)  # a new request ends any transfer before it
-            return self._request(packet, sender)
-        transfer = self._transfers.get(sender)
-        if isinstance(transfer, _Sending):
-            return self._acknowledged(packet, sender, transfer)
-        if isinstance(transfer, _Receiving):
-            return self._received(packet, sender, transfer)
-        return _refuse(Division.FILE, packet.request_id, packet.service,
-                       AddedStatus.BLOCK_NUMBER_ERROR)
+        if self._open is not None and self.clock() - self._open.moved > TRANSFER_TIMEOUT:
+            self._open = None  # abandoned
+        if packet.ack:
+            return self._continue(packet, sender)
+        if self._open is not None:
+            added = AddedStatus.ACK_ERROR if self._open.host == sender else AddedStatus.BUSY
+            return _refuse(Division.FILE, packet.request_id, packet.service, added)
+        return self._request(packet, sender)
+
+    def _continue(self, packet: Request, sender: Address) -> bytes | None:
+        """A host's ACK of a block sent, or its next block of a file it loads."""
+        if self._open is None or self._open.host != sender:
+            return _refuse(Division.FILE, packet.request_id, packet.service,
+                           AddedStatus.BLOCK_NUMBER_ERROR)
+        self._open.moved = self.clock()
+        if isinstance(self._open.state, _Sending):
+            return self._acknowledged(packet, self._open.state)
+        return self._received(packet, self._open.state)
 
     # --- requests ---------------------------------------------------------------
 
@@ -129,7 +158,7 @@ class HsesFileServer:
     def _load(self, request: Request, sender: Address, name: str) -> bytes:
         if not name:
             return _refuse(Division.FILE, request.request_id, LOAD, AddedStatus.FILE_NOT_FOUND)
-        self._transfers[sender] = _Receiving(name)
+        self._open = _Open(sender, _Receiving(name), self.clock())
         return _answer(request, LOAD, block=0)
 
     # --- sending (save, list) -----------------------------------------------------
@@ -137,7 +166,7 @@ class HsesFileServer:
     def _start_sending(self, request: Request, sender: Address, content: bytes) -> bytes:
         blocks = [content[i : i + MAX_DATA] for i in range(0, len(content), MAX_DATA)] or [b""]
         sending = _Sending(service=request.service, blocks=blocks)
-        self._transfers[sender] = sending
+        self._open = _Open(sender, sending, self.clock())
         return self._next_block(request.request_id, sending)
 
     def _next_block(self, request_id: int, sending: _Sending) -> bytes:
@@ -149,31 +178,31 @@ class HsesFileServer:
             block=sending.sent + (LAST_BLOCK if last else 0),
         ))
 
-    def _acknowledged(self, ack: Request, sender: Address, sending: _Sending) -> bytes | None:
+    def _acknowledged(self, ack: Request, sending: _Sending) -> bytes | None:
         last = sending.sent == len(sending.blocks)
         expected = sending.sent + (LAST_BLOCK if last else 0)
         if ack.block != expected:
-            del self._transfers[sender]
+            self._open = None
             return _refuse(Division.FILE, ack.request_id, ack.service,
                            AddedStatus.BLOCK_NUMBER_ERROR)
         if last:
-            del self._transfers[sender]
+            self._open = None
             return None  # the host's last ACK is answered with nothing
         return self._next_block(ack.request_id, sending)
 
     # --- receiving (load) ---------------------------------------------------------
 
-    def _received(self, data: Request, sender: Address, receiving: _Receiving) -> bytes:
+    def _received(self, data: Request, receiving: _Receiving) -> bytes:
         number = data.block & ~LAST_BLOCK
         if number != len(receiving.received) + 1 or len(data.data) > MAX_DATA:
-            del self._transfers[sender]
+            self._open = None
             return _refuse(Division.FILE, data.request_id, LOAD, AddedStatus.BLOCK_NUMBER_ERROR)
         receiving.received.append(data.data)
         if data.block & LAST_BLOCK:
             self.controller.files[receiving.name] = b"".join(receiving.received)
             self.controller.note("hses file", action="loaded", name=receiving.name,
                                  size=len(self.controller.files[receiving.name]))
-            del self._transfers[sender]
+            self._open = None
         return _answer(data, LOAD, block=data.block)
 
 
