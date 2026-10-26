@@ -552,6 +552,15 @@ def test_no_move_in_teach_mode(yrc: YaskawaRobot) -> None:
     assert answer.added_status == AddedStatus.INCORRECT_MODE
 
 
+def test_in_teach_mode_with_the_servos_off_the_mode_is_the_refusal(yrc: YaskawaRobot) -> None:
+    """A real GP8's YRC1000, turned to TEACH, switches its servos off; a joint move then
+    is refused for the mode (0x2080), not for the servos (0x2070)."""
+    yrc.controller.mode = Status1.TEACH
+    assert _set(yrc, 0x83, 2, 2).status is Status.OK
+    answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
+    assert answer.added_status == AddedStatus.INCORRECT_MODE
+
+
 @pytest.mark.parametrize("command", [0x76, 0x77])
 def test_position_error_and_torque_are_zero(yrc: YaskawaRobot, command: int) -> None:
     assert _ints(_ask(yrc, command, 1, 0, GET_ALL)) == (0,) * 8
