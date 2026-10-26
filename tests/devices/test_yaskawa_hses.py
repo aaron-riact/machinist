@@ -539,6 +539,15 @@ def test_a_refusal_is_noted_with_its_added_status(yrc: YaskawaRobot) -> None:
     )
 
 
+def test_a_move_during_an_emergency_stop_finds_the_servos_off(yrc: YaskawaRobot) -> None:
+    """A real GP8's YRC1000, E-stopped during a jog, raised no alarm and refused the next
+    joint moves 0x2070 (servo off)."""
+    yrc.arm.estop()
+    answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
+    assert answer.added_status == AddedStatus.SERVO_OFF
+    assert _ints(_ask(yrc, 0x72, 1, 2, GET_SINGLE)) == (0x00,)
+
+
 def test_no_move_during_an_alarm(yrc: YaskawaRobot) -> None:
     yrc.arm.fault()
     answer = _ask(yrc, 0x8B, 1, 1, SET_ALL, _pulses((0,) * 8))
