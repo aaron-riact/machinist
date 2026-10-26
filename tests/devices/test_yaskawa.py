@@ -578,10 +578,11 @@ def test_savev_reads_a_p_variable_in_pulses(motoman: YaskawaRobot) -> None:
 
 
 def test_savev_reads_a_p_variable_in_base_coordinates(motoman: YaskawaRobot) -> None:
+    """Form 4 as HSES keeps it is type 1 here, as a real YRC1000's P000 read."""
     record = (16, 4, 2, 0, 0, 1000500, -2000, 300000, 1800000, 0, -900000, 0, 0)
     motoman.controller.positions["P"] = {5: record}
     assert _answer(motoman, "SAVEV", "4,5") == (
-        b"1,0,1000.500,-2.000,300.000,180.00,0.00,-90.00,4,2\r"
+        b"1,0,1000.500,-2.000,300.000,180.00,0.00,-90.00,1,2\r"
     )
 
 
@@ -654,11 +655,25 @@ def test_loadv_writes_a_p_variable_in_pulses(motoman: YaskawaRobot) -> None:
 
 
 def test_loadv_writes_a_p_variable_in_a_user_frame(motoman: YaskawaRobot) -> None:
-    """User frame 3 is coordinate 4; HSES keeps it as data type 18, user 3."""
+    """User frame 3 is coordinate 4; HSES keeps it as data type 18, user 3, and type 4
+    as HSES numbers the form, 1."""
     data = "4,5,1,4,1000.5,-2,300,180,0,-90,4,2"
     assert _answer(motoman, "LOADV", data) == b"0000\r\n"
-    record = (18, 4, 2, 3, 0, 1000500, -2000, 300000, 1800000, 0, -900000, 0, 0)
+    record = (18, 1, 2, 3, 0, 1000500, -2000, 300000, 1800000, 0, -900000, 0, 0)
     assert motoman.controller.positions["P"][5] == record
+
+
+def test_the_ethernet_server_numbers_the_form_apart_from_hses(motoman: YaskawaRobot) -> None:
+    """A real YRC1000 (an HC10DTP's) read one posture as form 4 over HSES (0x75,
+    0x33D) and as type 1 in RPOSC: HSES's bit 2 is the Ethernet server's bit 0."""
+    motoman.controller.form = 0b000100
+    assert _answer(motoman, "RPOSC", "0,0").endswith(b",1,0\r")
+
+
+def test_a_moves_type_is_kept_as_hses_numbers_the_form(motoman: YaskawaRobot) -> None:
+    move = "50, 0, 100, 200, 300, 10, 20, 30, 1, 5, 0, 0, 0, 0, 0, 0"
+    assert _answer(motoman, "MOVJ", move) == b"0000\r\n"
+    assert motoman.controller.form == 0b000100
 
 
 def test_loadv_then_savev_reads_a_position_back(motoman: YaskawaRobot) -> None:
