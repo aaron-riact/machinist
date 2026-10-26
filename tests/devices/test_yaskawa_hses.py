@@ -290,6 +290,51 @@ def _cartesian_position(robot: YaskawaRobot) -> tuple[int, ...]:
     return _ints(_ask(robot, 0x75, 101, 0, GET_ALL))[5:11]
 
 
+@pytest.fixture
+def hc10dtp() -> Iterator[YaskawaRobot]:
+    """An HC10DTP, whose soft limits are a real one's, at T -155 degrees."""
+    options = YaskawaOptions(controller="yrc1000", robot="hc10dtp", protocols=("hses",),
+                             hses_port=free_port(), start_joints_deg=(0, 0, 0, 0, -60, -155))
+    robot = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    robot.start()
+    try:
+        wait_running(robot)
+        yield robot
+    finally:
+        robot.stop()
+
+
+#: The HC10DTP's T one degree past its soft limit of -250 degrees (1619.146 pulses each).
+T_PAST_ITS_LIMIT = -406406
+
+
+def test_a_move_past_a_soft_limit_is_taken_then_alarms(hc10dtp: YaskawaRobot) -> None:
+    """As a real HC10DTP did: the move answered OK, then alarm 4980 DESTINATION PULSE
+    LIMIT, its data the axes past their limits (32 = T), before any motion; the servos
+    stay on."""
+    before = _ints(_ask(hc10dtp, 0x75, 1, 0, GET_ALL))[5:11]
+    move = _pulses((*before[:5], T_PAST_ITS_LIMIT, 0, 0))
+    assert _ask(hc10dtp, 0x8B, 1, 1, SET_ALL, move).status is Status.OK
+    _settle(hc10dtp)
+    code, data = struct.unpack_from("<2i", _ask(hc10dtp, 0x70, 1, 0, GET_ALL).data)
+    assert (code, data) == (4980, 32)
+    status2 = _ints(_ask(hc10dtp, 0x72, 1, 2, GET_SINGLE))[0]
+    assert status2 & Status2.ALARM
+    assert status2 & Status2.SERVO_ON
+    assert _ints(_ask(hc10dtp, 0x75, 1, 0, GET_ALL))[5:11] == before
+
+
+def test_reset_clears_the_soft_limit_alarm(hc10dtp: YaskawaRobot) -> None:
+    before = _ints(_ask(hc10dtp, 0x75, 1, 0, GET_ALL))[5:11]
+    _ask(hc10dtp, 0x8B, 1, 1, SET_ALL, _pulses((*before[:5], T_PAST_ITS_LIMIT, 0, 0)))
+    _settle(hc10dtp)
+    assert _set(hc10dtp, 0x82, 2, 1).status is Status.OK  # CANCEL leaves it
+    assert struct.unpack_from("<i", _ask(hc10dtp, 0x70, 1, 0, GET_ALL).data)[0] == 4980
+    assert _set(hc10dtp, 0x82, 1, 1).status is Status.OK  # RESET clears it
+    assert struct.unpack_from("<i", _ask(hc10dtp, 0x70, 1, 0, GET_ALL).data)[0] == 0
+    assert _ask(hc10dtp, 0x8B, 1, 1, SET_ALL, _pulses((*before, 0, 0))).status is Status.OK
+
+
 def test_pulse_joint_move(yrc: YaskawaRobot) -> None:
     move = _pulses((0, 0, 0, 0, -36654, 0, 0, 0))
     assert _ask(yrc, 0x8B, 1, 1, SET_ALL, move).status is Status.OK
