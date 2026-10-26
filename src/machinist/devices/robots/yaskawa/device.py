@@ -52,9 +52,9 @@ class YaskawaOptions(ArmOptions):
     #: Each joint's top speed in degrees per second, which 100 % of a joint
     #: move's speed means.
     max_joint_speed_deg_s: tuple[float, ...]
-    #: Each joint's soft limit in pulses either side of zero: a move whose end lies
+    #: Each joint's soft limits, its lowest and highest pulses: a move whose end lies
     #: past one raises alarm 4980 instead of moving. Unset, none is checked.
-    soft_limit_pulses: tuple[int, ...] | None = None
+    soft_limit_pulses: tuple[tuple[int, int], ...] | None = None
 
     #: What the cell's ladder copies: each network-input byte to another
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.

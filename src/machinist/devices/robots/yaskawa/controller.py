@@ -86,8 +86,8 @@ class YaskawaArm:
     max_joint_speed_deg_s: tuple[float, ...]
     #: The model name the controller reports (HSES system information).
     model: str
-    #: Each axis's soft limit, in pulses either side of zero; None where not known.
-    soft_limit_pulses: tuple[int, ...] | None = None
+    #: Each axis's soft limits, its lowest and highest pulses; None where not known.
+    soft_limit_pulses: tuple[tuple[int, int], ...] | None = None
 
 
 _URDF_DIR = Path(__file__).parent.parent / "urdf"
@@ -166,7 +166,8 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(130.0, 130.0, 180.0, 180.0, 250.0, 250.0),
         model="1-06VXCP10-A0*(H",
         # That one's soft limits (ALL.PRM S1C1G 800-815): 210, 180, 290, 210, 130, 250 deg.
-        soft_limit_pulses=(560974, 480835, 680751, 340021, 210488, 404786),
+        soft_limit_pulses=((-560974, 560974), (-480835, 480835), (-680751, 680751),
+                           (-340021, 340021), (-210488, 210488), (-404786, 404786)),
     ),
 }
 
@@ -419,9 +420,9 @@ class YaskawaController:
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
     #: The alarm showing, and every alarm so far, newest first.
     active_alarm: Alarm | None = None
-    #: Each axis's soft limit in pulses either side of zero, None for none: a move whose
+    #: Each axis's soft limits, its lowest and highest pulses, None for none: a move whose
     #: end lies past one is taken, then raises DESTINATION_PULSE_LIMIT without moving.
-    soft_limit_pulses: tuple[int, ...] | None = None
+    soft_limit_pulses: tuple[tuple[int, int], ...] | None = None
     #: That alarm, while it shows. Unlike a fault it leaves the servos on.
     limit_alarm: Alarm | None = None
     alarm_history: list[Alarm] = field(default_factory=list)
@@ -624,9 +625,9 @@ class YaskawaController:
             return False
         pulses = [round(math.degrees(joint) * ratio)
                   for joint, ratio in zip(joints, self.pulses_per_degree, strict=True)]
-        axes = sum(1 << axis for axis, (pulse, limit)
+        axes = sum(1 << axis for axis, (pulse, (low, high))
                    in enumerate(zip(pulses, self.soft_limit_pulses, strict=True))
-                   if abs(pulse) > limit)
+                   if not low <= pulse <= high)
         if not axes:
             return False
         self.limit_alarm = Alarm(code=DESTINATION_PULSE_LIMIT, data=axes,
