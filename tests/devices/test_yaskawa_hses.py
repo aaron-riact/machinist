@@ -317,6 +317,17 @@ def test_a_long_straight_move_is_answered_before_it_is_planned(yrc: YaskawaRobot
     assert (x, y, z) == pytest.approx(ACROSS[:3], abs=100)
 
 
+def test_a_yrc1000_refuses_a_move_while_one_runs(yrc: YaskawaRobot) -> None:
+    """A real YRC1000 (an HC10DTP's) answered a second straight move, sent 20 ms after
+    the first, at once with 0x2010; only the first ran. Over HSES nothing is queued."""
+    assert _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, ACROSS, speed=50_000)).status is Status.OK
+    second = _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, HOME))
+    assert second.added_status == AddedStatus.MANIPULATOR_OPERATING
+    _settle(yrc)
+    x, y, z, *_ = _cartesian_position(yrc)
+    assert (x, y, z) == pytest.approx(ACROSS[:3], abs=100)
+
+
 def test_a_straight_move_being_planned_shows_as_running(yrc: YaskawaRobot) -> None:
     _ask(yrc, 0x8A, 2, 1, SET_ALL, _cartesian(2, ACROSS, speed=50_000))
     assert _ints(_ask(yrc, 0x72, 1, 1, GET_SINGLE))[0] & Status1.RUNNING
