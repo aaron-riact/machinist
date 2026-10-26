@@ -103,8 +103,11 @@ class HsesFileServer:
                 division=Division.FILE, request_id=request.request_id,
                 service=request.service + ANSWER_SERVICE, status=Status.UNDEFINED_COMMAND,
             ))
-        name = request.data.split(b"\0", 1)[0].decode("ascii", "replace")
-        return handler(request, sender, name)
+        if request.data.endswith(b"\0"):
+            # A real YRC1000 refuses a NUL-terminated name, though the name is there.
+            return _refuse(Division.FILE, request.request_id, request.service,
+                           AddedStatus.DATA_SIZE_ZERO)
+        return handler(request, sender, request.data.decode("ascii", "replace"))
 
     def _delete(self, request: Request, sender: Address, name: str) -> bytes:
         if name not in self.controller.files:
