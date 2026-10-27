@@ -19,7 +19,7 @@ from ...transport.modbus_server import HoldingRegisterServer
 from ...transport.registers import RegisterPort
 
 REG_INPUTS = 0x0000
-REG_OUTPUTS = 0x0100
+REG_OUTPUTS = 0x0800
 
 
 class WeidmullerUR20Options(Options):

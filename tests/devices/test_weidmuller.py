@@ -31,12 +31,12 @@ def test_write_then_read_outputs() -> None:
     device.start()
     try:
         wait_running(device)
-        # Write 0xFF to register 0x0100 (outputs 1..8 all on).
-        write_body = struct.pack(">BHH", 0x06, 0x0100, 0x00FF)
+        # Write 0xFF to register 0x0800 (outputs 1..8 all on).
+        write_body = struct.pack(">BHH", 0x06, 0x0800, 0x00FF)
         _modbus_request("127.0.0.1", port, write_body)
 
-        # Read back register 0x0100.
-        read_body = struct.pack(">BHH", 0x03, 0x0100, 1)
+        # Read back register 0x0800.
+        read_body = struct.pack(">BHH", 0x03, 0x0800, 1)
         resp = _modbus_request("127.0.0.1", port, read_body)
         # MBAP(7) + func(1) + count(1) + 2 bytes
         value = struct.unpack(">H", resp[9:11])[0]
