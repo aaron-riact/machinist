@@ -1,7 +1,8 @@
 """Weidmuller UR20 IO controller (Modbus/TCP) emulator.
 
 The UR20 series exposes its discrete IO as Modbus holding registers,
-mapped one bit per IO point. Configuration declares ``inputs`` and
+mapped one bit per IO point, and its outputs also as coils, one coil per
+output. Configuration declares ``inputs`` and
 ``outputs`` counts; we expose a :class:`SignalBank` with names ``i1..in``
 and ``o1..on`` so other devices can wire to them via ``io_links`` in YAML.
 """
@@ -16,10 +17,11 @@ from ...core.options import Options
 from ...core.registry import register
 from ...core.types import Endpoint
 from ...transport.modbus_server import HoldingRegisterServer
-from ...transport.registers import RegisterPort
+from ...transport.registers import CoilPort, RegisterPort
 
 REG_INPUTS = 0x0000
 REG_OUTPUTS = 0x0800
+COIL_OUTPUTS = 0x8000
 
 
 class WeidmullerUR20Options(Options):
@@ -56,6 +58,16 @@ class WeidmullerUR20(Device, HasIO, HasRegisters):
         """This controller's holding registers, servable over any front end."""
         return RegisterPort(on_read=self._on_read, on_write=self._on_write)
 
+    @property
+    def coil_port(self) -> CoilPort:
+        """This controller's output coils."""
+        return CoilPort(on_write=self._on_coil_write)
+
+    def _on_coil_write(self, address: int, value: bool) -> None:
+        idx = address - COIL_OUTPUTS + 1
+        if 1 <= idx <= self._cfg.outputs:
+            self.io[f"o{idx}"].set(value)
+
     def _on_write(self, address: int, value: int) -> None:
         if not (REG_OUTPUTS <= address < REG_OUTPUTS + 16):
             return
@@ -86,6 +98,7 @@ def _factory(name: str, endpoint: Endpoint, bus: EventBus, opts: WeidmullerUR20O
             host=endpoint.host,
             port=endpoint.port,
             registers=device.register_port,
+            coils=device.coil_port,
         )
     )
     return device
