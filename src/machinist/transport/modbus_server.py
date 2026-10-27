@@ -7,6 +7,7 @@ format (MBAP header + PDU) that we implement here for the function
 codes our emulators actually use:
 
 * 0x03  Read Holding Registers
+* 0x05  Write Single Coil (only for a device that has coils)
 * 0x06  Write Single Register
 * 0x10  Write Multiple Registers
 
@@ -22,20 +23,27 @@ import struct
 import threading
 from collections.abc import Callable
 
-from .registers import ReadCallback, RegisterPort, WriteCallback
+from .registers import CoilPort, ReadCallback, RegisterPort, WriteCallback
 from .service import Service
 
-__all__ = ["HoldingRegisterServer", "ReadCallback", "RegisterPort", "WriteCallback"]
+__all__ = ["CoilPort", "HoldingRegisterServer", "ReadCallback", "RegisterPort", "WriteCallback"]
 
 _MBAP = struct.Struct(">HHHB")  # txn id, proto id, length, unit id
 _HEADER_LEN = _MBAP.size
 
 _FUNC_READ_HOLDING = 0x03
+_FUNC_WRITE_COIL = 0x05
 _FUNC_WRITE_SINGLE = 0x06
 _FUNC_WRITE_MULTIPLE = 0x10
 
 _EX_ILLEGAL_FUNCTION = 0x01
 _EX_ILLEGAL_DATA_ADDRESS = 0x02
+_EX_ILLEGAL_DATA_VALUE = 0x03
+
+# The only two values function 0x05 allows. Anything else is refused, not
+# rounded to on or off.
+_COIL_ON = 0xFF00
+_COIL_OFF = 0x0000
 
 
 class HoldingRegisterServer(Service):
@@ -47,11 +55,13 @@ class HoldingRegisterServer(Service):
         host: str,
         port: int,
         registers: RegisterPort,
+        coils: CoilPort | None = None,
         on_connect_change: Callable[[int], None] | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._registers = registers
+        self._coils = coils
         self._on_connect_change = on_connect_change
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
@@ -132,6 +142,8 @@ class HoldingRegisterServer(Service):
         try:
             if func == _FUNC_READ_HOLDING:
                 return self._read_holding(body)
+            if func == _FUNC_WRITE_COIL and self._coils is not None:
+                return self._write_coil(self._coils, body)
             if func == _FUNC_WRITE_SINGLE:
                 return self._write_single(body)
             if func == _FUNC_WRITE_MULTIPLE:
@@ -144,6 +156,13 @@ class HoldingRegisterServer(Service):
         address, count = struct.unpack(">HH", body[1:5])
         payload = b"".join(struct.pack(">H", v) for v in self._registers.read(address, count))
         return bytes([_FUNC_READ_HOLDING, len(payload)]) + payload
+
+    def _write_coil(self, coils: CoilPort, body: bytes) -> bytes:
+        address, value = struct.unpack(">HH", body[1:5])
+        if value not in (_COIL_ON, _COIL_OFF):
+            return _exception(_FUNC_WRITE_COIL, _EX_ILLEGAL_DATA_VALUE)
+        coils.write(address, value == _COIL_ON)
+        return bytes([_FUNC_WRITE_COIL]) + struct.pack(">HH", address, value)
 
     def _write_single(self, body: bytes) -> bytes:
         address, value = struct.unpack(">HH", body[1:5])
