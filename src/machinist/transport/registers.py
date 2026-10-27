@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 ReadCallback = Callable[[int], int]
 WriteCallback = Callable[[int, int], None]
+CoilWriteCallback = Callable[[int, bool], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,3 +35,14 @@ class RegisterPort:
         """Write consecutive registers starting at *address*."""
         for offset, value in enumerate(values):
             self.on_write(address + offset, value & 0xFFFF)
+
+
+@dataclass(frozen=True, slots=True)
+class CoilPort:
+    """One slave's writable coils: single output bits, addressed apart from
+    its registers."""
+
+    on_write: CoilWriteCallback
+
+    def write(self, address: int, value: bool) -> None:
+        self.on_write(address, value)
