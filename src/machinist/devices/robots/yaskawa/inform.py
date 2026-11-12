@@ -558,11 +558,17 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
 )
 
 
+_NOTHING_TO_DO = re.compile(r"ADVSTOP|ADVINIT|SHCKRST|SHCKSET SSL#\(\d+\)")
+
+
 def parse_instruction(text: str) -> Instruction | None:
     """One line of a job; None for one that does nothing (a comment, NOP, a line
-    commented out with COMM)."""
+    commented out with COMM), or nothing the emulator has: look-ahead (ADVSTOP,
+    ADVINIT) and the collision sensor's sensitivity (SHCKSET, SHCKRST)."""
     line = " ".join(text.split())
     if not line or line.startswith("'") or line == "NOP" or line.startswith("COMM "):
+        return None
+    if _NOTHING_TO_DO.fullmatch(line):
         return None
     for pattern, make in _PATTERNS:
         if match := pattern.fullmatch(line):
