@@ -73,6 +73,7 @@ def test_an_output_follows_what_a_job_switches() -> None:
     robot.controller.files["LASER_ON.JBI"] = (
         b"/JOB\r\n//NAME LASER_ON\r\n//INST\r\nNOP\r\nDOUT OT#(9) ON\r\nEND\r\n")
     robot.controller.start_job("LASER_ON")
+    assert robot.controller.wait_job(2)
     assert robot.io["ot9"].value is True
 
 

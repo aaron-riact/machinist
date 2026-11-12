@@ -19,7 +19,13 @@ from ....kinematics.api import Joints, Pose
 from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ....kinematics.units import Radians
 from ..arm import NoLinearPath, RobotArm
-from .inform import JobStoppedError, input_byte, output_byte, run_job
+from .inform import (
+    JobInterruptedError,
+    JobStoppedError,
+    input_byte,
+    output_byte,
+    run_job,
+)
 from .ladder import Ladder
 
 #: The alarm a faulted arm reports. A real controller names the cause; the
@@ -494,6 +500,13 @@ class YaskawaController:
     _motion_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
+    #: The started job's thread, while it runs.
+    _job_thread: threading.Thread | None = field(default=None, repr=False)
+    #: Why the running job is to stop (a hold, servo off), once it is.
+    _job_stop: str | None = field(default=None, repr=False)
+    #: Notified on every IO write and every request to stop the job: what a job
+    #: waits on.
+    _changes: threading.Condition = field(default_factory=threading.Condition, repr=False)
     #: When the controller's power came on: when the device was made.
     powered_on: datetime = field(default_factory=datetime.now)
 
@@ -572,7 +585,7 @@ class YaskawaController:
             running = moving and self._move_shows_running
         else:
             running = moving or waiting
-        if running:
+        if running or self.job_running:
             data1 |= Status1.RUNNING
         data2 = Status2(0)
         if view.servo_on and not view.estopped:
@@ -625,6 +638,7 @@ class YaskawaController:
                 raise CommandRefusedError(Refusal.EMERGENCY_STOP, "emergency stop is engaged")
             self.arm.set_servo(True)
         else:
+            self._stop_job("servo off")
             with self._motion_lock:
                 self._stops += 1
                 self._drop_buffered(Refusal.SERVO_OFF, "servo off")
@@ -634,6 +648,7 @@ class YaskawaController:
     def set_hold(self, on: bool) -> None:
         self.hold = on
         if on:
+            self._stop_job("hold")
             with self._motion_lock:
                 self._stops += 1
                 self._drop_buffered(Refusal.HELD, "hold")
@@ -719,21 +734,68 @@ class YaskawaController:
         return None if data is None else data.decode("ascii", errors="replace")
 
     def start_job(self, name: str | None = None) -> None:
-        """Start the executing job, or job *name*, and run it to its end at once, from
-        its start: the I/O part of INFORM (see :mod:`.inform`). Where the job stops
-        early, on what the emulator cannot run or a WAIT not met, the device notes it,
-        as a real controller would show the job stopped there."""
+        """Start the executing job, or job *name*, from its start, and answer at once:
+        the job runs on its own thread, in real time (see :mod:`.inform`). Where it
+        stops early, on what the emulator cannot run, a hold or servo off, the device
+        notes it, as a real controller would show the job stopped there."""
         self._check_can_move()
+        if self.job_running:
+            raise CommandRefusedError(Refusal.MOVING, "a job is running")
         if name is not None:
             self.select_job(name)
         if not self.executing_job:
             raise CommandRefusedError(Refusal.NO_EXECUTING_JOB, "no job is set to execute")
+        self._job_stop = None
+        self._job_thread = threading.Thread(
+            target=self._run_job, args=(self.executing_job,), name="yaskawa-job", daemon=True)
+        self._job_thread.start()
+
+    def _run_job(self, name: str) -> None:
         try:
-            run_job(self, self.executing_job)
+            run_job(self, name)
         except JobStoppedError as stopped:
             self.note("job_stopped", job=stopped.job, line=stopped.line, reason=stopped.reason)
-            return
-        self.note("job_ran", job=self.executing_job)
+        else:
+            self.note("job_ran", job=name)
+
+    @property
+    def job_running(self) -> bool:
+        return self._job_thread is not None and self._job_thread.is_alive()
+
+    def wait_job(self, seconds: float) -> bool:
+        """Wait at most *seconds* for the started job to end; whether it has."""
+        thread = self._job_thread
+        if thread is not None:
+            thread.join(seconds)
+        return not self.job_running
+
+    def _stop_job(self, reason: str) -> None:
+        """Stop the running job at its next step, or in what it waits on."""
+        with self._changes:
+            if self.job_running:
+                self._job_stop = reason
+                self._changes.notify_all()
+
+    # --- what a running job waits on (inform.JobHost) ---------------------------
+
+    def checkpoint(self) -> None:
+        if self._job_stop is not None:
+            raise JobInterruptedError(self._job_stop)
+
+    def sleep(self, seconds: float) -> None:
+        with self._changes:
+            self._changes.wait_for(lambda: self._job_stop is not None, timeout=seconds)
+        self.checkpoint()
+
+    def wait_until(self, test: Callable[[], bool], seconds: float | None) -> None:
+        with self._changes:
+            self._changes.wait_for(lambda: self._job_stop is not None or test(), timeout=seconds)
+        self.checkpoint()
+
+    def after(self, seconds: float, action: Callable[[], None]) -> None:
+        timer = threading.Timer(seconds, action)
+        timer.daemon = True
+        timer.start()
 
     def check_tool(self, tool: int) -> int:
         if not 0 <= tool <= self.profile.max_tool:
@@ -930,6 +992,8 @@ class YaskawaController:
         """Pass on what the ladder's rungs read: bytes, signals and registers."""
         self.ladder.scan(self.io, self.variables.setdefault("register", {}))
         self.io_written()
+        with self._changes:
+            self._changes.notify_all()
 
     def set_input(self, number: int, on: bool) -> None:
         """Switch general input IN#number, as the wiring outside the controller does."""
@@ -938,7 +1002,9 @@ class YaskawaController:
 
     def set_direct_input(self, number: int, on: bool) -> None:
         """Switch direct input RIN#number."""
-        self.direct_inputs[number] = on
+        with self._changes:
+            self.direct_inputs[number] = on
+            self._changes.notify_all()
 
     def output(self, number: int) -> bool:
         """General output OT#number."""

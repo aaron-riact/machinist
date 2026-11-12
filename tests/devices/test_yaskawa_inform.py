@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import struct
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 import pytest
@@ -11,17 +12,25 @@ import pytest
 from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import YaskawaOptions, YaskawaRobot
+from machinist.devices.robots.yaskawa.controller import (
+    CommandRefusedError,
+    Status1,
+    YaskawaController,
+)
 from machinist.devices.robots.yaskawa.inform import (
     CallJob,
     Comparison,
     Job,
+    JobInterruptedError,
     JobStoppedError,
     Jump,
     Literal,
     SetOutput,
     SignalTest,
+    Timer,
     Unsupported,
     Variable,
+    Wait,
     parse_instruction,
     run_job,
 )
@@ -41,12 +50,32 @@ class _Host:
     io: dict[int, int] = field(default_factory=dict)
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
     scans: int = 0
+    #: Seconds passed, on the host's own clock: nothing really waits.
+    clock: float = 0.0
+    #: What the job left to do later, and when.
+    later: list[tuple[float, Callable[[], None]]] = field(default_factory=list)
 
     def job_text(self, name: str) -> str | None:
         return self.jobs.get(name)
 
     def run_ladder(self) -> None:
         self.scans += 1
+
+    def checkpoint(self) -> None:
+        pass
+
+    def sleep(self, seconds: float) -> None:
+        self.clock += seconds
+
+    def wait_until(self, test: Callable[[], bool], seconds: float | None) -> None:
+        if test():
+            return
+        if seconds is None:
+            raise JobInterruptedError("nothing here would ever switch it")
+        self.clock += seconds
+
+    def after(self, seconds: float, action: Callable[[], None]) -> None:
+        self.later.append((self.clock + seconds, action))
 
 
 @pytest.mark.parametrize(("text", "instruction"), [
@@ -59,7 +88,10 @@ class _Host:
     ("MOVL P010 V=50.0 PL=0", Unsupported("MOVL P010 V=50.0 PL=0")),
     ("SET I204 EXPRESS I203 / 3", Unsupported("SET I204 EXPRESS I203 / 3")),
     ("'OPEN GRIPPER A", None),
-    ("TIMER T=I020", None),
+    ("TIMER T=I020", Timer(Variable("I", 20))),
+    ("WAIT IN#(D022)=ON", Wait(SignalTest(output=False, ref=Variable("D", 22), on=True))),
+    ("WAIT IN#(7)=OFF T=2.5",
+     Wait(SignalTest(output=False, ref=Literal(7), on=False), Literal(2.5))),
 ])
 def test_a_line_parses_to_what_it_does(text: str, instruction: object) -> None:
     assert parse_instruction(text) == instruction
@@ -87,10 +119,34 @@ def test_a_called_job_runs_and_the_caller_goes_on() -> None:
     assert host.io[10010] == 0b11
 
 
-def test_a_pulse_leaves_its_output_off() -> None:
-    host = _Host({"P": _job("DOUT OT#(3) ON", "PULSE OT#(3) T=0.50")})
+def test_a_pulse_switches_its_output_on_and_off_again_after_its_time() -> None:
+    host = _Host({"P": _job("PULSE OT#(3) T=0.50", "PULSE OT#(4)")})
     run_job(host, "P")
+    assert host.io[10010] == 0b1100
+    assert [when for when, _ in host.later] == [0.5, 0.3]
+    for _, action in host.later:
+        action()
     assert host.io[10010] == 0
+
+
+def test_a_timer_lets_its_time_pass() -> None:
+    host = _Host({"T": _job("TIMER T=0.20", "SET I000 3", "TIMER T=I000")})
+    run_job(host, "T")
+    assert host.clock == pytest.approx(3.2)
+
+
+def test_a_wait_already_met_goes_straight_on() -> None:
+    host = _Host({"W": _job("WAIT IN#(9)=ON", "DOUT OT#(1) ON")}, io={20: 0b1})
+    run_job(host, "W")
+    assert host.clock == 0
+    assert host.io[10010] == 1
+
+
+def test_a_wait_with_a_time_goes_on_once_that_time_has_passed() -> None:
+    host = _Host({"W": _job("WAIT IN#(9)=ON T=1.5", "DOUT OT#(1) ON")})
+    run_job(host, "W")
+    assert host.clock == 1.5
+    assert host.io[10010] == 1
 
 
 def test_a_group_output_sets_its_whole_byte() -> None:
@@ -101,7 +157,7 @@ def test_a_group_output_sets_its_whole_byte() -> None:
 
 @pytest.mark.parametrize(("lines", "reason"), [
     (("MOVJ C00000 VJ=10.00",), "not emulated"),
-    (("WAIT IN#(7)=ON",), "WAIT not met"),
+    (("WAIT IN#(7)=ON",), "nothing here would ever switch it"),
     (("JUMP *NOWHERE",), "no label"),
     (("CALL JOB:MISSING",), "no such job"),
     (("*L", "JUMP *L"), "steps"),
@@ -156,6 +212,7 @@ def _ask(robot: YaskawaRobot, command: int, instance: int, attribute: int, servi
 def _start(robot: YaskawaRobot, job: str) -> None:
     _ask(robot, 0x87, 1, 0, 0x02, job.encode().ljust(32, b"\0") + struct.pack("<i", 0))
     _ask(robot, 0x86, 1, 1, 0x10, struct.pack("<i", 1))
+    assert robot.controller.wait_job(2)
 
 
 def test_a_started_job_switches_its_outputs_through_the_ladder(cell: YaskawaRobot) -> None:
@@ -170,3 +227,57 @@ def test_a_job_that_stops_is_noted(cell: YaskawaRobot) -> None:
     jobs = [event for event in events if event[0].startswith("job_")]
     assert jobs == [("job_stopped", {"job": "MOVE", "line": 1,
                                        "reason": "'MOVJ C00000 VJ=10.00' is not emulated"})]
+
+
+# --- On the controller: a started job runs on its own thread --------------------------
+
+
+@pytest.fixture
+def robot() -> YaskawaRobot:
+    options = YaskawaOptions(controller="dx200", robot="up50n")
+    m = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    m.controller.files["WAITING.JBI"] = _job("WAIT IN#(9)=ON", "DOUT OT#(1) ON").encode()
+    m.controller.files["TIMED.JBI"] = _job("TIMER T=0.30", "DOUT OT#(1) ON").encode()
+    return m
+
+
+def test_a_started_job_runs_on_while_the_start_is_answered(robot: YaskawaRobot) -> None:
+    controller = robot.controller
+    controller.start_job("WAITING")
+    assert controller.job_running
+    assert Status1.RUNNING in controller.status()[0]
+    controller.set_input(9, True)
+    assert controller.wait_job(2)
+    assert controller.output(1)
+    assert Status1.RUNNING not in controller.status()[0]
+
+
+def test_a_timer_takes_its_time(robot: YaskawaRobot) -> None:
+    started = time.monotonic()
+    robot.controller.start_job("TIMED")
+    assert robot.controller.wait_job(2)
+    assert time.monotonic() - started >= 0.3
+    assert robot.controller.output(1)
+
+
+def test_a_second_start_while_a_job_runs_is_refused(robot: YaskawaRobot) -> None:
+    robot.controller.start_job("WAITING")
+    with pytest.raises(CommandRefusedError, match="a job is running"):
+        robot.controller.start_job("TIMED")
+    robot.controller.set_input(9, True)
+    assert robot.controller.wait_job(2)
+
+
+@pytest.mark.parametrize(("stop", "reason"), [
+    (lambda c: c.set_hold(True), "hold"),
+    (lambda c: c.set_servo(False), "servo off"),
+])
+def test_a_hold_or_servo_off_stops_the_running_job(
+        robot: YaskawaRobot, stop: Callable[[YaskawaController], None], reason: str) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    robot.controller.note = lambda kind, **fields: events.append((kind, fields))
+    robot.controller.start_job("WAITING")
+    stop(robot.controller)
+    assert robot.controller.wait_job(2)
+    assert events == [("job_stopped", {"job": "WAITING", "line": 1, "reason": reason})]
+    assert not robot.controller.output(1)

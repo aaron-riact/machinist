@@ -6,13 +6,16 @@ cannot run (a move, ``EXPRESS``, ``IFTHEN`` ...) is kept as :class:`Unsupported`
 and stops the job only when reached, so a job that jumps past it still runs.
 
 Supported: comments, labels, ``NOP``/``END``/``RET``; ``DOUT OT#(..) ON|OFF``,
-``DOUT OG#(..) value``, ``PULSE OT#(..)``; ``SET Bnnn|Innn|Dnnn value``;
+``DOUT OG#(..) value``, ``PULSE OT#(..) [T=..]``; ``SET Bnnn|Innn|Dnnn value``;
 ``JUMP *LABEL``, ``JUMP JOB:X`` and ``CALL JOB:X``, each with an optional
-``IF`` on ``IN#(..)``/``OT#(..)`` or a variable; ``TIMER``; ``WAIT IN#(..)``.
-A signal or value is a number or a variable (``OT#(D001)``, ``T=I020``).
+``IF`` on ``IN#(..)``/``OT#(..)`` or a variable; ``TIMER T=..``;
+``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
+(``OT#(D001)``, ``T=I020``).
 
-The emulator does not wait: ``TIMER`` passes at once, a ``PULSE`` leaves its
-output off, and a ``WAIT`` that is not met stops the job.
+Time passes through the host: ``TIMER`` waits its time, a ``PULSE`` switches its
+output off after its time (0.3 s unless given), and a ``WAIT`` waits until its
+signal is as asked, or until its ``T=`` time has passed, then goes on. The host may
+stop the job at any of these, and between any two instructions.
 """
 
 from __future__ import annotations
@@ -20,13 +23,15 @@ from __future__ import annotations
 import operator
 import re
 from collections.abc import Callable, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 #: How many instructions a job may run before the emulator calls it a loop.
 MAX_STEPS = 100_000
 #: How deep CALL JOB may nest.
 MAX_CALL_DEPTH = 32
+#: How long a PULSE without T= keeps its output on, in seconds.
+PULSE_SECONDS = 0.3
 
 _VARIABLE = r"[BID]\d{3}"
 _VALUE = rf"(?:{_VARIABLE}|-?\d+(?:\.\d+)?)"
@@ -36,6 +41,14 @@ _OPERATORS: dict[str, Callable[[float, float], bool]] = {
     "=": operator.eq, "<>": operator.ne, "<=": operator.le, ">=": operator.ge,
     "<": operator.lt, ">": operator.gt,
 }
+
+
+class JobInterruptedError(Exception):
+    """The host stopped the job (a hold, servo off): why."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class JobStoppedError(Exception):
@@ -131,6 +144,12 @@ class SetOutputGroup:
 @dataclass(frozen=True, slots=True)
 class Pulse:
     ref: Operand
+    seconds: Operand = field(default_factory=lambda: Literal(PULSE_SECONDS))
+
+
+@dataclass(frozen=True, slots=True)
+class Timer:
+    seconds: Operand
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +179,8 @@ class CallJob:
 @dataclass(frozen=True, slots=True)
 class Wait:
     test: SignalTest
+    #: How long to wait at most before going on; None for as long as it takes.
+    seconds: Operand | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +188,7 @@ class Unsupported:
     text: str
 
 
-Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | SetVariable | Jump
+Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Jump
                | JumpJob | CallJob | Wait | Unsupported)
 
 #: Each instruction the emulator runs: its pattern, and what a match makes of it.
@@ -178,21 +199,24 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"DOUT OT#{_REF} (ON|OFF)", lambda m: SetOutput(_operand(m[1]), m[2] == "ON")),
         (rf"DOUT OG#{_REF} ({_VALUE})",
          lambda m: SetOutputGroup(_operand(m[1]), _operand(m[2]))),
-        (rf"PULSE OT#{_REF}(?: T=\S+)?", lambda m: Pulse(_operand(m[1]))),
+        (rf"PULSE OT#{_REF}", lambda m: Pulse(_operand(m[1]))),
+        (rf"PULSE OT#{_REF} T=({_VALUE})", lambda m: Pulse(_operand(m[1]), _operand(m[2]))),
+        (rf"TIMER T=({_VALUE})", lambda m: Timer(_operand(m[1]))),
         (rf"SET ({_VARIABLE}) ({_VALUE})", lambda m: SetVariable(_variable(m[1]), _operand(m[2]))),
         (rf"JUMP \*(\S+){_IF}", lambda m: Jump(m[1], _condition(m[2]))),
         (rf"JUMP JOB:(\S+){_IF}", lambda m: JumpJob(m[1], _condition(m[2]))),
         (rf"CALL JOB:(\S+){_IF}", lambda m: CallJob(m[1], _condition(m[2]))),
-        (rf"WAIT (IN|OT)#{_REF}=(ON|OFF)(?: T=\S+)?",
-         lambda m: Wait(SignalTest(m[1] == "OT", _operand(m[2]), m[3] == "ON"))),
+        (rf"WAIT (IN|OT)#{_REF}=(ON|OFF)(?: T=({_VALUE}))?",
+         lambda m: Wait(SignalTest(m[1] == "OT", _operand(m[2]), m[3] == "ON"),
+                        None if m[4] is None else _operand(m[4]))),
     )
 )
 
 
 def parse_instruction(text: str) -> Instruction | None:
-    """One line of a job; None for one that does nothing (a comment, NOP, TIMER)."""
+    """One line of a job; None for one that does nothing (a comment, NOP)."""
     line = " ".join(text.split())
-    if not line or line.startswith("'") or line == "NOP" or line.startswith("TIMER "):
+    if not line or line.startswith("'") or line == "NOP":
         return None
     for pattern, make in _PATTERNS:
         if match := pattern.fullmatch(line):
@@ -245,6 +269,20 @@ class JobHost(Protocol):
 
     def run_ladder(self) -> None: ...
 
+    def checkpoint(self) -> None:
+        """Go on; :class:`JobInterruptedError` when the job has been stopped."""
+
+    def sleep(self, seconds: float) -> None:
+        """Let *seconds* pass; :class:`JobInterruptedError` when the job is stopped
+        meanwhile."""
+
+    def wait_until(self, test: Callable[[], bool], seconds: float | None) -> None:
+        """Wait until *test* holds, or *seconds* have passed (None: no limit);
+        :class:`JobInterruptedError` when the job is stopped meanwhile."""
+
+    def after(self, seconds: float, action: Callable[[], None]) -> None:
+        """Do *action* once *seconds* have passed, while the job goes on."""
+
 
 def output_byte(number: int) -> int:
     """The first signal of the byte that holds general output OT#number."""
@@ -283,7 +321,11 @@ class _Run:
             number, instruction = job.lines[index]
             if self.steps > MAX_STEPS:
                 raise JobStoppedError(name, number, f"more than {MAX_STEPS} steps")
-            following = self._step(job, number, instruction, depth)
+            try:
+                self.host.checkpoint()
+                following = self._step(job, number, instruction, depth)
+            except JobInterruptedError as interrupted:
+                raise JobStoppedError(name, number, interrupted.reason) from None
             index = index + 1 if following is None else following
 
     def _step(self, job: Job, number: int, instruction: Instruction, depth: int) -> int | None:
@@ -301,8 +343,9 @@ class _Run:
                 return _END
             case CallJob(target_job, condition) if self._holds(condition):
                 self.call(target_job, depth=depth + 1)
-            case Wait(test) if not self._holds(test):
-                raise JobStoppedError(job.name, number, "WAIT not met; the emulator does not wait")
+            case Wait(test, seconds):
+                self.host.wait_until(lambda: self._holds(test),
+                                     None if seconds is None else self._value(seconds))
             case Unsupported(text):
                 raise JobStoppedError(job.name, number, f"{text!r} is not emulated")
             case _:
@@ -314,8 +357,12 @@ class _Run:
         match instruction:
             case SetOutput(ref, on):
                 self._set_output(self._int(ref), on)
-            case Pulse(ref):
-                self._set_output(self._int(ref), False)
+            case Pulse(ref, seconds):
+                number = self._int(ref)
+                self._set_output(number, True)
+                self.host.after(self._value(seconds), lambda: self._set_output(number, False))
+            case Timer(seconds):
+                self.host.sleep(self._value(seconds))
             case SetOutputGroup(group, value):
                 self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
                 self.host.run_ladder()

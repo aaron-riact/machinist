@@ -61,6 +61,7 @@ def test_a_scene_runs_a_saved_job_with_its_saved_variables(saved: Path) -> None:
     assert controller.files["TOOL.CND"] == b"//TOOL 0\r\n///NAME SAVED\r\n"
     assert {"MAIN", "GRIP_OPEN"} <= controller.jobs
     controller.start_job("GRIP_OPEN")
+    assert controller.wait_job(2)
     assert controller.read_io([30010]) == [0b01]
 
 

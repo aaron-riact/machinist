@@ -73,8 +73,8 @@ class YaskawaOptions(ArmOptions):
     #: two bytes (see :mod:`.ladder`). They run after ladder_copies.
     ladder: tuple[str, ...] = ()
     #: The names of the jobs the controller holds, each as a NAME.JBI file
-    #: that does nothing. A job that does something runs its I/O part when
-    #: started (see :mod:`.inform`), and finishes as soon as it starts.
+    #: that does nothing. A job that does something runs on its own thread
+    #: when started, as far as the emulator runs INFORM (see :mod:`.inform`).
     jobs: tuple[str, ...] = ()
     #: A folder of files saved from a real controller (see :mod:`.backup`): its
     #: jobs, TOOL.CND, CIOPRG.LST ..., and the variables in its VAR.DAT. They take
