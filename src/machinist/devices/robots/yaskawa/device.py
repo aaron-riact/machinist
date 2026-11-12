@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -15,6 +16,7 @@ from ....transport.framing import CR
 from ....transport.line_server import LineServer, Reply, SessionHandler
 from ....transport.message import UdpDatagramServer, UdpMessageServer
 from ..arm import ArmOptions, HasArm, arm_from_options
+from .backup import ControllerBackup
 from .controller import CONTROLLERS, JOB_SUFFIX, ROBOTS, YaskawaController, empty_job
 from .ethernet_server import EthernetServer, _Session
 from .hses import HighSpeedEthernetServer
@@ -70,6 +72,10 @@ class YaskawaOptions(ArmOptions):
     #: that does nothing. A job that does something runs its I/O part when
     #: started (see :mod:`.inform`), and finishes as soon as it starts.
     jobs: tuple[str, ...] = ()
+    #: A folder of files saved from a real controller (see :mod:`.backup`): its
+    #: jobs, TOOL.CND, CIOPRG.LST ..., and the variables in its VAR.DAT. They take
+    #: the place of the emulator's own files and of the jobs above of the same name.
+    controller_files: Path | None = None
     #: How many move commands may wait behind the one running: a count, or
     #: "unlimited". Unset takes the controller's (the NX100 none, the DX200 and
     #: YRC1000 one).
@@ -126,6 +132,12 @@ class YaskawaOptions(ArmOptions):
         return self
 
     @model_validator(mode="after")
+    def _controller_files_is_a_folder(self) -> YaskawaOptions:
+        if self.controller_files is not None and not self.controller_files.is_dir():
+            raise ValueError(f"controller_files {self.controller_files} is not a folder")
+        return self
+
+    @model_validator(mode="after")
     def _ladder_rungs_parse(self) -> YaskawaOptions:
         self.cell_ladder()
         return self
@@ -169,6 +181,8 @@ class YaskawaRobot(Device, HasArm):
         self.robot = options.robot
         self.hses_port = options.hses_port
         self.hses_file_port = options.hses_file_port
+        backup = (ControllerBackup.load(options.controller_files)
+                  if options.controller_files is not None else ControllerBackup({}, {}))
         self.controller = YaskawaController(
             arm=self.arm,
             profile=CONTROLLERS[options.controller],
@@ -176,7 +190,9 @@ class YaskawaRobot(Device, HasArm):
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             soft_limit_pulses=options.soft_limit_pulses,
             ladder=options.cell_ladder(),
-            files={name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
+            files={**{name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
+                   **backup.files},
+            variables=backup.variables,
             model=ROBOTS[options.robot].model if options.robot is not None else "",
             move_buffer=_move_buffer(options),
             running_bit_quirk=(CONTROLLERS[options.controller].running_bit_quirk
