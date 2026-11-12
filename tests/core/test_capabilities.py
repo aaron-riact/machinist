@@ -30,7 +30,7 @@ EXPECTED = {
     FanucKarelServer: {HasArm, HasIO},
     FanucFocasRobot: {HasArm, HasIO},
     RobotDevice: {HasArm},
-    YaskawaRobot: {HasArm},
+    YaskawaRobot: {HasArm, HasIO},
     URDashboardServer: {HasArm, HasFlange},
     HaasNGC: {HasMachineState, HasPrograms},
     MazakSinumerik840D: {HasMachineState, HasIO},

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
+from ....core.capabilities import HasIO
 from ....core.device import Device
 from ....core.events import EventBus
+from ....core.io import SignalBank
 from ....core.registry import register
 from ....core.types import Endpoint
 from ....transport.framing import CR
@@ -22,6 +25,7 @@ from .ethernet_server import EthernetServer, _Session
 from .hses import HighSpeedEthernetServer
 from .hses_files import HsesFileServer
 from .ladder import Ladder
+from .signals import ControllerSignal, SignalKind
 
 MOTOMAN_PORT = 80
 #: Where the High-Speed Ethernet Server (HSES) listens, over UDP: robot
@@ -84,6 +88,23 @@ class YaskawaOptions(ArmOptions):
     #: from the buffer. Unset takes the controller's (on for the NX100, off for
     #: the others); each time it hides a move the device notes it.
     running_bit_quirk: bool | None = None
+    #: The controller's signals other devices wire to (see :mod:`.signals`):
+    #: ``in10`` a general input, ``ot9`` a general output, ``rin1`` a direct input.
+    signals: tuple[ControllerSignal, ...] = ()
+
+    @field_validator("signals", mode="before")
+    @classmethod
+    def _signals_by_name(cls, raw: Any) -> Any:
+        if isinstance(raw, (list, tuple)):
+            return tuple(ControllerSignal.parse(n) if isinstance(n, str) else n for n in raw)
+        return raw
+
+    @model_validator(mode="after")
+    def _each_signal_once(self) -> YaskawaOptions:
+        names = [signal.name for signal in self.signals]
+        if len(set(names)) != len(names):
+            raise ValueError(f"signals lists one twice: {names}")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -164,7 +185,7 @@ class MotomanNX100Options(YaskawaOptions):
     robot: str | None = "up50n"
 
 
-class YaskawaRobot(Device, HasArm):
+class YaskawaRobot(Device, HasArm, HasIO):
     """A Yaskawa arm and controller, serving the protocols its options name."""
 
     kind = "yaskawa"
@@ -200,6 +221,8 @@ class YaskawaRobot(Device, HasArm):
                                else options.running_bit_quirk),
             note=self.emit,
         )
+        self.io = SignalBank(owner=name, publish=bus.publish)
+        self._wire_signals(options.signals)
         # A real ladder scans from power-up: an inverted rung is on before any write.
         self.controller.run_ladder()
         if "ethernet_server" in self.protocols:
@@ -214,6 +237,25 @@ class YaskawaRobot(Device, HasArm):
             self.add_service(
                 UdpDatagramServer(endpoint.host, self.hses_file_port, files.handle)
             )
+
+    def _wire_signals(self, signals: tuple[ControllerSignal, ...]) -> None:
+        """Inputs switch the controller's; outputs follow the controller's after each
+        write to its IO."""
+        outputs = []
+        for signal in signals:
+            declared = self.io.declare(signal.name, signal.direction)
+            match signal.kind:
+                case SignalKind.IN:
+                    declared.subscribe(partial(self.controller.set_input, signal.number))
+                case SignalKind.RIN:
+                    declared.subscribe(partial(self.controller.set_direct_input, signal.number))
+                case SignalKind.OT:
+                    outputs.append((signal.number, declared))
+
+        def follow_outputs() -> None:
+            for number, declared in outputs:
+                declared.set(self.controller.output(number))
+        self.controller.io_written = follow_outputs
 
     def settings(self) -> list[str]:
         """The controller and arm, each protocol it serves and where, and how it

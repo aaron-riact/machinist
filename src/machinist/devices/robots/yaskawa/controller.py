@@ -19,7 +19,7 @@ from ....kinematics.api import Joints, Pose
 from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ....kinematics.units import Radians
 from ..arm import NoLinearPath, RobotArm
-from .inform import JobStoppedError, run_job
+from .inform import JobStoppedError, input_byte, output_byte, run_job
 from .ladder import Ladder
 
 #: The alarm a faulted arm reports. A real controller names the cause; the
@@ -436,6 +436,10 @@ class YaskawaController:
     model: str = ""
     #: Each IO byte by the number of its first signal; an unset byte reads 0.
     io: dict[int, int] = field(default_factory=dict)
+    #: Direct inputs (RIN#n) by number, which a search stops on; an unset one is off.
+    direct_inputs: dict[int, bool] = field(default_factory=dict)
+    #: Called after every write to the IO and the ladder scan that follows it.
+    io_written: Callable[[], None] = field(default=lambda: None, repr=False)
     #: Registers and variables by kind ("register", "B", "I", ...), then number;
     #: an unset one reads 0.
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
@@ -925,6 +929,20 @@ class YaskawaController:
     def run_ladder(self) -> None:
         """Pass on what the ladder's rungs read: bytes, signals and registers."""
         self.ladder.scan(self.io, self.variables.setdefault("register", {}))
+        self.io_written()
+
+    def set_input(self, number: int, on: bool) -> None:
+        """Switch general input IN#number, as the wiring outside the controller does."""
+        _set_bit(self.io, input_byte(number), (number - 1) % 8, on)
+        self.run_ladder()
+
+    def set_direct_input(self, number: int, on: bool) -> None:
+        """Switch direct input RIN#number."""
+        self.direct_inputs[number] = on
+
+    def output(self, number: int) -> bool:
+        """General output OT#number."""
+        return bool(self.io.get(output_byte(number), 0) >> (number - 1) % 8 & 1)
 
     def check_no_alarm(self) -> None:
         """The interlock table (11.1.1) refuses moves, servo on, job selection,
@@ -960,6 +978,11 @@ class YaskawaController:
             for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
         )
         return max(seconds, MIN_MOVE_SECONDS)
+
+
+def _set_bit(io: dict[int, int], byte: int, bit: int, on: bool) -> None:
+    value = io.get(byte, 0)
+    io[byte] = value | 1 << bit if on else value & ~(1 << bit)
 
 
 def to_frame(frame: NDArray[np.float64], pose: Pose) -> Pose:
