@@ -27,15 +27,18 @@ def _robot(*signals: str, ladder: tuple[str, ...] = ()) -> YaskawaRobot:
     ("in10", ControllerSignal(SignalKind.IN, 10)),
     ("ot9", ControllerSignal(SignalKind.OT, 9)),
     ("rin1", ControllerSignal(SignalKind.RIN, 1)),
+    ("s20021", ControllerSignal(SignalKind.EXTERNAL, 20021)),
+    ("s30020", ControllerSignal(SignalKind.EXTERNAL, 30020)),
 ])
 def test_a_name_gives_the_kind_and_number(name: str, signal: ControllerSignal) -> None:
     assert ControllerSignal.parse(name) == signal
     assert signal.name == name
 
 
-@pytest.mark.parametrize("name", ["IN10", "in0", "in", "out5", "rin1a"])
+@pytest.mark.parametrize("name", ["IN10", "in0", "in", "out5", "rin1a", "s20018", "s10010",
+                                  "s2001"])
 def test_a_name_that_is_no_signal_is_refused(name: str) -> None:
-    with pytest.raises(ValueError, match="expected in<n>, ot<n> or rin<n>"):
+    with pytest.raises(ValueError, match="expected in<n>, ot<n>, rin<n>, or s and"):
         ControllerSignal.parse(name)
 
 
@@ -45,11 +48,29 @@ def test_a_signal_listed_twice_is_refused() -> None:
 
 
 def test_only_outputs_are_the_controllers_to_switch() -> None:
-    robot = _robot("in10", "ot9", "rin1")
+    robot = _robot("in10", "ot9", "rin1", "s20021", "s30020")
     assert isinstance(robot, HasIO)
     directions = {signal.name: signal.direction for signal in robot.io}
     assert directions == {"in10": Direction.INPUT, "ot9": Direction.OUTPUT,
-                          "rin1": Direction.INPUT}
+                          "rin1": Direction.INPUT, "s20021": Direction.INPUT,
+                          "s30020": Direction.OUTPUT}
+
+
+def test_an_external_input_reaches_the_jobs_through_the_ladder() -> None:
+    """A cell's ladder copies terminals #20020-#20027 to IN#9-IN#16."""
+    robot = _robot("s20021", ladder=("GSTR #20020 GOUT #00020",))
+    robot.io["s20021"].set(True)
+    assert robot.controller.io[20] == 0b10
+
+
+def test_an_external_output_follows_what_the_ladder_passes_on() -> None:
+    """A cell's ladder copies OT#9-OT#16 to terminals #30020-#30027."""
+    robot = _robot("s30020", ladder=("GSTR #10020 GOUT #30020",))
+    robot.controller.files["LASER_ON.JBI"] = (
+        b"/JOB\r\n//NAME LASER_ON\r\n//INST\r\nNOP\r\nDOUT OT#(9) ON\r\nEND\r\n")
+    robot.controller.start_job("LASER_ON")
+    assert robot.controller.wait_job(2)
+    assert robot.io["s30020"].value is True
 
 
 def test_an_input_switches_the_controllers_general_input() -> None:

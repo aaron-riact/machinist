@@ -30,6 +30,8 @@ from .inform import (
     run_job,
 )
 from .ladder import Ladder
+from .ladder import set_signal as set_signal_bit
+from .ladder import signal as signal_bit
 from .positions import (
     DEGREE_UNITS,
     MICROMETRES,
@@ -1208,6 +1210,16 @@ class YaskawaController:
         _set_bit(self.io, input_byte(number), (number - 1) % 8, on)
         self.run_ladder()
         self._check_watch()
+
+    def set_signal(self, number: int, on: bool) -> None:
+        """Switch the controller's signal #number (an external input's terminal)."""
+        set_signal_bit(self.io, number, on)
+        self.run_ladder()
+        self._check_watch()
+
+    def signal(self, number: int) -> bool:
+        """The controller's signal #number."""
+        return signal_bit(self.io, number)
 
     def set_direct_input(self, number: int, on: bool) -> None:
         """Switch direct input RIN#number."""

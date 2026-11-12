@@ -12,7 +12,7 @@ from pydantic import Field, field_validator, model_validator
 from ....core.capabilities import HasIO
 from ....core.device import Device
 from ....core.events import EventBus
-from ....core.io import SignalBank
+from ....core.io import Direction, SignalBank
 from ....core.registry import register
 from ....core.types import Endpoint
 from ....transport.framing import CR
@@ -245,17 +245,21 @@ class YaskawaRobot(Device, HasArm, HasIO):
         outputs = []
         for signal in signals:
             declared = self.io.declare(signal.name, signal.direction)
-            match signal.kind:
-                case SignalKind.IN:
+            match signal.kind, signal.direction:
+                case SignalKind.IN, _:
                     declared.subscribe(partial(self.controller.set_input, signal.number))
-                case SignalKind.RIN:
+                case SignalKind.RIN, _:
                     declared.subscribe(partial(self.controller.set_direct_input, signal.number))
-                case SignalKind.OT:
-                    outputs.append((signal.number, declared))
+                case SignalKind.EXTERNAL, Direction.INPUT:
+                    declared.subscribe(partial(self.controller.set_signal, signal.number))
+                case SignalKind.OT, _:
+                    outputs.append((partial(self.controller.output, signal.number), declared))
+                case SignalKind.EXTERNAL, Direction.OUTPUT:
+                    outputs.append((partial(self.controller.signal, signal.number), declared))
 
         def follow_outputs() -> None:
-            for number, declared in outputs:
-                declared.set(self.controller.output(number))
+            for read, declared in outputs:
+                declared.set(read())
         self.controller.io_written = follow_outputs
 
     def settings(self) -> list[str]:
