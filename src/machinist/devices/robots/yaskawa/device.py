@@ -67,8 +67,8 @@ class YaskawaOptions(ArmOptions):
     #: two bytes (see :mod:`.ladder`). They run after ladder_copies.
     ladder: tuple[str, ...] = ()
     #: The names of the jobs the controller holds, each as a NAME.JBI file
-    #: that does nothing. The emulator cannot run INFORM: selecting a job and
-    #: starting it work, and it finishes as soon as it starts.
+    #: that does nothing. A job that does something runs its I/O part when
+    #: started (see :mod:`.inform`), and finishes as soon as it starts.
     jobs: tuple[str, ...] = ()
     #: How many move commands may wait behind the one running: a count, or
     #: "unlimited". Unset takes the controller's (the NX100 none, the DX200 and

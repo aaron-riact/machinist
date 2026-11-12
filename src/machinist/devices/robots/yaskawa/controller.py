@@ -19,6 +19,7 @@ from ....kinematics.api import Joints, Pose
 from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ....kinematics.units import Radians
 from ..arm import NoLinearPath, RobotArm
+from .inform import JobStoppedError, run_job
 from .ladder import Ladder
 
 #: The alarm a faulted arm reports. A real controller names the cause; the
@@ -708,14 +709,27 @@ class YaskawaController:
             return
         self.executing_job, self.executing_line = name, line
 
+    def job_text(self, name: str) -> str | None:
+        """Job *name*'s INFORM, None when the controller holds no such job."""
+        data = self.files.get(name + JOB_SUFFIX)
+        return None if data is None else data.decode("ascii", errors="replace")
+
     def start_job(self, name: str | None = None) -> None:
-        """Start the executing job from its line, or job *name* from its start. The
-        emulator cannot run INFORM, so the job finishes at once."""
+        """Start the executing job, or job *name*, and run it to its end at once, from
+        its start: the I/O part of INFORM (see :mod:`.inform`). Where the job stops
+        early, on what the emulator cannot run or a WAIT not met, the device notes it,
+        as a real controller would show the job stopped there."""
         self._check_can_move()
         if name is not None:
             self.select_job(name)
         if not self.executing_job:
             raise CommandRefusedError(Refusal.NO_EXECUTING_JOB, "no job is set to execute")
+        try:
+            run_job(self, self.executing_job)
+        except JobStoppedError as stopped:
+            self.note("job_stopped", job=stopped.job, line=stopped.line, reason=stopped.reason)
+            return
+        self.note("job_ran", job=self.executing_job)
 
     def check_tool(self, tool: int) -> int:
         if not 0 <= tool <= self.profile.max_tool:
