@@ -6,9 +6,10 @@ cannot run (a move, ``EXPRESS``, ``IFTHEN`` ...) is kept as :class:`Unsupported`
 and stops the job only when reached, so a job that jumps past it still runs.
 
 Supported: comments, labels, ``NOP``/``END``/``RET``; ``DOUT OT#(..) ON|OFF``,
-``DOUT OG#(..) value``, ``PULSE OT#(..) [T=..]``; ``SET Bnnn|Innn|Dnnn value``;
-``JUMP *LABEL``, ``JUMP JOB:X`` and ``CALL JOB:X``, each with an optional
-``IF`` on ``IN#(..)``/``OT#(..)`` or a variable; ``TIMER T=..``;
+``DOUT OG#(..) value``, ``PULSE OT#(..) [T=..]``; ``SET`` on a B, I, D or R variable,
+from a value or ``EXPRESS`` (see :mod:`.expression`), ``ADD``, ``SUB``, ``MUL``, ``DIV``,
+``INC``, ``DEC`` and ``SQRT``; ``JUMP *LABEL``, ``JUMP JOB:X`` and ``CALL JOB:X``,
+each with an optional ``IF`` on ``IN#(..)``/``OT#(..)`` or a variable; ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -20,11 +21,27 @@ stop the job at any of these, and between any two instructions.
 
 from __future__ import annotations
 
+import math
 import operator
 import re
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field
 from typing import Protocol
+
+from .expression import (
+    VALUE,
+    VARIABLE,
+    Expression,
+    Literal,
+    Operand,
+    Operation,
+    Variable,
+    evaluate,
+    fit,
+    operand,
+    parse_expression,
+    variable,
+)
 
 #: How many instructions a job may run before the emulator calls it a loop.
 MAX_STEPS = 100_000
@@ -33,8 +50,8 @@ MAX_CALL_DEPTH = 32
 #: How long a PULSE without T= keeps its output on, in seconds.
 PULSE_SECONDS = 0.3
 
-_VARIABLE = r"[BID]\d{3}"
-_VALUE = rf"(?:{_VARIABLE}|-?\d+(?:\.\d+)?)"
+_VARIABLE = VARIABLE
+_VALUE = VALUE
 _REF = rf"\(\s*({_VARIABLE}|\d+)\s*\)"
 _IF = r"(?:\s+IF\s+(.+))?"
 _OPERATORS: dict[str, Callable[[float, float], bool]] = {
@@ -62,28 +79,8 @@ class JobStoppedError(Exception):
 # --- Operands and conditions -------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class Literal:
-    value: float
-
-
-@dataclass(frozen=True, slots=True)
-class Variable:
-    kind: str
-    number: int
-
-
-Operand = Literal | Variable
-
-
-def _operand(text: str) -> Operand:
-    if re.fullmatch(_VARIABLE, text):
-        return _variable(text)
-    return Literal(float(text))
-
-
-def _variable(text: str) -> Variable:
-    return Variable(text[0], int(text[1:]))
+_operand = operand
+_variable = variable
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +156,30 @@ class SetVariable:
 
 
 @dataclass(frozen=True, slots=True)
+class Assign:
+    """``SET D020 EXPRESS ...``: a variable takes the value of an expression."""
+
+    variable: Variable
+    expression: Expression
+
+
+@dataclass(frozen=True, slots=True)
+class Arithmetic:
+    """``ADD``, ``SUB``, ``MUL``, ``DIV``, and ``INC``/``DEC`` (by 1): a variable
+    takes its value combined with another."""
+
+    symbol: str
+    variable: Variable
+    value: Operand
+
+
+@dataclass(frozen=True, slots=True)
+class SquareRoot:
+    variable: Variable
+    value: Operand
+
+
+@dataclass(frozen=True, slots=True)
 class Jump:
     label: str
     condition: Condition
@@ -188,8 +209,10 @@ class Unsupported:
     text: str
 
 
-Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Jump
-               | JumpJob | CallJob | Wait | Unsupported)
+Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Assign
+               | Arithmetic | SquareRoot | Jump | JumpJob | CallJob | Wait | Unsupported)
+
+_ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 
 #: Each instruction the emulator runs: its pattern, and what a match makes of it.
 _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]], ...] = tuple(
@@ -203,6 +226,14 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"PULSE OT#{_REF} T=({_VALUE})", lambda m: Pulse(_operand(m[1]), _operand(m[2]))),
         (rf"TIMER T=({_VALUE})", lambda m: Timer(_operand(m[1]))),
         (rf"SET ({_VARIABLE}) ({_VALUE})", lambda m: SetVariable(_variable(m[1]), _operand(m[2]))),
+        (rf"SET ({_VARIABLE}) EXPRESS (.+)",
+         lambda m: Assign(_variable(m[1]), parse_expression(m[2]))),
+        (rf"(ADD|SUB|MUL|DIV) ({_VARIABLE}) ({_VALUE})",
+         lambda m: Arithmetic(_ARITHMETIC[m[1]], _variable(m[2]), _operand(m[3]))),
+        (rf"(INC|DEC) ({_VARIABLE})",
+         lambda m: Arithmetic("+" if m[1] == "INC" else "-", _variable(m[2]), Literal(1))),
+        (rf"SQRT ({_VARIABLE}) ({_VALUE})",
+         lambda m: SquareRoot(_variable(m[1]), _operand(m[2]))),
         (rf"JUMP \*(\S+){_IF}", lambda m: Jump(m[1], _condition(m[2]))),
         (rf"JUMP JOB:(\S+){_IF}", lambda m: JumpJob(m[1], _condition(m[2]))),
         (rf"CALL JOB:(\S+){_IF}", lambda m: CallJob(m[1], _condition(m[2]))),
@@ -326,6 +357,8 @@ class _Run:
                 following = self._step(job, number, instruction, depth)
             except JobInterruptedError as interrupted:
                 raise JobStoppedError(name, number, interrupted.reason) from None
+            except ArithmeticError as error:
+                raise JobStoppedError(name, number, str(error)) from None
             index = index + 1 if following is None else following
 
     def _step(self, job: Job, number: int, instruction: Instruction, depth: int) -> int | None:
@@ -366,9 +399,20 @@ class _Run:
             case SetOutputGroup(group, value):
                 self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
                 self.host.run_ladder()
-            case SetVariable(variable, value):
-                store = self.host.variables.setdefault(variable.kind, {})
-                store[variable.number] = self._value(value)
+            case SetVariable(target, value):
+                self._store(target, self._value(value))
+            case Assign(target, expression):
+                self._store(target, evaluate(expression, self._value))
+            case Arithmetic(symbol, target, value):
+                self._store(target, evaluate(Operation(symbol, target, value), self._value))
+            case SquareRoot(target, value):
+                radicand = self._value(value)
+                if radicand < 0:
+                    raise ArithmeticError(f"square root of {radicand:g}")
+                self._store(target, math.sqrt(radicand))
+
+    def _store(self, target: Variable, value: float) -> None:
+        self.host.variables.setdefault(target.kind, {})[target.number] = fit(target.kind, value)
 
     def _value(self, operand: Operand) -> float:
         if isinstance(operand, Literal):

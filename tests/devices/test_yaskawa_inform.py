@@ -86,7 +86,7 @@ class _Host:
     ("CALL JOB:GRIP_CLOSE IF I005=2",
      CallJob("GRIP_CLOSE", Comparison(Variable("I", 5), "=", Literal(2)))),
     ("MOVL P010 V=50.0 PL=0", Unsupported("MOVL P010 V=50.0 PL=0")),
-    ("SET I204 EXPRESS I203 / 3", Unsupported("SET I204 EXPRESS I203 / 3")),
+    ("GETE D010 P010 (1)", Unsupported("GETE D010 P010 (1)")),
     ("'OPEN GRIPPER A", None),
     ("TIMER T=I020", Timer(Variable("I", 20))),
     ("WAIT IN#(D022)=ON", Wait(SignalTest(output=False, ref=Variable("D", 22), on=True))),
