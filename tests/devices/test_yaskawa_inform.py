@@ -326,3 +326,14 @@ def test_setreg_sets_a_register_and_the_ladder_runs() -> None:
     run_job(host, "R")
     assert host.variables["register"][200] == 100
     assert host.scans == 1
+
+
+def test_after_clear_stack_the_callers_do_not_go_on() -> None:
+    """MAIN calls SEARCH, which clears the stack and jumps to ALARM."""
+    host = _Host({"MAIN": _job("CALL JOB:SEARCH", "DOUT OT#(1) ON"),
+                  "SEARCH": _job("CLEAR STACK", "JUMP JOB:ALARM", "DOUT OT#(2) ON"),
+                  "ALARM": _job("CALL JOB:BEEP", "DOUT OT#(3) ON"),
+                  "BEEP": _job("DOUT OT#(4) ON")})
+    run_job(host, "MAIN")
+    # ALARM's own CALL still returns to it; nothing before the clear goes on.
+    assert host.io[10010] == 0b1100

@@ -16,7 +16,8 @@ of two, ``MULMAT`` (see :mod:`.positions`); through the host: ``GETS`` of $PX000
 and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``; moves:
 ``MOVJ`` and ``MOVL`` to a P variable or the job's own C position, ``IMOV``, each
 with ``SRCH RIN#(..)`` or ``UNTIL IN#(..)``;
-``DIN`` of a signal or group, ``SETREG``; ``MSG``; ``PAUSE``, which stops the job;
+``DIN`` of a signal or group, ``SETREG``; ``MSG``; ``CLEAR STACK``; ``PAUSE``, which
+stops the job;
 ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
@@ -467,6 +468,11 @@ class Message:
 
 
 @dataclass(frozen=True, slots=True)
+class ClearStack:
+    """``CLEAR STACK``: the jobs that called this one do not go on when it ends."""
+
+
+@dataclass(frozen=True, slots=True)
 class Pause:
     """``PAUSE``: a real controller holds the job until START. The emulator cannot
     go on from there, so the job stops."""
@@ -482,7 +488,7 @@ Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVar
                | CombinePositions | GetSystemPosition | GetSystemByte | Convert | MakeFrame
                | MultiplyPositions | GetTool | SetTool | SelectTool | Move | IncrementalMove
                | IfThen | ElseIf | Else | EndIf | Jump | JumpJob | CallJob | Wait | ReadSignal
-               | SetRegister | Message | Pause | Unsupported)
+               | SetRegister | Message | ClearStack | Pause | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 #: A P variable, as ``P010`` or, where a position instruction names it, ``PX010``.
@@ -582,6 +588,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"SETREG MREG#{_REF} ({_VALUE})", lambda m: SetRegister(_operand(m[1]), _operand(m[2]))),
         (r'MSG "(.*)"', lambda m: Message(m[1])),
         (r"PAUSE", lambda m: Pause()),
+        (r"CLEAR STACK", lambda m: ClearStack()),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
         (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
         (r"ELSE", lambda m: Else()),
@@ -787,6 +794,8 @@ _END = -1
 class _Run:
     host: JobHost
     steps: int = 0
+    #: After CLEAR STACK at this depth, no job called from below it goes on.
+    cleared_at: int | None = None
 
     def call(self, name: str, *, depth: int) -> None:
         if depth > MAX_CALL_DEPTH:
@@ -820,20 +829,15 @@ class _Run:
                             else self._position(goal.number))
                 self.host.move_to(position, linear=linear, speed=self._value(speed),
                                   watch=self._watched(watch))
-            case IfThen(condition, following):
-                return None if self._holds(condition) else self._branch(job, following)
-            case ElseIf(end=end) | Else(end=end):
-                return end
+            case IfThen() | ElseIf() | Else():
+                return self._block(job, instruction)
             case Jump(label, condition) if self._holds(condition):
                 target = job.label(label)
                 if target is None:
                     raise JobStoppedError(job.name, number, f"no label *{label}")
                 return target
-            case JumpJob(target_job, condition) if self._holds(condition):
-                self.call(target_job, depth=depth)
-                return _END
-            case CallJob(target_job, condition) if self._holds(condition):
-                self.call(target_job, depth=depth + 1)
+            case JumpJob() | CallJob() | ClearStack():
+                return self._between_jobs(instruction, depth)
             case Wait(test, seconds):
                 self.host.wait_until(lambda: self._holds(test),
                                      None if seconds is None else self._value(seconds))
@@ -843,6 +847,26 @@ class _Run:
                 raise JobStoppedError(job.name, number, "PAUSE")
             case _:
                 self._act(instruction)
+        return None
+
+    def _block(self, job: Job, instruction: IfThen | ElseIf | Else) -> int | None:
+        match instruction:
+            case IfThen(condition, following):
+                return None if self._holds(condition) else self._branch(job, following)
+            case ElseIf(end=end) | Else(end=end):
+                return end
+
+    def _between_jobs(self, instruction: JumpJob | CallJob | ClearStack, depth: int) -> int | None:
+        match instruction:
+            case JumpJob(target_job, condition) if self._holds(condition):
+                self.call(target_job, depth=depth)
+                return _END
+            case CallJob(target_job, condition) if self._holds(condition):
+                self.call(target_job, depth=depth + 1)
+                if self.cleared_at is not None and depth < self.cleared_at:
+                    return _END
+            case ClearStack():
+                self.cleared_at = depth
         return None
 
     def _act(self, instruction: Instruction) -> None:
