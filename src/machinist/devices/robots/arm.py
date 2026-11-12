@@ -16,7 +16,6 @@ import os
 import sys
 import threading
 import time
-from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum, auto
@@ -26,6 +25,7 @@ from typing import ClassVar, TypedDict, Unpack
 import numpy as np
 from numpy.typing import NDArray
 
+from ...core.capabilities import HasMount
 from ...core.events import Event
 from ...core.options import Options
 from ...kinematics.api import (
@@ -426,6 +426,19 @@ class RobotArm(Service):
         self.move_logger: MoveLogger | None = None
         self._move_seq = 0
         self._move_finished: list[Callable[[], None]] = []
+        self._moved: list[Callable[[Pose], None]] = []
+
+    def on_moved(self, callback: Callable[[Pose], None]) -> None:
+        """Call *callback* with the arm's new pose each time it moves: every tick of a
+        move, and every jog step.
+
+        It runs after the arm's lock is released, so it may stop the arm.
+        """
+        self._moved.append(callback)
+
+    def _tell_moved(self, pose: Pose) -> None:
+        for callback in self._moved:
+            callback(pose)
 
     def on_move_finished(self, callback: Callable[[], None]) -> None:
         """Call *callback* each time a move runs to its end; a stopped move does not.
@@ -570,14 +583,16 @@ class RobotArm(Service):
                 mode=ArmMode.IDLE,
                 current_command=None,
             )
-            if self.move_logger is None:
-                return
-            self._move_seq += 1
-            seq = self._move_seq
-        self.move_logger.jog(
-            seq=seq, start_joints=before.joints, start_pose=before.pose,
-            joints=after.joints, pose=after.pose, twist=twist * dt,
-        )
+            seq = 0
+            if self.move_logger is not None:
+                self._move_seq += 1
+                seq = self._move_seq
+        self._tell_moved(after.pose)
+        if self.move_logger is not None:
+            self.move_logger.jog(
+                seq=seq, start_joints=before.joints, start_pose=before.pose,
+                joints=after.joints, pose=after.pose, twist=twist * dt,
+            )
 
     # ----- background tick -------------------------------------------
 
@@ -655,6 +670,7 @@ class RobotArm(Service):
                 self.state.update(joints=joints, pose=pose, mode=ArmMode.IDLE, current_command=None)
             else:
                 self.state.update(joints=joints, pose=pose)
+        self._tell_moved(pose)
         if self.move_logger is not None:
             self.move_logger.progress(seq=move.seq, kind=move.kind, t=t, elapsed=elapsed, joints=joints, pose=pose)
             if done:
@@ -664,14 +680,21 @@ class RobotArm(Service):
                 callback()
 
 
-class HasArm(ABC):
+class HasArm(HasMount):
     """A device that drives a :class:`RobotArm`.
 
     Declared by every robot emulator so the World, TUI and web API can reach
-    the arm with a plain ``isinstance`` check.
+    the arm with a plain ``isinstance`` check. What the scene mounts on it sits
+    on its pose's frame (the flange, or the URDF's tip link).
     """
 
     arm: RobotArm
+
+    def mount_transform(self) -> NDArray[np.float64]:
+        return pose_to_mat(self.arm.state.view.pose)
+
+    def on_mount_moved(self, listener: Callable[[NDArray[np.float64]], None]) -> None:
+        self.arm.on_moved(lambda pose: listener(pose_to_mat(pose)))
 
 
 def _lerp(a: float, b: float, t: float) -> float:

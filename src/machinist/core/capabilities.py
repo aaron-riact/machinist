@@ -22,6 +22,10 @@ to that type: :class:`~machinist.devices.robots.arm.HasArm` and
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+
+import numpy as np
+from numpy.typing import NDArray
 
 from ..transport.flange_bus import FlangeBus
 from ..transport.registers import RegisterPort
@@ -64,3 +68,19 @@ class SensesDistance(ABC):
     @abstractmethod
     def sense_distance(self, distance_m: float | None) -> None:
         """The nearest surface along the device's beam, in metres; None for none."""
+
+
+class HasMount(ABC):
+    """A device the scene can mount another on, such as a laser on an arm's flange.
+
+    Its mount point moves, and it says when: the scene works out from that where
+    what is mounted on it is.
+    """
+
+    @abstractmethod
+    def mount_transform(self) -> NDArray[np.float64]:
+        """The mount point in the device's base frame: a 4x4 transform, in metres."""
+
+    @abstractmethod
+    def on_mount_moved(self, listener: Callable[[NDArray[np.float64]], None]) -> None:
+        """Call *listener* with the new mount transform each time the mount point moves."""

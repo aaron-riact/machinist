@@ -7,6 +7,7 @@ import pytest
 from machinist.core.capabilities import (
     HasFlange,
     HasIO,
+    HasMount,
     HasPrograms,
     HasRegisters,
     SensesDistance,
@@ -30,15 +31,16 @@ from machinist.devices.robots.ur import URDashboardServer
 from machinist.devices.robots.yaskawa import YaskawaRobot
 from machinist.devices.sensors.laser import Laser
 
-ALL = {HasArm, HasFlange, HasIO, HasMachineState, HasPrograms, HasRegisters, SensesDistance}
+ALL = {HasArm, HasFlange, HasIO, HasMachineState, HasMount, HasPrograms, HasRegisters,
+       SensesDistance}
 
 EXPECTED = {
-    DobotDashboard: {HasArm, HasIO, HasFlange},
-    FanucKarelServer: {HasArm, HasIO},
-    FanucFocasRobot: {HasArm, HasIO},
-    RobotDevice: {HasArm},
-    YaskawaRobot: {HasArm, HasIO},
-    URDashboardServer: {HasArm, HasFlange},
+    DobotDashboard: {HasArm, HasMount, HasIO, HasFlange},
+    FanucKarelServer: {HasArm, HasMount, HasIO},
+    FanucFocasRobot: {HasArm, HasMount, HasIO},
+    RobotDevice: {HasArm, HasMount},
+    YaskawaRobot: {HasArm, HasMount, HasIO},
+    URDashboardServer: {HasArm, HasMount, HasFlange},
     HaasNGC: {HasMachineState, HasPrograms},
     MazakSinumerik840D: {HasMachineState, HasIO},
     MazakSmoothEmulator: {HasMachineState, HasIO},
