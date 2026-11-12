@@ -9,7 +9,9 @@ Supported: comments, labels, ``NOP``/``END``/``RET``; ``DOUT OT#(..) ON|OFF``,
 ``DOUT OG#(..) value``, ``PULSE OT#(..) [T=..]``; ``SET`` on a B, I, D or R variable,
 from a value or ``EXPRESS`` (see :mod:`.expression`), ``ADD``, ``SUB``, ``MUL``, ``DIV``,
 ``INC``, ``DEC`` and ``SQRT``; ``JUMP *LABEL``, ``JUMP JOB:X`` and ``CALL JOB:X``,
-each with an optional ``IF`` on ``IN#(..)``/``OT#(..)`` or a variable; ``TIMER T=..``;
+each with an optional ``IF`` on ``IN#(..)``/``OT#(..)`` or a variable, or several
+joined by ``ANDIF`` or ``ORIF``; ``IFTHEN``/``IFTHENEXP`` blocks with ``ELSEIF``,
+``ELSE`` and ``ENDIF``; ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -25,7 +27,7 @@ import math
 import operator
 import re
 from collections.abc import Callable, MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from .expression import (
@@ -99,13 +101,42 @@ class Comparison:
     value: Operand
 
 
-Condition = SignalTest | Comparison | None
+@dataclass(frozen=True, slots=True)
+class AllOf:
+    """Tests joined by ANDIF (AND in IFTHENEXP): all must hold."""
+
+    tests: tuple[SignalTest | Comparison, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AnyOf:
+    """Tests joined by ORIF (OR in IFTHENEXP): one must hold."""
+
+    tests: tuple[SignalTest | Comparison, ...]
+
+
+Condition = SignalTest | Comparison | AllOf | AnyOf | None
 
 
 def _condition(text: str | None) -> Condition:
     if text is None:
         return None
+    text = " ".join(text.split())
+    ands = re.split(r" (?:ANDIF|AND) ", text)
+    ors = re.split(r" (?:ORIF|OR) ", text)
+    if len(ands) > 1 and len(ors) > 1:
+        raise ValueError(f"condition {text!r} mixes AND and OR")
+    if len(ands) > 1:
+        return AllOf(tuple(_test(part) for part in ands))
+    if len(ors) > 1:
+        return AnyOf(tuple(_test(part) for part in ors))
+    return _test(text)
+
+
+def _test(text: str) -> SignalTest | Comparison:
     text = text.strip()
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1].strip()
     if match := re.fullmatch(rf"(IN|OT)#{_REF}\s*=\s*(ON|OFF)", text):
         return SignalTest(match[1] == "OT", _operand(match[2]), match[3] == "ON")
     if match := re.fullmatch(rf"({_VARIABLE})\s*(<>|<=|>=|=|<|>)\s*({_VALUE})", text):
@@ -180,6 +211,35 @@ class SquareRoot:
 
 
 @dataclass(frozen=True, slots=True)
+class IfThen:
+    """IFTHEN (and IFTHENEXP): its block runs when the condition holds; otherwise the
+    job goes to *following*, the index of its next ELSEIF, ELSE or ENDIF."""
+
+    condition: Condition
+    following: int = -1
+
+
+@dataclass(frozen=True, slots=True)
+class ElseIf:
+    """Reached from a branch not taken, it tests its condition as IFTHEN does;
+    reached by running into it, the block is done and the job goes to *end*."""
+
+    condition: Condition
+    following: int = -1
+    end: int = -1
+
+
+@dataclass(frozen=True, slots=True)
+class Else:
+    end: int = -1
+
+
+@dataclass(frozen=True, slots=True)
+class EndIf:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class Jump:
     label: str
     condition: Condition
@@ -210,7 +270,8 @@ class Unsupported:
 
 
 Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Assign
-               | Arithmetic | SquareRoot | Jump | JumpJob | CallJob | Wait | Unsupported)
+               | Arithmetic | SquareRoot | IfThen | ElseIf | Else | EndIf | Jump | JumpJob
+               | CallJob | Wait | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 
@@ -234,6 +295,10 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
          lambda m: Arithmetic("+" if m[1] == "INC" else "-", _variable(m[2]), Literal(1))),
         (rf"SQRT ({_VARIABLE}) ({_VALUE})",
          lambda m: SquareRoot(_variable(m[1]), _operand(m[2]))),
+        (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
+        (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
+        (r"ELSE", lambda m: Else()),
+        (r"ENDIF", lambda m: EndIf()),
         (rf"JUMP \*(\S+){_IF}", lambda m: Jump(m[1], _condition(m[2]))),
         (rf"JUMP JOB:(\S+){_IF}", lambda m: JumpJob(m[1], _condition(m[2]))),
         (rf"CALL JOB:(\S+){_IF}", lambda m: CallJob(m[1], _condition(m[2]))),
@@ -276,11 +341,45 @@ class Job:
                 lines.append((number, instruction))
             if raw.strip() == "END":
                 break
-        return cls(name, tuple(lines))
+        return cls(name, _resolve_blocks(lines))
 
     def label(self, name: str) -> int | None:
         """The index of label *name* in lines, None when the job has none."""
         return next((i for i, (_, ins) in enumerate(self.lines) if ins == Label(name)), None)
+
+
+def _resolve_blocks(
+    lines: list[tuple[int, Instruction]],
+) -> tuple[tuple[int, Instruction], ...]:
+    """Each IFTHEN, ELSEIF and ELSE with where it goes; a clause without its IFTHEN
+    or ENDIF stops the job when reached."""
+    resolved = list(lines)
+    #: For each open block: the index of each of its clauses so far.
+    open_blocks: list[list[int]] = []
+    for index, (number, instruction) in enumerate(resolved):
+        match instruction:
+            case IfThen():
+                open_blocks.append([index])
+            case ElseIf() | Else() if open_blocks:
+                open_blocks[-1].append(index)
+            case EndIf() if open_blocks:
+                clauses = open_blocks.pop()
+                for here, following in zip(clauses, [*clauses[1:], index], strict=True):
+                    line, clause = resolved[here]
+                    match clause:
+                        case IfThen():
+                            clause = replace(clause, following=following)
+                        case ElseIf():
+                            clause = replace(clause, following=following, end=index)
+                        case Else():
+                            clause = replace(clause, end=index)
+                    resolved[here] = (line, clause)
+            case ElseIf() | Else() | EndIf():
+                resolved[index] = (number, Unsupported("a block clause without its IFTHEN"))
+    for clauses in open_blocks:
+        number, _ = resolved[clauses[0]]
+        resolved[clauses[0]] = (number, Unsupported("IFTHEN without its ENDIF"))
+    return tuple(resolved)
 
 
 # --- Running ---------------------------------------------------------------
@@ -366,6 +465,10 @@ class _Run:
         match instruction:
             case End():
                 return _END
+            case IfThen(condition, following):
+                return None if self._holds(condition) else self._branch(job, following)
+            case ElseIf(end=end) | Else(end=end):
+                return end
             case Jump(label, condition) if self._holds(condition):
                 target = job.label(label)
                 if target is None:
@@ -422,8 +525,22 @@ class _Run:
     def _int(self, operand: Operand) -> int:
         return int(self._value(operand))
 
+    def _branch(self, job: Job, clause: int) -> int:
+        """Where a block goes on from its clause at index *clause*, after the branches
+        before it were not taken."""
+        while True:
+            match job.lines[clause][1]:
+                case ElseIf(condition, following) if not self._holds(condition):
+                    clause = following
+                case _:
+                    return clause + 1
+
     def _holds(self, condition: Condition) -> bool:
         match condition:
+            case AllOf(tests):
+                return all(self._holds(test) for test in tests)
+            case AnyOf(tests):
+                return any(self._holds(test) for test in tests)
             case SignalTest(output, ref, on):
                 number = self._int(ref)
                 byte = output_byte(number) if output else input_byte(number)
