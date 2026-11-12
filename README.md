@@ -145,6 +145,9 @@ devices:
 
 io_links:
   - {source: io1.o5, target: gripper1.cmd_open}
+
+mounts: []                     # sensors on arms or in the cell, see below
+parts: []                      # what sensors see, see below
 ```
 
 When two devices want the same `host:port`, Machinist:
@@ -172,6 +175,53 @@ When two devices want the same `host:port`, Machinist:
 | `zimmer_ged6000il`  | IO-Link HTTP     | 80           | Emulates IFM AL1350 master         |
 | `weidmuller_ur20`   | Modbus/TCP       | 502          | Configurable I/O width             |
 | `modbus_rtu_gateway`| Modbus RTU/TCP   | 60000        | A bare flange line; tools via `flange_links` |
+| `laser`             | IO only          | n/a          | Distance switch; the scene hands it distances |
+
+## Sensors, parts and mounts
+
+A sensor such as the `laser` is an IO device and nothing more: it switches an
+output on while a surface is closer than that output's switch point. The scene
+works out what it sees. `parts` places solids in the cell (upright cylinders and
+boxes, listed or in a grid), and `mounts` puts a sensor on a device that carries
+it (an arm's flange) or fixes it in the cell. After every tick of its carrier's
+move, the scene casts the sensor's beam, which leaves the mount along its +Z
+axis, and hands the sensor the distance to the nearest part.
+
+```yaml
+devices:
+  - {name: r1, kind: yaskawa, options: {controller: dx200, robot: up50n,
+                                        signals: [ot9, in10, rin1]}}
+  - {name: laser1, kind: laser, options: {switches: {q1: 300}}}
+
+io_links:
+  - {source: r1.ot9, target: laser1.on}
+  - {source: laser1.q1, target: r1.rin1}
+
+mounts:
+  - {device: laser1, carrier: r1, at_mm_deg: [0, 0, 100, 0, 0, 0]}
+
+parts:
+  - name: raw
+    cylinder: {diameter_mm: 100, height_mm: 80}
+    grid: {first_mm: [1000, -300, 0], count: [3, 4], pitch_mm: [150, 150]}
+```
+
+All lengths are in the cell frame: the base frame of the cell's arms. The
+mount's angles turn about X, then Y, then Z, as Yaskawa's Rx, Ry, Rz do.
+
+### Yaskawa jobs
+
+A `yaskawa` device's `signals` option names the controller's inputs (`in10`),
+outputs (`ot9`) and direct inputs (`rin1`) that `io_links` may wire.
+`controller_files` loads a folder saved from a real controller: its jobs,
+TOOL.CND, and the B, I, D, R and P variables in VAR.DAT.
+
+A started job runs on its own thread, in real time. The emulator runs the
+INFORM a cell's jobs use: I/O and waits, arithmetic, IFTHEN blocks, P variables
+and their frames (`CNVRT`, `MFRAME`, `GETS $PX…`), moves (`MOVJ`, `MOVL`,
+`IMOV`) and searches (`SRCH RIN#`, `UNTIL IN#`), which stop where the scene's
+sensor switches. `PAUSE` stops the job, as there is no START to go on from it.
+See `examples/yaskawa_laser_probe.yaml`.
 
 ## Tool flanges and RTU passthroughs
 
