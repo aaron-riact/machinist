@@ -14,7 +14,8 @@ joined by ``ANDIF`` or ``ORIF``; ``IFTHEN``/``IFTHENEXP`` blocks with ``ELSEIF``
 ``ELSE`` and ``ENDIF``; P variables: ``SET P P``, ``GETE``, ``SETE``, ``ADD`` and ``SUB``
 of two, ``MULMAT`` (see :mod:`.positions`); through the host: ``GETS`` of $PX000-$PX003
 and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``; moves:
-``MOVJ`` and ``MOVL`` to a P variable or the job's own C position, ``IMOV``;
+``MOVJ`` and ``MOVL`` to a P variable or the job's own C position, ``IMOV``, each
+with ``SRCH RIN#(..)`` or ``UNTIL IN#(..)``;
 ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
@@ -338,6 +339,30 @@ class PositionRef:
 
 
 @dataclass(frozen=True, slots=True)
+class Watch:
+    """What a move watches: ``SRCH RIN#(1)=ON T=0.20 DIS=2.0`` (a direct input, and the
+    search is recorded) or ``UNTIL IN#(D030)=ON`` (a general input). T= and DIS= are
+    how long and how far the move runs before it starts watching."""
+
+    search: bool
+    ref: Operand
+    on: bool
+    after_seconds: Operand = field(default_factory=lambda: Literal(0))
+    after_mm: Operand = field(default_factory=lambda: Literal(0))
+
+
+@dataclass(frozen=True, slots=True)
+class WatchedInput:
+    """A move's watch with its numbers worked out: what the host watches."""
+
+    search: bool
+    number: int
+    on: bool
+    after_seconds: float
+    after_mm: float
+
+
+@dataclass(frozen=True, slots=True)
 class Move:
     """``MOVJ P0001 VJ=30.00`` (a joint move, at a percentage of the axes' top speed)
     or ``MOVL P010 V=200.0`` (a straight one, in mm/s). The job goes on when the arm
@@ -346,6 +371,7 @@ class Move:
     linear: bool
     target: PositionRef
     speed: Operand
+    watch: Watch | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +383,7 @@ class IncrementalMove:
     speed: Operand
     data_type: DataType
     user: Operand
+    watch: Watch | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,6 +464,20 @@ _TARGET = r"((?:P|C)\d+)"
 _PL = r"(?: PL=\d+)?"
 
 
+#: What a move may watch, after its speed and PL: five groups, see :func:`_watch`.
+_WATCH = (rf"(?: (SRCH RIN|UNTIL IN)#{_REF}=(ON|OFF)"
+          rf"(?: T=({_VALUE}))?(?: DIS=({_VALUE}))?)?")
+
+
+def _watch(match: re.Match[str], first: int) -> Watch | None:
+    kind, ref, state, seconds, mm = (match[first + i] for i in range(5))
+    if kind is None:
+        return None
+    return Watch(kind == "SRCH RIN", _operand(ref), state == "ON",
+                 Literal(0) if seconds is None else _operand(seconds),
+                 Literal(0) if mm is None else _operand(mm))
+
+
 def _target(text: str) -> PositionRef:
     return PositionRef(text[0] == "C", int(text[1:]))
 
@@ -496,13 +537,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"SETTOOL TL#{_REF} {_P}", lambda m: SetTool(_operand(m[1]), int(m[2]))),
         (rf"TCPON TL#{_REF}", lambda m: SelectTool(_operand(m[1]))),
         (r"TCPOF", lambda m: SelectTool(None)),
-        (rf"MOVJ {_TARGET} VJ=({_VALUE}){_PL}",
-         lambda m: Move(False, _target(m[1]), _operand(m[2]))),
-        (rf"MOVL {_TARGET} V=({_VALUE}){_PL}",
-         lambda m: Move(True, _target(m[1]), _operand(m[2]))),
-        (rf"IMOV {_P} V=({_VALUE}){_PL} (BF|RF|TF|UF#{_REF})",
+        (rf"MOVJ {_TARGET} VJ=({_VALUE}){_PL}{_WATCH}",
+         lambda m: Move(False, _target(m[1]), _operand(m[2]), _watch(m, 3))),
+        (rf"MOVL {_TARGET} V=({_VALUE}){_PL}{_WATCH}",
+         lambda m: Move(True, _target(m[1]), _operand(m[2]), _watch(m, 3))),
+        (rf"IMOV {_P} V=({_VALUE}){_PL} (BF|RF|TF|UF#{_REF}){_WATCH}",
          lambda m: IncrementalMove(int(m[1]), _operand(m[2]), _MOVE_FRAMES.get(m[3], DataType.USER),
-                                   Literal(0) if m[4] is None else _operand(m[4]))),
+                                   Literal(0) if m[4] is None else _operand(m[4]), _watch(m, 5))),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
         (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
         (r"ELSE", lambda m: Else()),
@@ -642,14 +683,17 @@ class JobHost(Protocol):
     def select_tool(self, number: int | None) -> None:
         """The tool what follows uses; None for each position's own."""
 
-    def move_to(self, position: Position, *, linear: bool, speed: float) -> None:
+    def move_to(self, position: Position, *, linear: bool, speed: float,
+                watch: WatchedInput | None) -> None:
         """Move the tool point to *position*, and return once it is there: a straight
-        move at *speed* mm/s, or a joint move at *speed* percent."""
+        move at *speed* mm/s, or a joint move at *speed* percent. With *watch*, the
+        move stops early where the input is as asked."""
 
     def move_by(self, increment: Position, *, data_type: DataType, user: int,
-                speed: float) -> None:
+                speed: float, watch: WatchedInput | None) -> None:
         """Move the tool point straight by *increment*'s axes, along the axes of the
-        frame of *data_type* (and *user*), and return once it is there."""
+        frame of *data_type* (and *user*), and return once it is there (or, with
+        *watch*, stopped on its input)."""
 
     def sleep(self, seconds: float) -> None:
         """Let *seconds* pass; :class:`JobInterruptedError` when the job is stopped
@@ -714,10 +758,11 @@ class _Run:
         match instruction:
             case End():
                 return _END
-            case Move(linear, goal, speed):
+            case Move(linear, goal, speed, watch):
                 position = (job.own_positions.get(goal.number, UNSET) if goal.own
                             else self._position(goal.number))
-                self.host.move_to(position, linear=linear, speed=self._value(speed))
+                self.host.move_to(position, linear=linear, speed=self._value(speed),
+                                  watch=self._watched(watch))
             case IfThen(condition, following):
                 return None if self._holds(condition) else self._branch(job, following)
             case ElseIf(end=end) | Else(end=end):
@@ -766,9 +811,10 @@ class _Run:
             case (GetSystemPosition() | GetSystemByte() | Convert() | MakeFrame()
                   | MultiplyPositions() | GetTool() | SetTool() | SelectTool()):
                 self._act_in_space(instruction)
-            case IncrementalMove(increment, speed, data_type, user):
+            case IncrementalMove(increment, speed, data_type, user, watch):
                 self.host.move_by(self._position(increment), data_type=data_type,
-                                  user=self._int(user), speed=self._value(speed))
+                                  user=self._int(user), speed=self._value(speed),
+                                  watch=self._watched(watch))
             case SquareRoot(target, value):
                 radicand = self._value(value)
                 if radicand < 0:
@@ -822,6 +868,12 @@ class _Run:
                 host.set_tool_position(self._int(tool), self._position(source))
             case SelectTool(tool):
                 host.select_tool(None if tool is None else self._int(tool))
+
+    def _watched(self, watch: Watch | None) -> WatchedInput | None:
+        if watch is None:
+            return None
+        return WatchedInput(watch.search, self._int(watch.ref), watch.on,
+                            self._value(watch.after_seconds), self._value(watch.after_mm))
 
     def _position(self, number: int) -> Position:
         record = self.host.positions.get("P", {}).get(number)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -23,6 +24,7 @@ from ..arm import NoLinearPath, RobotArm
 from .inform import (
     JobInterruptedError,
     JobStoppedError,
+    WatchedInput,
     input_byte,
     output_byte,
     run_job,
@@ -523,6 +525,8 @@ class YaskawaController:
     #: where it stopped ($PX002), None before any search.
     search_found: bool = False
     search_pulses: tuple[int, ...] | None = None
+    #: What the running move watches (SRCH, UNTIL), from where and when it started.
+    _watch: _ActiveWatch | None = field(default=None, repr=False)
     #: The started job's thread, while it runs.
     _job_thread: threading.Thread | None = field(default=None, repr=False)
     #: Why the running job is to stop (a hold, servo off), once it is.
@@ -538,6 +542,7 @@ class YaskawaController:
             self.files.setdefault(name, content)
         self.arm.on_move_finished(self._start_buffered)
         self.arm.on_move_finished(self._notify_changes)
+        self.arm.on_moved(lambda _: self._check_watch())
 
     def _system_files(self) -> dict[str, bytes]:
         """The controller files YMConnect reads when it connects, in the layout of
@@ -901,10 +906,12 @@ class YaskawaController:
         with _refusals_stop_the_job():
             self.selected_tool = None if number is None else self.check_tool(number)
 
-    def move_to(self, position: Position, *, linear: bool, speed: float) -> None:
+    def move_to(self, position: Position, *, linear: bool, speed: float,
+                watch: WatchedInput | None = None) -> None:
         """A job's MOVJ or MOVL. A Cartesian position is where the tool point goes,
         with the tool TCPON selected or else its own; a pulse one, where the axes go."""
         with _refusals_stop_the_job():
+            self._start_watching(watch)
             if speed <= 0:
                 raise CommandRefusedError(Refusal.BAD_DATA, f"speed {speed:g}")
             tool = self.selected_tool if self.selected_tool is not None else position.tool
@@ -926,9 +933,10 @@ class YaskawaController:
         self._wait_for_the_arm()
 
     def move_by(self, increment: Position, *, data_type: DataType, user: int,
-                speed: float) -> None:
+                speed: float, watch: WatchedInput | None = None) -> None:
         """A job's IMOV: straight, by *increment*, along the axes of a frame."""
         with _refusals_stop_the_job():
+            self._start_watching(watch)
             if speed <= 0:
                 raise CommandRefusedError(Refusal.BAD_DATA, f"speed {speed:g}")
             tool = self.selected_tool if self.selected_tool is not None else self.tool
@@ -949,11 +957,50 @@ class YaskawaController:
     def _wait_for_the_arm(self) -> None:
         """Return once the arm has stopped; a job waiting here stops on a hold, servo
         off or an alarm (a fault, a soft limit)."""
-        while self.moving:
-            self.wait_until(lambda: not self.moving, MOVE_POLL_SECONDS)
+        try:
+            while self.moving:
+                self.wait_until(lambda: not self.moving, MOVE_POLL_SECONDS)
+        finally:
+            with self._motion_lock:
+                self._watch = None
         alarms = self.alarms()
         if alarms:
             raise JobInterruptedError(f"alarm {alarms[0].code}")
+
+    def _start_watching(self, watch: WatchedInput | None) -> None:
+        """Watch the next move's input. A search forgets what the last one found."""
+        if watch is not None and watch.search:
+            self.search_found = False
+        with self._motion_lock:
+            self._watch = None if watch is None else _ActiveWatch(
+                watch, time.monotonic(), np.array(self.arm.state.view.pose[:3]))
+
+    def _check_watch(self) -> None:
+        """Stop the move where its watched input is as asked, once it has run its T= and
+        DIS=; a search records where ($PX002, $PX003) and that it found it ($B002).
+        Runs on each arm tick and each input change, so the arm stops in the tick its
+        input changed in."""
+        with self._motion_lock:
+            active = self._watch
+            if active is None or not active.started(self.arm.state.view.pose):
+                return
+            watch = active.watch
+            if watch.search:
+                on = self.direct_inputs.get(watch.number, False)
+            else:
+                on = bool(self.io.get(input_byte(watch.number), 0) >> (watch.number - 1) % 8 & 1)
+            if on != watch.on:
+                return
+            self._watch = None
+            if watch.search:
+                self.search_pulses = tuple(self.pulses())
+                self.search_found = True
+            # A straight move still being planned must not start after this.
+            self._stops += 1
+            self._drop_buffered(Refusal.MOVING, "the search stopped the move")
+        self.note("watch_stopped_move", input=watch.number, search=watch.search)
+        self.arm.stop()
+        self._notify_changes()
 
     def _notify_changes(self) -> None:
         with self._changes:
@@ -1156,12 +1203,14 @@ class YaskawaController:
         """Switch general input IN#number, as the wiring outside the controller does."""
         _set_bit(self.io, input_byte(number), (number - 1) % 8, on)
         self.run_ladder()
+        self._check_watch()
 
     def set_direct_input(self, number: int, on: bool) -> None:
         """Switch direct input RIN#number."""
         with self._changes:
             self.direct_inputs[number] = on
             self._changes.notify_all()
+        self._check_watch()
 
     def output(self, number: int) -> bool:
         """General output OT#number."""
@@ -1201,6 +1250,21 @@ class YaskawaController:
             for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
         )
         return max(seconds, MIN_MOVE_SECONDS)
+
+
+@dataclass(frozen=True, slots=True)
+class _ActiveWatch:
+    """A move's watch, with when and where (the flange, in metres) its move started."""
+
+    watch: WatchedInput
+    since: float
+    start: NDArray[np.float64]
+
+    def started(self, pose: Pose) -> bool:
+        """Whether the move has run its T= time and DIS= distance."""
+        travelled_mm = float(np.linalg.norm(np.array(pose[:3]) - self.start)) * 1000
+        return (time.monotonic() - self.since >= self.watch.after_seconds
+                and travelled_mm >= self.watch.after_mm)
 
 
 @contextmanager
