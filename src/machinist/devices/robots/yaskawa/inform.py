@@ -11,7 +11,8 @@ from a value or ``EXPRESS`` (see :mod:`.expression`), ``ADD``, ``SUB``, ``MUL``,
 ``INC``, ``DEC`` and ``SQRT``; ``JUMP *LABEL``, ``JUMP JOB:X`` and ``CALL JOB:X``,
 each with an optional ``IF`` on ``IN#(..)``/``OT#(..)`` or a variable, or several
 joined by ``ANDIF`` or ``ORIF``; ``IFTHEN``/``IFTHENEXP`` blocks with ``ELSEIF``,
-``ELSE`` and ``ENDIF``; ``TIMER T=..``;
+``ELSE`` and ``ENDIF``; P variables: ``SET P P``, ``GETE``, ``SETE``, ``ADD`` and ``SUB``
+of two (see :mod:`.positions`); ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -31,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from .expression import (
+    OPERATIONS,
     VALUE,
     VARIABLE,
     Expression,
@@ -44,6 +46,7 @@ from .expression import (
     parse_expression,
     variable,
 )
+from .positions import AXES, UNSET, Position
 
 #: How many instructions a job may run before the emulator calls it a loop.
 MAX_STEPS = 100_000
@@ -211,6 +214,42 @@ class SquareRoot:
 
 
 @dataclass(frozen=True, slots=True)
+class CopyPosition:
+    """``SET P010 P011``."""
+
+    target: int
+    source: int
+
+
+@dataclass(frozen=True, slots=True)
+class GetElement:
+    """``GETE D010 P010 (1)``: a variable takes one axis of a position."""
+
+    variable: Variable
+    position: int
+    element: int
+
+
+@dataclass(frozen=True, slots=True)
+class SetElement:
+    """``SETE P010 (1) D020``: one axis of a position takes a value."""
+
+    position: int
+    element: int
+    value: Operand
+
+
+@dataclass(frozen=True, slots=True)
+class CombinePositions:
+    """``ADD P010 P012`` and ``SUB``: each axis of the first takes the sum or
+    difference of both; the first keeps its data type, tool and frame."""
+
+    symbol: str
+    target: int
+    other: int
+
+
+@dataclass(frozen=True, slots=True)
 class IfThen:
     """IFTHEN (and IFTHENEXP): its block runs when the condition holds; otherwise the
     job goes to *following*, the index of its next ELSEIF, ELSE or ENDIF."""
@@ -270,10 +309,20 @@ class Unsupported:
 
 
 Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Assign
-               | Arithmetic | SquareRoot | IfThen | ElseIf | Else | EndIf | Jump | JumpJob
+               | Arithmetic | SquareRoot | CopyPosition | GetElement | SetElement
+               | CombinePositions | IfThen | ElseIf | Else | EndIf | Jump | JumpJob
                | CallJob | Wait | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
+#: A P variable, as ``P010`` or, where a position instruction names it, ``PX010``.
+_P = r"PX?(\d+)"
+
+
+def _element(text: str) -> int:
+    element = int(text)
+    if not 1 <= element <= AXES:
+        raise ValueError(f"element {element}")
+    return element
 
 #: Each instruction the emulator runs: its pattern, and what a match makes of it.
 _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]], ...] = tuple(
@@ -295,6 +344,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
          lambda m: Arithmetic("+" if m[1] == "INC" else "-", _variable(m[2]), Literal(1))),
         (rf"SQRT ({_VARIABLE}) ({_VALUE})",
          lambda m: SquareRoot(_variable(m[1]), _operand(m[2]))),
+        (rf"SET {_P} {_P}", lambda m: CopyPosition(int(m[1]), int(m[2]))),
+        (rf"GETE ({_VARIABLE}) {_P} \((\d)\)",
+         lambda m: GetElement(_variable(m[1]), int(m[2]), _element(m[3]))),
+        (rf"SETE {_P} \((\d)\) ({_VALUE})",
+         lambda m: SetElement(int(m[1]), _element(m[2]), _operand(m[3]))),
+        (rf"(ADD|SUB) {_P} {_P}",
+         lambda m: CombinePositions(_ARITHMETIC[m[1]], int(m[2]), int(m[3]))),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
         (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
         (r"ELSE", lambda m: Else()),
@@ -310,9 +366,10 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
 
 
 def parse_instruction(text: str) -> Instruction | None:
-    """One line of a job; None for one that does nothing (a comment, NOP)."""
+    """One line of a job; None for one that does nothing (a comment, NOP, a line
+    commented out with COMM)."""
     line = " ".join(text.split())
-    if not line or line.startswith("'") or line == "NOP":
+    if not line or line.startswith("'") or line == "NOP" or line.startswith("COMM "):
         return None
     for pattern, make in _PATTERNS:
         if match := pattern.fullmatch(line):
@@ -393,6 +450,10 @@ class JobHost(Protocol):
 
     @property
     def variables(self) -> MutableMapping[str, dict[int, float]]: ...
+
+    @property
+    def positions(self) -> MutableMapping[str, dict[int, tuple[int, ...]]]:
+        """Position variables by kind ("P"), then number, as HSES records."""
 
     def job_text(self, name: str) -> str | None:
         """Job *name*'s INFORM, None when the controller holds no such job."""
@@ -508,11 +569,37 @@ class _Run:
                 self._store(target, evaluate(expression, self._value))
             case Arithmetic(symbol, target, value):
                 self._store(target, evaluate(Operation(symbol, target, value), self._value))
+            case CopyPosition() | GetElement() | SetElement() | CombinePositions():
+                self._act_on_position(instruction)
             case SquareRoot(target, value):
                 radicand = self._value(value)
                 if radicand < 0:
                     raise ArithmeticError(f"square root of {radicand:g}")
                 self._store(target, math.sqrt(radicand))
+
+    def _act_on_position(
+        self, instruction: CopyPosition | GetElement | SetElement | CombinePositions,
+    ) -> None:
+        match instruction:
+            case CopyPosition(target, source):
+                self._set_position(target, self._position(source))
+            case GetElement(target, position, element):
+                self._store(target, self._position(position).axes[element - 1])
+            case SetElement(position, element, value):
+                self._set_position(position, self._position(position).with_axis(
+                    element, round(self._value(value))))
+            case CombinePositions(symbol, target, other):
+                mine, theirs = self._position(target), self._position(other)
+                combined = tuple(round(OPERATIONS[symbol](a, b))
+                                 for a, b in zip(mine.axes, theirs.axes, strict=True))
+                self._set_position(target, replace(mine, axes=combined))
+
+    def _position(self, number: int) -> Position:
+        record = self.host.positions.get("P", {}).get(number)
+        return UNSET if record is None else Position.from_record(record)
+
+    def _set_position(self, number: int, position: Position) -> None:
+        self.host.positions.setdefault("P", {})[number] = position.record()
 
     def _store(self, target: Variable, value: float) -> None:
         self.host.variables.setdefault(target.kind, {})[target.number] = fit(target.kind, value)

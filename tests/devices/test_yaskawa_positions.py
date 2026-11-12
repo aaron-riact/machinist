@@ -7,6 +7,16 @@ from pathlib import Path
 import pytest
 
 from machinist.devices.robots.yaskawa.backup import ControllerBackup, parse_position_variables
+from machinist.devices.robots.yaskawa.inform import (
+    CombinePositions,
+    CopyPosition,
+    GetElement,
+    Literal,
+    SetElement,
+    Variable,
+    parse_instruction,
+    run_job,
+)
 from machinist.devices.robots.yaskawa.positions import (
     DataType,
     Position,
@@ -15,6 +25,8 @@ from machinist.devices.robots.yaskawa.positions import (
     parse_tools,
     parse_variable_line,
 )
+
+from .test_yaskawa_inform import _Host, _job
 
 #: Lines in the layout a DX200 saves them in; the values are made up.
 PULSE_LINE = '"PULSE"0,0,0,000000000000000000000000,0,0,10000,-2000,-30000,5000,20000,-3000,0,0'
@@ -104,3 +116,55 @@ def test_a_backup_gives_the_controller_its_p_variables(tmp_path: Path) -> None:
 def test_a_line_that_is_no_p_variable_is_refused(line: str) -> None:
     with pytest.raises(ValueError, match="P variable line"):
         parse_variable_line(line)
+
+
+# --- What a job does with P variables ----------------------------------------------
+
+P010 = Position(DataType.USER, 1, 3, (0, 0, 150000, 0, 0, 0, 0, 0))
+P012 = Position(DataType.USER, 1, 6, (800000, -1000, 0, 0, 0, 5000, 0, 0))
+
+
+def _run(*lines: str, positions: dict[int, Position], **variables: dict[int, float]) -> _Host:
+    host = _Host({"J": _job(*lines)}, variables=dict(variables),
+                 positions={"P": {n: p.record() for n, p in positions.items()}})
+    run_job(host, "J")
+    return host
+
+
+def _p(host: _Host, number: int) -> Position:
+    return Position.from_record(host.positions["P"][number])
+
+
+@pytest.mark.parametrize(("text", "instruction"), [
+    ("SET P010 P011", CopyPosition(10, 11)),
+    ("GETE D010 P010 (1)", GetElement(Variable("D", 10), 10, 1)),
+    ("SETE P011 (2) D021", SetElement(11, 2, Variable("D", 21))),
+    ("SETE P010 (6) -300000", SetElement(10, 6, Literal(-300000))),
+    ("ADD P010 P012", CombinePositions("+", 10, 12)),
+    ("SUB P012 P012", CombinePositions("-", 12, 12)),
+    ("COMM SETE P012 (3) -50000", None),
+])
+def test_a_position_line_parses_to_what_it_does(text: str, instruction: object) -> None:
+    assert parse_instruction(text) == instruction
+
+
+def test_a_job_moves_a_copy_of_a_position_along_its_x() -> None:
+    host = _run("SET P011 P010", "GETE D010 P011 (3)", "SET D020  EXPRESS 10000 + D010",
+                "SETE P011 (1) D020", positions={10: P010})
+    assert _p(host, 11) == P010.with_axis(1, 160000)
+    assert _p(host, 10) == P010
+    assert host.variables["D"][10] == 150000
+
+
+def test_adding_positions_adds_each_axis_and_keeps_the_firsts_frame() -> None:
+    host = _run("ADD P010 P012", positions={10: P010, 12: P012})
+    assert _p(host, 10) == Position(DataType.USER, 1, 3, (800000, -1000, 150000, 0, 0, 5000,
+                                                          0, 0))
+    host = _run("SUB P010 P010", positions={10: P010})
+    assert _p(host, 10).axes == (0,) * 8
+
+
+def test_an_unset_position_reads_as_pulses_at_zero() -> None:
+    host = _run("GETE D000 P0007 (1)", "SETE P0008 (2) 5", positions={})
+    assert host.variables["D"][0] == 0
+    assert _p(host, 8) == Position(DataType.PULSE, 0, 0, (0, 5, 0, 0, 0, 0, 0, 0))
