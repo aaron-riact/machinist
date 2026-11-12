@@ -39,6 +39,7 @@ from .positions import (
     parse_tools,
     position_at,
     pulse_axes,
+    transform_of,
 )
 
 #: The alarm a faulted arm reports. A real controller names the cause; the
@@ -49,6 +50,8 @@ FAULT_ALARM = 4000
 DESTINATION_PULSE_LIMIT = 4980
 #: A move takes at least this long, so a move to where the arm is still runs.
 MIN_MOVE_SECONDS = 0.02
+#: How often a job waiting for a move looks again, besides when the move ends.
+MOVE_POLL_SECONDS = 0.05
 
 
 #: The RS parameters' type number in a system parameter read.
@@ -534,6 +537,7 @@ class YaskawaController:
         for name, content in self._system_files().items():
             self.files.setdefault(name, content)
         self.arm.on_move_finished(self._start_buffered)
+        self.arm.on_move_finished(self._notify_changes)
 
     def _system_files(self) -> dict[str, bytes]:
         """The controller files YMConnect reads when it connects, in the layout of
@@ -896,6 +900,64 @@ class YaskawaController:
     def select_tool(self, number: int | None) -> None:
         with _refusals_stop_the_job():
             self.selected_tool = None if number is None else self.check_tool(number)
+
+    def move_to(self, position: Position, *, linear: bool, speed: float) -> None:
+        """A job's MOVJ or MOVL. A Cartesian position is where the tool point goes,
+        with the tool TCPON selected or else its own; a pulse one, where the axes go."""
+        with _refusals_stop_the_job():
+            if speed <= 0:
+                raise CommandRefusedError(Refusal.BAD_DATA, f"speed {speed:g}")
+            tool = self.selected_tool if self.selected_tool is not None else position.tool
+            if position.cartesian:
+                point = self.frame_transform(position.data_type, position.user) @ transform_of(
+                    position.axes)
+                flange = _mat_to_pose(point @ np.linalg.inv(self.tool_transform(tool)))
+                if linear:
+                    self.move_linear(flange, SpeedSelection.V, speed)
+                else:
+                    self.move_joints_to_pose(flange, speed)
+            else:
+                joints = self.joints_at(list(position.axes))
+                if linear:
+                    self.move_linear(self.arm.forward(joints), SpeedSelection.V, speed)
+                else:
+                    self.move_joints(joints, speed)
+            self.tool = tool
+        self._wait_for_the_arm()
+
+    def move_by(self, increment: Position, *, data_type: DataType, user: int,
+                speed: float) -> None:
+        """A job's IMOV: straight, by *increment*, along the axes of a frame."""
+        with _refusals_stop_the_job():
+            if speed <= 0:
+                raise CommandRefusedError(Refusal.BAD_DATA, f"speed {speed:g}")
+            tool = self.selected_tool if self.selected_tool is not None else self.tool
+            tool_point = self.tool_transform(tool)
+            point = pose_to_mat(self.arm.state.view.pose) @ tool_point
+            step = transform_of(increment.axes)
+            if data_type is DataType.TOOL:
+                moved = point @ step
+            else:
+                turn = self.frame_transform(data_type, user)[:3, :3]
+                moved = np.eye(4)
+                moved[:3, 3] = point[:3, 3] + turn @ step[:3, 3]
+                moved[:3, :3] = turn @ step[:3, :3] @ turn.T @ point[:3, :3]
+            flange = _mat_to_pose(moved @ np.linalg.inv(tool_point))
+            self.move_linear(flange, SpeedSelection.V, speed)
+        self._wait_for_the_arm()
+
+    def _wait_for_the_arm(self) -> None:
+        """Return once the arm has stopped; a job waiting here stops on a hold, servo
+        off or an alarm (a fault, a soft limit)."""
+        while self.moving:
+            self.wait_until(lambda: not self.moving, MOVE_POLL_SECONDS)
+        alarms = self.alarms()
+        if alarms:
+            raise JobInterruptedError(f"alarm {alarms[0].code}")
+
+    def _notify_changes(self) -> None:
+        with self._changes:
+            self._changes.notify_all()
 
     def taught_user_frame(self, number: int) -> UserFrame:
         """User frame *number* as taught; one not taught is refused."""

@@ -25,6 +25,8 @@ from machinist.devices.robots.yaskawa.inform import (
     JobStoppedError,
     Jump,
     Literal,
+    Move,
+    PositionRef,
     SetOutput,
     SignalTest,
     Timer,
@@ -86,7 +88,7 @@ class _Host:
      Jump("OVER", SignalTest(output=False, ref=Variable("D", 21), on=True))),
     ("CALL JOB:GRIP_CLOSE IF I005=2",
      CallJob("GRIP_CLOSE", Comparison(Variable("I", 5), "=", Literal(2)))),
-    ("MOVL P010 V=50.0 PL=0", Unsupported("MOVL P010 V=50.0 PL=0")),
+    ("MOVL P010 V=50.0 PL=0", Move(True, PositionRef(own=False, number=10), Literal(50))),
     ("ARCON ASF#(1)", Unsupported("ARCON ASF#(1)")),
     ("'OPEN GRIPPER A", None),
     ("TIMER T=I020", Timer(Variable("I", 20))),
@@ -157,7 +159,7 @@ def test_a_group_output_sets_its_whole_byte() -> None:
 
 
 @pytest.mark.parametrize(("lines", "reason"), [
-    (("MOVJ C00000 VJ=10.00",), "not emulated"),
+    (("ARCON ASF#(1)",), "not emulated"),
     (("WAIT IN#(7)=ON",), "nothing here would ever switch it"),
     (("JUMP *NOWHERE",), "no label"),
     (("CALL JOB:MISSING",), "no such job"),
@@ -189,7 +191,7 @@ def cell() -> Iterator[YaskawaRobot]:
     )
     m = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
     m.controller.files["GRIP_OPEN.JBI"] = _job("DOUT OT#(D002) OFF", "DOUT OT#(D001) ON").encode()
-    m.controller.files["MOVE.JBI"] = _job("MOVJ C00000 VJ=10.00").encode()
+    m.controller.files["ARC.JBI"] = _job("ARCON ASF#(1)").encode()
     m.controller.variables["D"] = {1: 1, 2: 2}
     m.start()
     try:
@@ -224,10 +226,10 @@ def test_a_started_job_switches_its_outputs_through_the_ladder(cell: YaskawaRobo
 def test_a_job_that_stops_is_noted(cell: YaskawaRobot) -> None:
     events: list[tuple[str, dict[str, object]]] = []
     cell.controller.note = lambda kind, **fields: events.append((kind, fields))
-    _start(cell, "MOVE")
+    _start(cell, "ARC")
     jobs = [event for event in events if event[0].startswith("job_")]
-    assert jobs == [("job_stopped", {"job": "MOVE", "line": 1,
-                                       "reason": "'MOVJ C00000 VJ=10.00' is not emulated"})]
+    assert jobs == [("job_stopped", {"job": "ARC", "line": 1,
+                                       "reason": "'ARCON ASF#(1)' is not emulated"})]
 
 
 # --- On the controller: a started job runs on its own thread --------------------------

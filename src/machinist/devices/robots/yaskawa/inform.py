@@ -13,7 +13,8 @@ each with an optional ``IF`` on ``IN#(..)``/``OT#(..)`` or a variable, or severa
 joined by ``ANDIF`` or ``ORIF``; ``IFTHEN``/``IFTHENEXP`` blocks with ``ELSEIF``,
 ``ELSE`` and ``ENDIF``; P variables: ``SET P P``, ``GETE``, ``SETE``, ``ADD`` and ``SUB``
 of two, ``MULMAT`` (see :mod:`.positions`); through the host: ``GETS`` of $PX000-$PX003
-and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``;
+and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``; moves:
+``MOVJ`` and ``MOVL`` to a P variable or the job's own C position, ``IMOV``;
 ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
@@ -48,7 +49,15 @@ from .expression import (
     parse_expression,
     variable,
 )
-from .positions import AXES, UNSET, DataType, Position, axes_of, transform_of
+from .positions import (
+    AXES,
+    UNSET,
+    DataType,
+    Position,
+    axes_of,
+    parse_job_positions,
+    transform_of,
+)
 
 #: How many instructions a job may run before the emulator calls it a loop.
 MAX_STEPS = 100_000
@@ -321,6 +330,36 @@ class SelectTool:
 
 
 @dataclass(frozen=True, slots=True)
+class PositionRef:
+    """A position a move goes to: a P variable, or one of the job's own (C)."""
+
+    own: bool
+    number: int
+
+
+@dataclass(frozen=True, slots=True)
+class Move:
+    """``MOVJ P0001 VJ=30.00`` (a joint move, at a percentage of the axes' top speed)
+    or ``MOVL P010 V=200.0`` (a straight one, in mm/s). The job goes on when the arm
+    is there. PL (how closely to pass through) is not emulated: every move stops."""
+
+    linear: bool
+    target: PositionRef
+    speed: Operand
+
+
+@dataclass(frozen=True, slots=True)
+class IncrementalMove:
+    """``IMOV P011 V=20.0 UF#(5)``: a straight move by the P variable's X, Y, Z (and
+    turns), along the axes of the base, robot, tool or a user frame."""
+
+    increment: int
+    speed: Operand
+    data_type: DataType
+    user: Operand
+
+
+@dataclass(frozen=True, slots=True)
 class IfThen:
     """IFTHEN (and IFTHENEXP): its block runs when the condition holds; otherwise the
     job goes to *following*, the index of its next ELSEIF, ELSE or ENDIF."""
@@ -382,8 +421,8 @@ class Unsupported:
 Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Assign
                | Arithmetic | SquareRoot | CopyPosition | GetElement | SetElement
                | CombinePositions | GetSystemPosition | GetSystemByte | Convert | MakeFrame
-               | MultiplyPositions | GetTool | SetTool | SelectTool | IfThen | ElseIf | Else
-               | EndIf | Jump | JumpJob | CallJob | Wait | Unsupported)
+               | MultiplyPositions | GetTool | SetTool | SelectTool | Move | IncrementalMove
+               | IfThen | ElseIf | Else | EndIf | Jump | JumpJob | CallJob | Wait | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 #: A P variable, as ``P010`` or, where a position instruction names it, ``PX010``.
@@ -391,6 +430,15 @@ _P = r"PX?(\d+)"
 
 
 _FRAMES = {"BF": DataType.BASE, "RF": DataType.ROBOT}
+_MOVE_FRAMES = {**_FRAMES, "TF": DataType.TOOL}
+#: A move's target: a P variable or the job's own C position.
+_TARGET = r"((?:P|C)\d+)"
+#: A move's positioning level, which the emulator takes and ignores.
+_PL = r"(?: PL=\d+)?"
+
+
+def _target(text: str) -> PositionRef:
+    return PositionRef(text[0] == "C", int(text[1:]))
 
 
 def _system(text: str, highest: int, lowest: int = 0) -> int:
@@ -448,6 +496,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"SETTOOL TL#{_REF} {_P}", lambda m: SetTool(_operand(m[1]), int(m[2]))),
         (rf"TCPON TL#{_REF}", lambda m: SelectTool(_operand(m[1]))),
         (r"TCPOF", lambda m: SelectTool(None)),
+        (rf"MOVJ {_TARGET} VJ=({_VALUE}){_PL}",
+         lambda m: Move(False, _target(m[1]), _operand(m[2]))),
+        (rf"MOVL {_TARGET} V=({_VALUE}){_PL}",
+         lambda m: Move(True, _target(m[1]), _operand(m[2]))),
+        (rf"IMOV {_P} V=({_VALUE}){_PL} (BF|RF|TF|UF#{_REF})",
+         lambda m: IncrementalMove(int(m[1]), _operand(m[2]), _MOVE_FRAMES.get(m[3], DataType.USER),
+                                   Literal(0) if m[4] is None else _operand(m[4]))),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
         (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
         (r"ELSE", lambda m: Else()),
@@ -482,6 +537,8 @@ class Job:
     name: str
     #: Each instruction with its line number in the job (NOP is line 0).
     lines: tuple[tuple[int, Instruction], ...]
+    #: The job's own positions (C00000 ...), from its //POS section.
+    own_positions: dict[int, Position] = field(default_factory=dict)
 
     @classmethod
     def parse(cls, name: str, text: str) -> Job:
@@ -495,7 +552,7 @@ class Job:
                 lines.append((number, instruction))
             if raw.strip() == "END":
                 break
-        return cls(name, _resolve_blocks(lines))
+        return cls(name, _resolve_blocks(lines), parse_job_positions(text).own)
 
     def label(self, name: str) -> int | None:
         """The index of label *name* in lines, None when the job has none."""
@@ -585,6 +642,15 @@ class JobHost(Protocol):
     def select_tool(self, number: int | None) -> None:
         """The tool what follows uses; None for each position's own."""
 
+    def move_to(self, position: Position, *, linear: bool, speed: float) -> None:
+        """Move the tool point to *position*, and return once it is there: a straight
+        move at *speed* mm/s, or a joint move at *speed* percent."""
+
+    def move_by(self, increment: Position, *, data_type: DataType, user: int,
+                speed: float) -> None:
+        """Move the tool point straight by *increment*'s axes, along the axes of the
+        frame of *data_type* (and *user*), and return once it is there."""
+
     def sleep(self, seconds: float) -> None:
         """Let *seconds* pass; :class:`JobInterruptedError` when the job is stopped
         meanwhile."""
@@ -648,6 +714,10 @@ class _Run:
         match instruction:
             case End():
                 return _END
+            case Move(linear, goal, speed):
+                position = (job.own_positions.get(goal.number, UNSET) if goal.own
+                            else self._position(goal.number))
+                self.host.move_to(position, linear=linear, speed=self._value(speed))
             case IfThen(condition, following):
                 return None if self._holds(condition) else self._branch(job, following)
             case ElseIf(end=end) | Else(end=end):
@@ -696,6 +766,9 @@ class _Run:
             case (GetSystemPosition() | GetSystemByte() | Convert() | MakeFrame()
                   | MultiplyPositions() | GetTool() | SetTool() | SelectTool()):
                 self._act_in_space(instruction)
+            case IncrementalMove(increment, speed, data_type, user):
+                self.host.move_by(self._position(increment), data_type=data_type,
+                                  user=self._int(user), speed=self._value(speed))
             case SquareRoot(target, value):
                 radicand = self._value(value)
                 if radicand < 0:
