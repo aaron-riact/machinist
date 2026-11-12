@@ -16,7 +16,7 @@ of two, ``MULMAT`` (see :mod:`.positions`); through the host: ``GETS`` of $PX000
 and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``; moves:
 ``MOVJ`` and ``MOVL`` to a P variable or the job's own C position, ``IMOV``, each
 with ``SRCH RIN#(..)`` or ``UNTIL IN#(..)``;
-``TIMER T=..``;
+``MSG``; ``PAUSE``, which stops the job; ``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -441,6 +441,19 @@ class Wait:
 
 
 @dataclass(frozen=True, slots=True)
+class Message:
+    """``MSG "DOOR NOT OPEN"``: the pendant shows the text."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Pause:
+    """``PAUSE``: a real controller holds the job until START. The emulator cannot
+    go on from there, so the job stops."""
+
+
+@dataclass(frozen=True, slots=True)
 class Unsupported:
     text: str
 
@@ -449,7 +462,8 @@ Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVar
                | Arithmetic | SquareRoot | CopyPosition | GetElement | SetElement
                | CombinePositions | GetSystemPosition | GetSystemByte | Convert | MakeFrame
                | MultiplyPositions | GetTool | SetTool | SelectTool | Move | IncrementalMove
-               | IfThen | ElseIf | Else | EndIf | Jump | JumpJob | CallJob | Wait | Unsupported)
+               | IfThen | ElseIf | Else | EndIf | Jump | JumpJob | CallJob | Wait | Message
+               | Pause | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 #: A P variable, as ``P010`` or, where a position instruction names it, ``PX010``.
@@ -544,6 +558,8 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"IMOV {_P} V=({_VALUE}){_PL} (BF|RF|TF|UF#{_REF}){_WATCH}",
          lambda m: IncrementalMove(int(m[1]), _operand(m[2]), _MOVE_FRAMES.get(m[3], DataType.USER),
                                    Literal(0) if m[4] is None else _operand(m[4]), _watch(m, 5))),
+        (r'MSG "(.*)"', lambda m: Message(m[1])),
+        (r"PAUSE", lambda m: Pause()),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
         (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
         (r"ELSE", lambda m: Else()),
@@ -689,6 +705,9 @@ class JobHost(Protocol):
     def select_tool(self, number: int | None) -> None:
         """The tool what follows uses; None for each position's own."""
 
+    def show_message(self, text: str) -> None:
+        """Show *text* on the pendant."""
+
     def move_to(self, position: Position, *, linear: bool, speed: float,
                 watch: WatchedInput | None) -> None:
         """Move the tool point to *position*, and return once it is there: a straight
@@ -788,6 +807,8 @@ class _Run:
                                      None if seconds is None else self._value(seconds))
             case Unsupported(text):
                 raise JobStoppedError(job.name, number, f"{text!r} is not emulated")
+            case Pause():
+                raise JobStoppedError(job.name, number, "PAUSE")
             case _:
                 self._act(instruction)
         return None
@@ -795,17 +816,8 @@ class _Run:
     def _act(self, instruction: Instruction) -> None:
         """What an instruction that does not change the flow does to the controller."""
         match instruction:
-            case SetOutput(ref, on):
-                self._set_output(self._int(ref), on)
-            case Pulse(ref, seconds):
-                number = self._int(ref)
-                self._set_output(number, True)
-                self.host.after(self._value(seconds), lambda: self._set_output(number, False))
-            case Timer(seconds):
-                self.host.sleep(self._value(seconds))
-            case SetOutputGroup(group, value):
-                self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
-                self.host.run_ladder()
+            case SetOutput() | Pulse() | SetOutputGroup() | Timer() | Message():
+                self._act_on_signals(instruction)
             case SetVariable(target, value):
                 self._store(target, self._value(value))
             case Assign(target, expression):
@@ -826,6 +838,24 @@ class _Run:
                 if radicand < 0:
                     raise ArithmeticError(f"square root of {radicand:g}")
                 self._store(target, math.sqrt(radicand))
+
+    def _act_on_signals(
+        self, instruction: SetOutput | Pulse | SetOutputGroup | Timer | Message,
+    ) -> None:
+        match instruction:
+            case SetOutput(ref, on):
+                self._set_output(self._int(ref), on)
+            case Pulse(ref, seconds):
+                number = self._int(ref)
+                self._set_output(number, True)
+                self.host.after(self._value(seconds), lambda: self._set_output(number, False))
+            case Timer(seconds):
+                self.host.sleep(self._value(seconds))
+            case SetOutputGroup(group, value):
+                self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
+                self.host.run_ladder()
+            case Message(text):
+                self.host.show_message(text)
 
     def _act_on_position(
         self, instruction: CopyPosition | GetElement | SetElement | CombinePositions,

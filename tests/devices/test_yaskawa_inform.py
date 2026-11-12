@@ -288,3 +288,20 @@ def test_a_hold_or_servo_off_stops_the_running_job(
     assert robot.controller.wait_job(2)
     assert events == [("job_stopped", {"job": "WAITING", "line": 1, "reason": reason})]
     assert not robot.controller.output(1)
+
+
+def test_msg_shows_on_the_pendant(robot: YaskawaRobot) -> None:
+    robot.controller.files["M.JBI"] = _job('MSG "OUT OF PARTS"').encode()
+    robot.controller.start_job("M")
+    assert robot.controller.wait_job(2)
+    assert robot.controller.pendant_message == "OUT OF PARTS"
+
+
+def test_pause_stops_the_job_there(robot: YaskawaRobot) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    robot.controller.note = lambda kind, **fields: events.append((kind, fields))
+    robot.controller.files["P.JBI"] = _job("PAUSE", "DOUT OT#(1) ON").encode()
+    robot.controller.start_job("P")
+    assert robot.controller.wait_job(2)
+    assert events == [("job_stopped", {"job": "P", "line": 1, "reason": "PAUSE"})]
+    assert not robot.controller.output(1)

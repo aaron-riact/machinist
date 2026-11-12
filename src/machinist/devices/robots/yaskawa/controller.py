@@ -906,6 +906,10 @@ class YaskawaController:
         with _refusals_stop_the_job():
             self.selected_tool = None if number is None else self.check_tool(number)
 
+    def show_message(self, text: str) -> None:
+        self.pendant_message = text
+        self.note("pendant_message", text=text)
+
     def move_to(self, position: Position, *, linear: bool, speed: float,
                 watch: WatchedInput | None = None) -> None:
         """A job's MOVJ or MOVL. A Cartesian position is where the tool point goes,
