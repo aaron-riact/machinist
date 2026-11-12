@@ -20,9 +20,17 @@ takes the arm's nearest solution.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, replace
 from enum import IntEnum
+from typing import Protocol
+
+import numpy as np
+from numpy.typing import NDArray
+
+from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
+from ....kinematics.units import Meters, Radians
 
 #: How many axes a position record carries.
 AXES = 8
@@ -73,6 +81,25 @@ class Position:
 UNSET = Position(DataType.PULSE, 0, 0, (0,) * AXES)
 
 
+def transform_of(axes: tuple[int, ...]) -> NDArray[np.float64]:
+    """A Cartesian position's first six axes as a 4x4 transform, in metres."""
+    x, y, z = (a / MICROMETRES / 1000 for a in axes[:3])
+    rx, ry, rz = (math.radians(a / DEGREE_UNITS) for a in axes[3:6])
+    return pose_to_mat((Meters(x), Meters(y), Meters(z), Radians(rx), Radians(ry), Radians(rz)))
+
+
+def axes_of(transform: NDArray[np.float64]) -> tuple[int, ...]:
+    """A 4x4 transform as a Cartesian position's axes, the external ones 0."""
+    x, y, z, rx, ry, rz = _mat_to_pose(transform)
+    return cartesian_axes([x * 1000, y * 1000, z * 1000,
+                           math.degrees(rx), math.degrees(ry), math.degrees(rz)])
+
+
+def offset_transform(offset_mm_deg: tuple[float, ...]) -> NDArray[np.float64]:
+    """An offset in mm and degrees (a tool's, a mount's) as a 4x4 transform."""
+    return transform_of(cartesian_axes(list(offset_mm_deg)))
+
+
 def cartesian_axes(values: list[float]) -> tuple[int, ...]:
     """X, Y, Z in mm and Rx, Ry, Rz in degrees (then any external axes), as a record's."""
     scaled = [round(v * (MICROMETRES if i < 3 else DEGREE_UNITS)) for i, v in enumerate(values)]
@@ -81,6 +108,43 @@ def cartesian_axes(values: list[float]) -> tuple[int, ...]:
 
 def pulse_axes(values: list[float]) -> tuple[int, ...]:
     return tuple([round(v) for v in values] + [0] * (AXES - len(values)))
+
+
+# --- Where a position is ---------------------------------------------------------
+
+
+class Frames(Protocol):
+    """What places a position in space: the arm, the tools and the user frames."""
+
+    def flange_at(self, pulses: tuple[int, ...]) -> NDArray[np.float64]:
+        """The flange in base coordinates with the axes at *pulses*."""
+
+    def tool_transform(self, number: int) -> NDArray[np.float64]:
+        """Tool *number*'s tool point on the flange."""
+
+    def frame_transform(self, data_type: DataType, user: int) -> NDArray[np.float64]:
+        """The frame a Cartesian position of *data_type* (and *user*) is given in, in
+        base coordinates."""
+
+
+def flange_in_base(position: Position, frames: Frames) -> NDArray[np.float64]:
+    """Where *position* puts the flange, in base coordinates: a Cartesian position
+    is its tool point, so the flange lies back along its tool."""
+    if not position.cartesian:
+        return frames.flange_at(position.axes)
+    point = frames.frame_transform(position.data_type, position.user) @ transform_of(
+        position.axes)
+    flange: NDArray[np.float64] = point @ np.linalg.inv(frames.tool_transform(position.tool))
+    return flange
+
+
+def position_at(flange: NDArray[np.float64], *, data_type: DataType, user: int, tool: int,
+                frames: Frames) -> Position:
+    """The Cartesian position of tool *tool*'s point, with the flange at *flange*, in
+    the frame of *data_type* (and *user*)."""
+    point = flange @ frames.tool_transform(tool)
+    local = np.linalg.inv(frames.frame_transform(data_type, user)) @ point
+    return Position(data_type, tool, user if data_type is DataType.USER else 0, axes_of(local))
 
 
 # --- VAR.DAT ---------------------------------------------------------------------

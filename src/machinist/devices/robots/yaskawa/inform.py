@@ -12,7 +12,9 @@ from a value or ``EXPRESS`` (see :mod:`.expression`), ``ADD``, ``SUB``, ``MUL``,
 each with an optional ``IF`` on ``IN#(..)``/``OT#(..)`` or a variable, or several
 joined by ``ANDIF`` or ``ORIF``; ``IFTHEN``/``IFTHENEXP`` blocks with ``ELSEIF``,
 ``ELSE`` and ``ENDIF``; P variables: ``SET P P``, ``GETE``, ``SETE``, ``ADD`` and ``SUB``
-of two (see :mod:`.positions`); ``TIMER T=..``;
+of two, ``MULMAT`` (see :mod:`.positions`); through the host: ``GETS`` of $PX000-$PX003
+and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``;
+``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -46,7 +48,7 @@ from .expression import (
     parse_expression,
     variable,
 )
-from .positions import AXES, UNSET, Position
+from .positions import AXES, UNSET, DataType, Position, axes_of, transform_of
 
 #: How many instructions a job may run before the emulator calls it a loop.
 MAX_STEPS = 100_000
@@ -66,7 +68,7 @@ _OPERATORS: dict[str, Callable[[float, float], bool]] = {
 
 
 class JobInterruptedError(Exception):
-    """The host stopped the job (a hold, servo off): why."""
+    """The host stopped the job (a hold, servo off) or cannot do what it asks: why."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -250,6 +252,75 @@ class CombinePositions:
 
 
 @dataclass(frozen=True, slots=True)
+class GetSystemPosition:
+    """``GETS PX010 $PX003``: $PX000 the arm's pulses, $PX001 its tool point in base
+    coordinates, $PX002 and $PX003 the same where the last search stopped."""
+
+    target: int
+    number: int
+
+
+@dataclass(frozen=True, slots=True)
+class GetSystemByte:
+    """``GETS B000 $B002``: $B002 is 1 when the last search found what it looked for."""
+
+    variable: Variable
+    number: int
+
+
+@dataclass(frozen=True, slots=True)
+class Convert:
+    """``CNVRT PX011 PX010 UF#(5) TL#(1)``: the target is the source's tool point in
+    another frame (base, robot or a user frame), with another tool if one is named."""
+
+    target: int
+    source: int
+    data_type: DataType
+    user: Operand
+    tool: Operand | None
+
+
+@dataclass(frozen=True, slots=True)
+class MakeFrame:
+    """``MFRAME UF#(5) PX011 PX010 PX012``: a user frame from its origin, a point on
+    its X axis and one on its XY plane."""
+
+    user: Operand
+    origin: int
+    on_x: int
+    on_xy: int
+
+
+@dataclass(frozen=True, slots=True)
+class MultiplyPositions:
+    """``MULMAT P013 P010 P012``: the first is the second's transform times the third's."""
+
+    target: int
+    left: int
+    right: int
+
+
+@dataclass(frozen=True, slots=True)
+class GetTool:
+    target: int
+    tool: Operand
+
+
+@dataclass(frozen=True, slots=True)
+class SetTool:
+    tool: Operand
+    source: int
+
+
+@dataclass(frozen=True, slots=True)
+class SelectTool:
+    """``TCPON TL#(1)`` selects a tool for what follows; ``TCPOF`` goes back to each
+    position's own."""
+
+    tool: Operand | None
+
+
+@dataclass(frozen=True, slots=True)
 class IfThen:
     """IFTHEN (and IFTHENEXP): its block runs when the condition holds; otherwise the
     job goes to *following*, the index of its next ELSEIF, ELSE or ENDIF."""
@@ -310,12 +381,24 @@ class Unsupported:
 
 Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVariable | Assign
                | Arithmetic | SquareRoot | CopyPosition | GetElement | SetElement
-               | CombinePositions | IfThen | ElseIf | Else | EndIf | Jump | JumpJob
-               | CallJob | Wait | Unsupported)
+               | CombinePositions | GetSystemPosition | GetSystemByte | Convert | MakeFrame
+               | MultiplyPositions | GetTool | SetTool | SelectTool | IfThen | ElseIf | Else
+               | EndIf | Jump | JumpJob | CallJob | Wait | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 #: A P variable, as ``P010`` or, where a position instruction names it, ``PX010``.
 _P = r"PX?(\d+)"
+
+
+_FRAMES = {"BF": DataType.BASE, "RF": DataType.ROBOT}
+
+
+def _system(text: str, highest: int, lowest: int = 0) -> int:
+    """A system variable's number; ValueError for one the emulator does not keep."""
+    number = int(text)
+    if not lowest <= number <= highest:
+        raise ValueError(f"system variable {number}")
+    return number
 
 
 def _element(text: str) -> int:
@@ -351,6 +434,20 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
          lambda m: SetElement(int(m[1]), _element(m[2]), _operand(m[3]))),
         (rf"(ADD|SUB) {_P} {_P}",
          lambda m: CombinePositions(_ARITHMETIC[m[1]], int(m[2]), int(m[3]))),
+        (rf"GETS {_P} \$PX(\d{{3}})", lambda m: GetSystemPosition(int(m[1]), _system(m[2], 3))),
+        (rf"GETS ({_VARIABLE}) \$B(\d{{3}})",
+         lambda m: GetSystemByte(_variable(m[1]), _system(m[2], 2, 2))),
+        (rf"CNVRT {_P} {_P} (BF|RF|UF#{_REF})(?: TL#{_REF})?",
+         lambda m: Convert(int(m[1]), int(m[2]), _FRAMES.get(m[3], DataType.USER),
+                           Literal(0) if m[4] is None else _operand(m[4]),
+                           None if m[5] is None else _operand(m[5]))),
+        (rf"MFRAME UF#{_REF} {_P} {_P} {_P}",
+         lambda m: MakeFrame(_operand(m[1]), int(m[2]), int(m[3]), int(m[4]))),
+        (rf"MULMAT {_P} {_P} {_P}", lambda m: MultiplyPositions(int(m[1]), int(m[2]), int(m[3]))),
+        (rf"GETTOOL {_P} TL#{_REF}", lambda m: GetTool(int(m[1]), _operand(m[2]))),
+        (rf"SETTOOL TL#{_REF} {_P}", lambda m: SetTool(_operand(m[1]), int(m[2]))),
+        (rf"TCPON TL#{_REF}", lambda m: SelectTool(_operand(m[1]))),
+        (r"TCPOF", lambda m: SelectTool(None)),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
         (r"ELSEIF(?:EXP)? (.+)", lambda m: ElseIf(_condition(m[1]))),
         (r"ELSE", lambda m: Else()),
@@ -463,6 +560,31 @@ class JobHost(Protocol):
     def checkpoint(self) -> None:
         """Go on; :class:`JobInterruptedError` when the job has been stopped."""
 
+    # Each of these raises JobInterruptedError for what the host cannot do (a tool
+    # or user frame it does not know, a frame the points do not span).
+
+    def system_position(self, number: int) -> Position:
+        """$PX000 to $PX003."""
+
+    def system_byte(self, number: int) -> int:
+        """$B002."""
+
+    def convert(self, position: Position, *, data_type: DataType, user: int,
+                tool: int) -> Position:
+        """*position*'s tool point as tool *tool*'s, in the frame of *data_type*."""
+
+    def make_user_frame(self, number: int, points: tuple[Position, Position, Position]) -> None:
+        """Set user frame *number* from its origin, a point on X and one on XY."""
+
+    def tool_position(self, number: int) -> Position:
+        """Tool *number*'s offset from the flange, as a Cartesian position."""
+
+    def set_tool_position(self, number: int, position: Position) -> None:
+        """Set tool *number*'s offset from the flange to *position*'s first six axes."""
+
+    def select_tool(self, number: int | None) -> None:
+        """The tool what follows uses; None for each position's own."""
+
     def sleep(self, seconds: float) -> None:
         """Let *seconds* pass; :class:`JobInterruptedError` when the job is stopped
         meanwhile."""
@@ -571,6 +693,9 @@ class _Run:
                 self._store(target, evaluate(Operation(symbol, target, value), self._value))
             case CopyPosition() | GetElement() | SetElement() | CombinePositions():
                 self._act_on_position(instruction)
+            case (GetSystemPosition() | GetSystemByte() | Convert() | MakeFrame()
+                  | MultiplyPositions() | GetTool() | SetTool() | SelectTool()):
+                self._act_in_space(instruction)
             case SquareRoot(target, value):
                 radicand = self._value(value)
                 if radicand < 0:
@@ -593,6 +718,37 @@ class _Run:
                 combined = tuple(round(OPERATIONS[symbol](a, b))
                                  for a, b in zip(mine.axes, theirs.axes, strict=True))
                 self._set_position(target, replace(mine, axes=combined))
+
+    def _act_in_space(
+        self, instruction: GetSystemPosition | GetSystemByte | Convert | MakeFrame
+        | MultiplyPositions | GetTool | SetTool | SelectTool,
+    ) -> None:
+        host = self.host
+        match instruction:
+            case GetSystemPosition(target, number):
+                self._set_position(target, host.system_position(number))
+            case GetSystemByte(target, number):
+                self._store(target, host.system_byte(number))
+            case Convert(target, source, data_type, user, tool):
+                position = self._position(source)
+                self._set_position(target, host.convert(
+                    position, data_type=data_type, user=self._int(user),
+                    tool=position.tool if tool is None else self._int(tool)))
+            case MakeFrame(user, origin, on_x, on_xy):
+                host.make_user_frame(self._int(user), (
+                    self._position(origin), self._position(on_x), self._position(on_xy)))
+            case MultiplyPositions(target, left, right):
+                first, second = self._position(left), self._position(right)
+                if not (first.cartesian and second.cartesian):
+                    raise ArithmeticError("MULMAT needs two Cartesian positions")
+                product = transform_of(first.axes) @ transform_of(second.axes)
+                self._set_position(target, replace(first, axes=axes_of(product)))
+            case GetTool(target, tool):
+                self._set_position(target, host.tool_position(self._int(tool)))
+            case SetTool(tool, source):
+                host.set_tool_position(self._int(tool), self._position(source))
+            case SelectTool(tool):
+                host.select_tool(None if tool is None else self._int(tool))
 
     def _position(self, number: int) -> Position:
         record = self.host.positions.get("P", {}).get(number)

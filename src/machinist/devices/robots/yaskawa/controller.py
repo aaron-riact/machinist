@@ -6,7 +6,8 @@ import math
 import re
 import threading
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum, IntFlag, auto
@@ -27,6 +28,18 @@ from .inform import (
     run_job,
 )
 from .ladder import Ladder
+from .positions import (
+    DEGREE_UNITS,
+    MICROMETRES,
+    DataType,
+    Position,
+    cartesian_axes,
+    flange_in_base,
+    offset_transform,
+    parse_tools,
+    position_at,
+    pulse_axes,
+)
 
 #: The alarm a faulted arm reports. A real controller names the cause; the
 #: arm only knows that it faulted, so this is a stand-in.
@@ -500,6 +513,13 @@ class YaskawaController:
     _motion_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: The message a host last put on the pendant's remote display.
     pendant_message: str = ""
+    #: The tool a job selected with TCPON, which its moves and $PX001 use; None
+    #: for each position's own (TCPOF).
+    selected_tool: int | None = None
+    #: Whether the last search stopped on its input ($B002), and the axes' pulses
+    #: where it stopped ($PX002), None before any search.
+    search_found: bool = False
+    search_pulses: tuple[int, ...] | None = None
     #: The started job's thread, while it runs.
     _job_thread: threading.Thread | None = field(default=None, repr=False)
     #: Why the running job is to stop (a hold, servo off), once it is.
@@ -802,6 +822,81 @@ class YaskawaController:
             raise CommandRefusedError(Refusal.BAD_TOOL, f"tool {tool}")
         return tool
 
+    # --- positions in space (positions.Frames, and what a job asks of them) ----------
+
+    def tool_offset(self, number: int) -> tuple[float, ...]:
+        """Tool *number*'s offset from the flange in mm and degrees, as TOOL.CND has
+        it; a tool the file does not list has none."""
+        self.check_tool(number)
+        tools = parse_tools(self.files.get("TOOL.CND", b"").decode("ascii", "replace"))
+        return tools[number].offset_mm_deg if number in tools else (0.0,) * 6
+
+    def flange_at(self, pulses: tuple[int, ...]) -> NDArray[np.float64]:
+        return pose_to_mat(self.arm.forward(self.joints_at(list(pulses))))
+
+    def tool_transform(self, number: int) -> NDArray[np.float64]:
+        return offset_transform(self.tool_offset(number))
+
+    def frame_transform(self, data_type: DataType, user: int) -> NDArray[np.float64]:
+        """The robot frame is the base frame: the emulator has no base axes."""
+        match data_type:
+            case DataType.BASE | DataType.ROBOT:
+                return np.eye(4)
+            case DataType.USER:
+                return self.user_frame_transform(user)
+        raise CommandRefusedError(Refusal.BAD_DATA, f"positions in {data_type.name} frames")
+
+    def system_position(self, number: int) -> Position:
+        with _refusals_stop_the_job():
+            tool = self.selected_tool if self.selected_tool is not None else self.tool
+            pulses = (tuple(self.pulses()) if number < 2
+                      else self.search_pulses or (0,) * len(self.pulses_per_degree))
+            if number % 2 == 0:
+                return Position(DataType.PULSE, tool, 0, pulse_axes(list(pulses)))
+            return position_at(self.flange_at(pulses), data_type=DataType.BASE, user=0,
+                               tool=tool, frames=self)
+
+    def system_byte(self, number: int) -> int:
+        return int(self.search_found)
+
+    def convert(self, position: Position, *, data_type: DataType, user: int,
+                tool: int) -> Position:
+        with _refusals_stop_the_job():
+            return position_at(flange_in_base(position, self), data_type=data_type, user=user,
+                               tool=tool, frames=self)
+
+    def make_user_frame(self, number: int, points: tuple[Position, Position, Position]) -> None:
+        """MFRAME, which a job may run in play mode, unlike teaching a frame."""
+        with _refusals_stop_the_job():
+            if not 1 <= number <= self.profile.user_frames:
+                raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
+            org, xx, xy = (_mat_to_pose(flange_in_base(p, self) @ self.tool_transform(p.tool))
+                           for p in points)
+            frame = UserFrame(org, xx, xy, (0, 0, 0), points[0].tool, ())
+            frame.transform()
+            self.user_frames[number] = frame
+
+    def tool_position(self, number: int) -> Position:
+        with _refusals_stop_the_job():
+            return Position(DataType.ROBOT, number, 0,
+                            cartesian_axes(list(self.tool_offset(number))))
+
+    def set_tool_position(self, number: int, position: Position) -> None:
+        """SETTOOL: rewrite the tool's offset line in TOOL.CND."""
+        with _refusals_stop_the_job():
+            self.check_tool(number)
+            offset = [a / MICROMETRES for a in position.axes[:3]] + [
+                a / DEGREE_UNITS for a in position.axes[3:6]]
+            line = ",".join([*(f"{v:.3f}" for v in offset[:3]),
+                             *(f"{v:.4f}" for v in offset[3:])])
+            self.files["TOOL.CND"] = _with_tool_offset(
+                self.files.get("TOOL.CND", b"").decode("ascii", "replace"), number, line
+            ).encode("ascii")
+
+    def select_tool(self, number: int | None) -> None:
+        with _refusals_stop_the_job():
+            self.selected_tool = None if number is None else self.check_tool(number)
+
     def taught_user_frame(self, number: int) -> UserFrame:
         """User frame *number* as taught; one not taught is refused."""
         if not 1 <= number <= self.profile.user_frames:
@@ -1044,6 +1139,25 @@ class YaskawaController:
             for a, b, top in zip(start, target, self.max_joint_speed_deg_s, strict=True)
         )
         return max(seconds, MIN_MOVE_SECONDS)
+
+
+@contextmanager
+def _refusals_stop_the_job() -> Iterator[None]:
+    """What the controller refuses, a job it runs stops on."""
+    try:
+        yield
+    except CommandRefusedError as refused:
+        raise JobInterruptedError(str(refused)) from None
+
+
+def _with_tool_offset(text: str, number: int, line: str) -> str:
+    """TOOL.CND with tool *number*'s offset line (two below its //TOOL line) set to *line*."""
+    lines = text.replace("\r", "").split("\n")
+    for index, current in enumerate(lines):
+        if current.strip() == f"//TOOL {number}" and index + 2 < len(lines):
+            lines[index + 2] = line
+            return "\r\n".join(lines)
+    raise CommandRefusedError(Refusal.BAD_TOOL, f"TOOL.CND has no tool {number}")
 
 
 def _set_bit(io: dict[int, int], byte: int, bit: int, on: bool) -> None:
