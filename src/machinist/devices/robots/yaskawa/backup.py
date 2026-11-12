@@ -3,13 +3,16 @@ pendant to USB), loaded so the emulator holds what that controller holds.
 
 Every file in the folder becomes one of the controller's files: its jobs
 (NAME.JBI), TOOL.CND, CIOPRG.LST and the rest, which take the place of the
-emulator's own. VAR.DAT also gives the B, I, D and R variables the jobs read.
+emulator's own. VAR.DAT also gives the B, I, D and R variables the jobs read, and
+the P variables (see :mod:`.positions`).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from .positions import parse_variable_line
 
 #: The variable kinds VAR.DAT holds that the emulator keeps, by their section.
 VARIABLE_SECTIONS = ("B", "I", "D", "R")
@@ -19,6 +22,8 @@ VARIABLE_SECTIONS = ("B", "I", "D", "R")
 class ControllerBackup:
     files: dict[str, bytes]
     variables: dict[str, dict[int, float]]
+    #: P variables by number, as HSES records; UNUSED ones are left out.
+    positions: dict[int, tuple[int, ...]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, folder: Path) -> ControllerBackup:
@@ -27,8 +32,8 @@ class ControllerBackup:
         files = {path.name: path.read_bytes()
                  for path in sorted(folder.iterdir()) if path.is_file()}
         var_dat = files.get("VAR.DAT")
-        variables = parse_variables(var_dat.decode("ascii", errors="replace")) if var_dat else {}
-        return cls(files, variables)
+        text = var_dat.decode("ascii", errors="replace") if var_dat else ""
+        return cls(files, parse_variables(text), parse_position_variables(text))
 
 
 def parse_variables(text: str) -> dict[str, dict[int, float]]:
@@ -51,3 +56,21 @@ def parse_variables(text: str) -> dict[str, dict[int, float]]:
             if value.strip():
                 store[len(store)] = float(value)
     return variables
+
+
+def parse_position_variables(text: str) -> dict[int, tuple[int, ...]]:
+    """The P variables of a VAR.DAT, by number from 0, as HSES records."""
+    positions: dict[int, tuple[int, ...]] = {}
+    number: int | None = None
+    for raw in text.replace("\r", "").split("\n"):
+        line = raw.strip()
+        if line.startswith("/"):
+            number = 0 if line == "///P" else None
+            continue
+        if number is None or not line:
+            continue
+        position = parse_variable_line(line)
+        if position is not None:
+            positions[number] = position.record()
+        number += 1
+    return positions

@@ -214,6 +214,7 @@ class YaskawaRobot(Device, HasArm, HasIO):
             files={**{name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
                    **backup.files},
             variables=backup.variables,
+            positions={"P": dict(backup.positions)},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
             move_buffer=_move_buffer(options),
             running_bit_quirk=(CONTROLLERS[options.controller].running_bit_quirk
