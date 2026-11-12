@@ -19,6 +19,7 @@ from .controller import CONTROLLERS, JOB_SUFFIX, ROBOTS, YaskawaController, empt
 from .ethernet_server import EthernetServer, _Session
 from .hses import HighSpeedEthernetServer
 from .hses_files import HsesFileServer
+from .ladder import Ladder
 
 MOTOMAN_PORT = 80
 #: Where the High-Speed Ethernet Server (HSES) listens, over UDP: robot
@@ -60,6 +61,11 @@ class YaskawaOptions(ArmOptions):
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
     #: Signal numbers name the first signal of each byte.
     ladder_copies: dict[int, int] = Field(default_factory=dict)
+    #: The cell's other ladder rungs, in the controller's instruction list:
+    #: ``GSTR #10010 GOUT #30010`` copies a byte, ``STR #27012 OUT #30134`` a
+    #: signal, ``STR-NOT ...`` inverts it, ``MOV M560 #30140`` puts a register on
+    #: two bytes (see :mod:`.ladder`). They run after ladder_copies.
+    ladder: tuple[str, ...] = ()
     #: The names of the jobs the controller holds, each as a NAME.JBI file
     #: that does nothing. The emulator cannot run INFORM: selecting a job and
     #: starting it work, and it finishes as soon as it starts.
@@ -120,6 +126,17 @@ class YaskawaOptions(ArmOptions):
         return self
 
     @model_validator(mode="after")
+    def _ladder_rungs_parse(self) -> YaskawaOptions:
+        self.cell_ladder()
+        return self
+
+    def cell_ladder(self) -> Ladder:
+        """ladder_copies as byte-copy rungs, then the other rungs."""
+        copies = [f"GSTR #{source:05d} GOUT #{target:05d}"
+                  for source, target in self.ladder_copies.items()]
+        return Ladder.parse([*copies, *self.ladder])
+
+    @model_validator(mode="after")
     def _one_value_per_joint(self) -> YaskawaOptions:
         for name in ("pulses_per_degree", "max_joint_speed_deg_s", "soft_limit_pulses"):
             values = getattr(self, name)
@@ -158,7 +175,7 @@ class YaskawaRobot(Device, HasArm):
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             soft_limit_pulses=options.soft_limit_pulses,
-            ladder_copies=dict(options.ladder_copies),
+            ladder=options.cell_ladder(),
             files={name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
             move_buffer=_move_buffer(options),
@@ -167,6 +184,8 @@ class YaskawaRobot(Device, HasArm):
                                else options.running_bit_quirk),
             note=self.emit,
         )
+        # A real ladder scans from power-up: an inverted rung is on before any write.
+        self.controller.run_ladder()
         if "ethernet_server" in self.protocols:
             self.add_service(LineServer(
                 endpoint.host, endpoint.port, session_factory=self.make_session, framer=CR,

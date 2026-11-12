@@ -19,6 +19,7 @@ from ....kinematics.api import Joints, Pose
 from ....kinematics.dh_backend import _mat_to_pose, pose_to_mat
 from ....kinematics.units import Radians
 from ..arm import NoLinearPath, RobotArm
+from .ladder import Ladder
 
 #: The alarm a faulted arm reports. A real controller names the cause; the
 #: arm only knows that it faulted, so this is a stand-in.
@@ -427,7 +428,9 @@ class YaskawaController:
     #: HLOCK: on a real controller it locks out the pendant and IO operation
     #: signals. The emulator has neither, so it is only remembered.
     hlock: bool = False
-    ladder_copies: dict[int, int] = field(default_factory=dict)
+    #: The cell's ladder: the rungs that pass signals on, run after every write
+    #: that can change what they read.
+    ladder: Ladder = field(default_factory=Ladder)
     #: The arm's model name, empty when the scene names no arm from the catalog.
     model: str = ""
     #: Each IO byte by the number of its first signal; an unset byte reads 0.
@@ -903,8 +906,11 @@ class YaskawaController:
             if not 0 <= value <= 0xFF:
                 raise CommandRefusedError(Refusal.BAD_DATA, f"byte {value}")
             self.io[signal] = value
-            if signal in self.ladder_copies:
-                self.io[self.ladder_copies[signal]] = value
+        self.run_ladder()
+
+    def run_ladder(self) -> None:
+        """Pass on what the ladder's rungs read: bytes, signals and registers."""
+        self.ladder.scan(self.io, self.variables.setdefault("register", {}))
 
     def check_no_alarm(self) -> None:
         """The interlock table (11.1.1) refuses moves, servo on, job selection,

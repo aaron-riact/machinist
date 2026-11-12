@@ -606,6 +606,7 @@ class HighSpeedEthernetServer:
                 (value,) = kind.unpack(request.data, count=1)
                 _check_writable(kind, number)
                 store[number] = value
+                self.controller.run_ladder()
                 return b""
             raise HsesError(Status.UNDEFINED_COMMAND)
         return handle
@@ -631,6 +632,7 @@ class HighSpeedEthernetServer:
                 for number in numbers:
                     _check_writable(kind, number)
                 store.update(zip(numbers, values, strict=True))
+                self.controller.run_ladder()
                 return b""
             raise HsesError(Status.UNDEFINED_COMMAND)
         return handle
