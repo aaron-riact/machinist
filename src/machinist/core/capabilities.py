@@ -55,3 +55,12 @@ class HasPrograms(ABC):
     @abstractmethod
     def run_program(self, name: str) -> None:
         """Start *name* from :attr:`programs`. Raises if it cannot start."""
+
+
+class SensesDistance(ABC):
+    """A device that sees how far away a surface is, as the scene works it out:
+    the device itself only reacts to the distance, as a real sensor does."""
+
+    @abstractmethod
+    def sense_distance(self, distance_m: float | None) -> None:
+        """The nearest surface along the device's beam, in metres; None for none."""

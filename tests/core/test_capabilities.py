@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from machinist.core.capabilities import HasFlange, HasIO, HasPrograms, HasRegisters
+from machinist.core.capabilities import (
+    HasFlange,
+    HasIO,
+    HasPrograms,
+    HasRegisters,
+    SensesDistance,
+)
 from machinist.devices.gateways.modbus_rtu import ModbusRtuGatewayDevice
 from machinist.devices.grippers.onrobot_3fg25 import OnRobot3FG25
 from machinist.devices.grippers.onrobot_rg import OnRobotRG
@@ -22,8 +28,9 @@ from machinist.devices.robots.fanuc import FanucFocasRobot, FanucKarelServer
 from machinist.devices.robots.generic import RobotDevice
 from machinist.devices.robots.ur import URDashboardServer
 from machinist.devices.robots.yaskawa import YaskawaRobot
+from machinist.devices.sensors.laser import Laser
 
-ALL = {HasArm, HasFlange, HasIO, HasMachineState, HasPrograms, HasRegisters}
+ALL = {HasArm, HasFlange, HasIO, HasMachineState, HasPrograms, HasRegisters, SensesDistance}
 
 EXPECTED = {
     DobotDashboard: {HasArm, HasIO, HasFlange},
@@ -42,6 +49,7 @@ EXPECTED = {
     ZimmerGED6000IL: set(),
     WeidmullerUR20: {HasIO, HasRegisters},
     ModbusRtuGatewayDevice: {HasFlange},
+    Laser: {HasIO, SensesDistance},
 }
 
 
