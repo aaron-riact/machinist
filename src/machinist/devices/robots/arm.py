@@ -119,6 +119,32 @@ class _Move:
     kind: str  # "movej" or "movel"
     seq: int = 0
     requested_pose: Pose | None = None  # cartesian goal for movel (before IK)
+    #: For a straight move: the joints at each step along the line, from the start
+    #: to the target. The arm passes through them in turn, so its tool point keeps
+    #: to the line; None for a joint move, which turns all joints evenly.
+    path: tuple[Joints, ...] | None = None
+
+    def joints_at(self, t: float) -> Joints:
+        """The joints a fraction *t* (0 to 1) of the way through the move."""
+        if self.path is None:
+            return tuple(Radians(_lerp(a, b, t))
+                         for a, b in zip(self.started_joints, self.target, strict=False))
+        place = t * (len(self.path) - 1)
+        index = min(int(place), len(self.path) - 2)
+        within = place - index
+        return tuple(Radians(_lerp(a, b, within))
+                     for a, b in zip(self.path[index], self.path[index + 1], strict=True))
+
+
+@dataclass(frozen=True, slots=True)
+class LinePlan:
+    """A straight move planned from where the arm was: the joints at each step."""
+
+    path: tuple[Joints, ...]
+
+    @property
+    def end(self) -> Joints:
+        return self.path[-1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,13 +523,13 @@ class RobotArm(Service):
 
     def movel(
         self, target_pose: Pose, *, duration: float = 1.0, follows_speed_factor: bool = True,
-        planned: Joints | None = None,
+        planned: LinePlan | None = None,
     ) -> None:
-        """Straight move to *target_pose*; *planned* are its end joints from
-        :meth:`plan_line`, when the line was planned beforehand."""
-        target_joints = self._inverse_along_line(target_pose) if planned is None else planned
-        self._begin_move(target_joints, duration=duration, kind="movel", requested_pose=target_pose,
-                         follows_speed_factor=follows_speed_factor)
+        """Straight move to *target_pose*; *planned* is its line from :meth:`plan_line`,
+        when the line was planned beforehand."""
+        plan = self.plan_line(target_pose) if planned is None else planned
+        self._begin_move(plan.end, duration=duration, kind="movel", requested_pose=target_pose,
+                         follows_speed_factor=follows_speed_factor, path=plan.path)
 
     def forward(self, joints: Joints) -> Pose:
         """The pose the arm would have at *joints*."""
@@ -529,19 +555,13 @@ class RobotArm(Service):
         A servo command (Dobot ``ServoP``) gives each point its own run time and
         is not slowed by the global speed ratio.
         """
-        target_joints = self._inverse_along_line(target_pose)
-        self._begin_move(target_joints, duration=duration, kind="servop", requested_pose=target_pose,
-                         follows_speed_factor=False)
+        plan = self.plan_line(target_pose)
+        self._begin_move(plan.end, duration=duration, kind="servop", requested_pose=target_pose,
+                         follows_speed_factor=False, path=plan.path)
 
-    def plan_line(self, target_pose: Pose) -> Joints:
-        """The joints a straight move from where the arm is ends at, for :meth:`movel`.
-
-        Raises :class:`NoLinearPath` where following the line would flip a joint.
-        """
-        return self._inverse_along_line(target_pose)
-
-    def _inverse_along_line(self, target_pose: Pose) -> Joints:
-        """The joints at *target_pose*, reached along the straight line from where the arm is.
+    def plan_line(self, target_pose: Pose) -> LinePlan:
+        """The straight line from where the arm is to *target_pose*, as the joints at
+        each step along it, for :meth:`movel`.
 
         Raises :class:`NoLinearPath` where following the line would flip a joint.
         """
@@ -552,6 +572,7 @@ class RobotArm(Service):
         steps = max(1, math.ceil(max(float(np.linalg.norm(travel)) / LINE_STEP_METRES,
                                      float(np.linalg.norm(rotation)) / LINE_STEP_RADIANS)))
         joints = view.joints
+        path = [joints]
         for i in range(1, steps + 1):
             t = i / steps
             point = np.eye(4)
@@ -565,7 +586,8 @@ class RobotArm(Service):
                     f"{LINE_STEP_METRES * 1000:.0f} mm step at {_pose_mm_deg(_mat_to_pose(point))}"
                 )
             joints = solved
-        return joints
+            path.append(joints)
+        return LinePlan(tuple(path))
 
     def jog_cartesian(self, twist: NDArray[np.float64], *, dt: float = 1.0, damping: float = 0.02) -> None:
         """Single-step velocity-based cartesian jog via SVD Jacobian pseudoinverse.
@@ -620,7 +642,8 @@ class RobotArm(Service):
     # -----------------------------------------------------------------
 
     def _begin_move(self, target: Joints, *, duration: float, kind: str, requested_pose: Pose | None = None,
-                    follows_speed_factor: bool = True) -> None:
+                    follows_speed_factor: bool = True,
+                    path: tuple[Joints, ...] | None = None) -> None:
         with self._lock:
             view = self.state.view
             if view.mode is ArmMode.ESTOPPED or not view.servo_on:
@@ -636,6 +659,7 @@ class RobotArm(Service):
                 kind=kind,
                 seq=self._move_seq,
                 requested_pose=requested_pose,
+                path=path,
             )
             self.state.update(mode=ArmMode.MOVING, current_command=kind)
             seq = self._move_seq
@@ -660,9 +684,7 @@ class RobotArm(Service):
                 return
             elapsed = time.monotonic() - move.started_at
             t = min(elapsed / move.duration, 1.0)
-            joints = tuple(
-                Radians(_lerp(a, b, t)) for a, b in zip(move.started_joints, move.target, strict=False)
-            )
+            joints = move.joints_at(t)
             pose = self._kinematics.forward(joints)
             done = t >= 1.0
             if done:

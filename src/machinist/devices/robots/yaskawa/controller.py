@@ -993,12 +993,12 @@ class YaskawaController:
         follow faults it, which shows as an alarm."""
         try:
             try:
-                joints = self.arm.plan_line(target)
+                plan = self.arm.plan_line(target)
             except NoLinearPath as exc:
                 self.note("no_linear_path", detail=str(exc))
                 self.arm.fault()
                 return
-            if self._past_soft_limits(joints):
+            if self._past_soft_limits(plan.end):
                 return
             with self._motion_lock:
                 if self._stops != stops:
@@ -1007,7 +1007,7 @@ class YaskawaController:
                     return
                 try:
                     self.arm.movel(target, duration=duration, follows_speed_factor=False,
-                                   planned=joints)
+                                   planned=plan)
                 except RuntimeError as exc:
                     self.note("move_cancelled", move="straight move", reason=str(exc))
         finally:
