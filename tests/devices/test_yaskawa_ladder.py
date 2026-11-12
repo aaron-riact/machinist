@@ -20,6 +20,7 @@ from machinist.devices.robots.yaskawa.ladder import (
     RegisterMove,
     StoreByte,
     parse_instructions,
+    parse_ladder_file,
     parse_rung,
     split_rungs,
 )
@@ -188,3 +189,35 @@ def test_a_network_input_write_reaches_the_outputs_its_rungs_name(cell: YaskawaR
 def test_a_register_write_reaches_the_bytes_it_moves_to(cell: YaskawaRobot) -> None:
     _ask(cell, 0x79, 12, SET_SINGLE, struct.pack("<H", 0x0203))
     assert (_byte(cell, 30060), _byte(cell, 30070)) == (0x03, 0x02)
+
+
+#: A CIOPRG.LST in the layout a DX200 saves it in; the rungs are made up.
+CIOPRG = "\r\n".join([
+    "/CIOPRG DN", "//NAME STANDARD", "//ATTR SC", "//CIOAP GENERAL", "//$M",
+    "1,2,0,0,0,0,0,0,0,0", *["0,0,0,0,0,0,0,0,0,0"] * 6, "0,0,0,0,0,0,0,0,0,9",
+    "//KEY 0",
+    "PART 1", "STR-NOT #70110", "OUT #70110",
+    "PART 2", "STR #20020", "OUT #00020", "GSTR #10020", "GOUT #30020",
+    "STR #70110", "MOV M920,#00030",
+    "END",
+    "//ALARM1", "", "Example alarm",
+])
+
+
+def test_a_ladder_file_gives_its_header_registers_and_its_rungs() -> None:
+    saved = parse_ladder_file(CIOPRG)
+    assert saved.registers[920] == 1
+    assert saved.registers[921] == 2
+    assert saved.registers[999] == 9
+    assert len(saved.registers) == 80
+    assert saved.ladder.rungs == (
+        (Contact("STR", 70110, inverted=True), Out(70110)),
+        (Contact("STR", 20020), Out(20)),
+        (LoadByte(10020), StoreByte(30020)),
+        (Contact("STR", 70110), RegisterMove(920, 30)),
+    )
+
+
+def test_a_ladder_file_with_an_instruction_it_cannot_run_is_refused() -> None:
+    with pytest.raises(ValueError, match="'XOR #20020' is not one the emulator runs"):
+        parse_ladder_file(CIOPRG.replace("STR #20020", "XOR #20020"))

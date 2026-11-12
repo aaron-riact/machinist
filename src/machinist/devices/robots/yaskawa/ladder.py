@@ -242,3 +242,41 @@ def set_signal(io: MutableMapping[int, int], number: int, on: bool) -> None:
     byte, bit = number - number % 10, number % 10
     value = io.get(byte, 0)
     io[byte] = value | 1 << bit if on else value & ~(1 << bit)
+
+
+#: The registers the //$M section of a CIOPRG.LST sets, ten to a line: M920 to M999,
+#: the system registers the ladder editor's header sets (DX200 ladder editor manual,
+#: HW1481795, 1.3.6.1).
+FIRST_HEADER_REGISTER = 920
+
+
+@dataclass(frozen=True, slots=True)
+class LadderFile:
+    """A saved CIOPRG.LST: the registers its header sets, and its rungs."""
+
+    registers: dict[int, int]
+    ladder: Ladder
+
+
+def parse_ladder_file(text: str) -> LadderFile:
+    """The //$M registers, then the instructions from //KEY to END, in every PART. What
+    follows END (the alarm and message texts) is not the ladder's."""
+    registers: dict[int, int] = {}
+    instructions: list[Instruction] = []
+    section = ""
+    for raw in text.replace("\r", "").split("\n"):
+        line = raw.strip()
+        if line.startswith("//"):
+            section = line[2:].split(" ")[0]
+            continue
+        if not line or line.startswith("/"):
+            continue
+        if section == "$M":
+            for value in line.split(","):
+                registers[FIRST_HEADER_REGISTER + len(registers)] = int(value)
+        elif section == "KEY":
+            if line == "END":
+                break
+            if not line.startswith("PART "):
+                instructions.extend(parse_instructions(line))
+    return LadderFile(registers, Ladder(tuple(split_rungs(instructions))))
