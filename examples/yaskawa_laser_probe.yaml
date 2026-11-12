@@ -1,0 +1,49 @@
+# A Yaskawa UP50N on a DX200 with a laser probe on its flange, searching for a part's
+# edge: the job SEARCH switches the laser on, waits until it is ready, and moves the
+# arm along base X until the laser sees the part, then records where.
+#
+# Run from the repository root:
+#   uv run machinist run examples/yaskawa_laser_probe.yaml
+# and start SEARCH over HSES (job select, then start).
+#
+# - yaskawa_laser_probe/: the controller's files: the job, and TOOL.CND, whose tool 1
+#   is the laser's switch point, 300 mm along its beam.
+# - The laser: OT#9 switches it on; IN#9 is laser OK; IN#10 and RIN#1, which the
+#   search stops on, are on while a surface is within 300 mm.
+# - The part: 100 mm across, its top 200 mm below the flange at the start, its edge
+#   50 mm ahead along X.
+
+devices:
+  - name: r1
+    kind: yaskawa
+    options:
+      controller: dx200
+      robot: up50n
+      protocols: [hses]
+      controller_files: examples/yaskawa_laser_probe
+      # The flange at (1170, 0, 805) mm, pointing straight down.
+      start_joints_deg: [0, 0, 0, 0, -90, 0]
+      signals: [ot9, in9, in10, rin1]
+
+  - name: laser1
+    kind: laser
+    options:
+      switches:
+        q1: 300
+
+io_links:
+  - {source: r1.ot9, target: laser1.on}
+  - {source: laser1.ok, target: r1.in9}
+  - {source: laser1.q1, target: r1.in10}
+  - {source: laser1.q1, target: r1.rin1}
+
+mounts:
+  # The beam leaves the flange along its +Z axis: straight down at the start.
+  - device: laser1
+    carrier: r1
+    at_mm_deg: [0, 0, 0, 0, 0, 0]
+
+parts:
+  - name: part
+    cylinder: {diameter_mm: 100, height_mm: 80}
+    at_mm: [[1270, 0, 525]]
