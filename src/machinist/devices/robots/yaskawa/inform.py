@@ -16,7 +16,8 @@ of two, ``MULMAT`` (see :mod:`.positions`); through the host: ``GETS`` of $PX000
 and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``; moves:
 ``MOVJ`` and ``MOVL`` to a P variable or the job's own C position, ``IMOV``, each
 with ``SRCH RIN#(..)`` or ``UNTIL IN#(..)``;
-``MSG``; ``PAUSE``, which stops the job; ``TIMER T=..``;
+``DIN`` of a signal or group, ``SETREG``; ``MSG``; ``PAUSE``, which stops the job;
+``TIMER T=..``;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -441,6 +442,24 @@ class Wait:
 
 
 @dataclass(frozen=True, slots=True)
+class ReadSignal:
+    """``DIN B000 OT#(5)``: a variable takes a signal (IN, OT, SIN, SOUT: 0 or 1) or
+    a group of eight (IG, OG: their byte)."""
+
+    variable: Variable
+    kind: str
+    ref: Operand
+
+
+@dataclass(frozen=True, slots=True)
+class SetRegister:
+    """``SETREG MREG#(20) 100``: a ladder register takes a value."""
+
+    ref: Operand
+    value: Operand
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     """``MSG "DOOR NOT OPEN"``: the pendant shows the text."""
 
@@ -462,8 +481,8 @@ Instruction = (Label | End | SetOutput | SetOutputGroup | Pulse | Timer | SetVar
                | Arithmetic | SquareRoot | CopyPosition | GetElement | SetElement
                | CombinePositions | GetSystemPosition | GetSystemByte | Convert | MakeFrame
                | MultiplyPositions | GetTool | SetTool | SelectTool | Move | IncrementalMove
-               | IfThen | ElseIf | Else | EndIf | Jump | JumpJob | CallJob | Wait | Message
-               | Pause | Unsupported)
+               | IfThen | ElseIf | Else | EndIf | Jump | JumpJob | CallJob | Wait | ReadSignal
+               | SetRegister | Message | Pause | Unsupported)
 
 _ARITHMETIC = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
 #: A P variable, as ``P010`` or, where a position instruction names it, ``PX010``.
@@ -558,6 +577,9 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], Instruction]],
         (rf"IMOV {_P} V=({_VALUE}){_PL} (BF|RF|TF|UF#{_REF}){_WATCH}",
          lambda m: IncrementalMove(int(m[1]), _operand(m[2]), _MOVE_FRAMES.get(m[3], DataType.USER),
                                    Literal(0) if m[4] is None else _operand(m[4]), _watch(m, 5))),
+        (rf"DIN ({_VARIABLE}) (IN|OT|SIN|SOUT|IG|OG)#{_REF}",
+         lambda m: ReadSignal(_variable(m[1]), m[2], _operand(m[3]))),
+        (rf"SETREG MREG#{_REF} ({_VALUE})", lambda m: SetRegister(_operand(m[1]), _operand(m[2]))),
         (r'MSG "(.*)"', lambda m: Message(m[1])),
         (r"PAUSE", lambda m: Pause()),
         (r"IFTHEN(?:EXP)? (.+)", lambda m: IfThen(_condition(m[1]))),
@@ -732,6 +754,16 @@ class JobHost(Protocol):
         """Do *action* once *seconds* have passed, while the job goes on."""
 
 
+#: The first signal of the first byte of each kind of signal a job reads.
+_FIRST_BYTES = {"IN": 10, "OT": 10010, "SIN": 40010, "SOUT": 50010}
+
+
+def signal_byte(kind: str, number: int) -> int:
+    """The first signal of the byte that holds signal *number* of *kind* (IN, OT, SIN,
+    SOUT)."""
+    return _FIRST_BYTES[kind] + (number - 1) // 8 * 10
+
+
 def output_byte(number: int) -> int:
     """The first signal of the byte that holds general output OT#number."""
     return 10010 + (number - 1) // 8 * 10
@@ -816,7 +848,8 @@ class _Run:
     def _act(self, instruction: Instruction) -> None:
         """What an instruction that does not change the flow does to the controller."""
         match instruction:
-            case SetOutput() | Pulse() | SetOutputGroup() | Timer() | Message():
+            case (SetOutput() | Pulse() | SetOutputGroup() | Timer() | Message() | ReadSignal()
+                  | SetRegister()):
                 self._act_on_signals(instruction)
             case SetVariable(target, value):
                 self._store(target, self._value(value))
@@ -840,9 +873,21 @@ class _Run:
                 self._store(target, math.sqrt(radicand))
 
     def _act_on_signals(
-        self, instruction: SetOutput | Pulse | SetOutputGroup | Timer | Message,
+        self, instruction: SetOutput | Pulse | SetOutputGroup | Timer | Message | ReadSignal
+        | SetRegister,
     ) -> None:
         match instruction:
+            case ReadSignal(target, kind, ref):
+                number = self._int(ref)
+                if kind in ("IG", "OG"):
+                    first = signal_byte("IN" if kind == "IG" else "OT", number * 8)
+                    self._store(target, self.host.io.get(first, 0))
+                else:
+                    byte = self.host.io.get(signal_byte(kind, number), 0)
+                    self._store(target, byte >> (number - 1) % 8 & 1)
+            case SetRegister(ref, value):
+                self.host.variables.setdefault("register", {})[self._int(ref)] = self._value(value)
+                self.host.run_ladder()
             case SetOutput(ref, on):
                 self._set_output(self._int(ref), on)
             case Pulse(ref, seconds):

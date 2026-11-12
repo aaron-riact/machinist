@@ -305,3 +305,24 @@ def test_pause_stops_the_job_there(robot: YaskawaRobot) -> None:
     assert robot.controller.wait_job(2)
     assert events == [("job_stopped", {"job": "P", "line": 1, "reason": "PAUSE"})]
     assert not robot.controller.output(1)
+
+
+@pytest.mark.parametrize(("line", "io", "value"), [
+    ("DIN B000 OT#(2)", {10010: 0b10}, 1),
+    ("DIN B000 OT#(1)", {10010: 0b10}, 0),
+    ("DIN B000 IN#(10)", {20: 0b10}, 1),
+    ("DIN B000 SOUT#(9)", {50020: 0b1}, 1),
+    ("DIN B000 IG#(2)", {20: 0xA5}, 0xA5),
+    ("DIN B000 OG#(2)", {10020: 9}, 9),
+])
+def test_din_reads_a_signal_or_a_group(line: str, io: dict[int, int], value: int) -> None:
+    host = _Host({"D": _job("SET B000 7", line)}, io=dict(io))
+    run_job(host, "D")
+    assert host.variables["B"][0] == value
+
+
+def test_setreg_sets_a_register_and_the_ladder_runs() -> None:
+    host = _Host({"R": _job("SETREG MREG#(200) 100")})
+    run_job(host, "R")
+    assert host.variables["register"][200] == 100
+    assert host.scans == 1
