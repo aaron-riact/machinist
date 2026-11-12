@@ -6,10 +6,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from .addressing import AddressAllocator
-from .capabilities import HasFlange, HasIO, HasRegisters
-from .config import FlangeLink, SystemConfig
+from .capabilities import HasFlange, HasIO, HasMount, HasRegisters, SensesDistance
+from .config import FlangeLink, MountConfig, SystemConfig
 from .device import Device
+from .environment import MountedSensor, Scene, mount_offset
 from .events import EventBus
 from .io import IOMap
 from .registry import DeviceRegistry, default_registry
@@ -22,6 +25,8 @@ class World:
     devices: tuple[Device, ...]
     bus: EventBus
     io_map: IOMap
+    #: The parts in the cell, which mounted sensors see.
+    scene: Scene = field(default_factory=lambda: Scene(()))
 
     def start(self) -> None:
         for device in self.devices:
@@ -59,7 +64,11 @@ class WorldBuilder:
         for flange in config.flange_links:
             _wire_flange(flange, by_name)
 
-        return World(devices=tuple(devices), bus=bus, io_map=io_map)
+        scene = Scene.of(config.parts)
+        for mount in config.mounts:
+            _mount(mount, by_name, scene)
+
+        return World(devices=tuple(devices), bus=bus, io_map=io_map, scene=scene)
 
 
 def _wire_flange(link: FlangeLink, by_name: dict[str, Device]) -> None:
@@ -80,6 +89,27 @@ def _wire_flange(link: FlangeLink, by_name: dict[str, Device]) -> None:
     if not isinstance(slave, HasRegisters):
         raise TypeError(f"{link.slave!r} has no registers to expose on a flange")
     master.flange.attach(link.slave_id, slave.register_port)
+
+
+def _mount(mount: MountConfig, by_name: dict[str, Device], scene: Scene) -> None:
+    """Mount a sensor: on a device that carries it, it sees the scene after each
+    move of its carrier; fixed in the cell, it sees it once."""
+    sensor = by_name.get(mount.device)
+    if sensor is None:
+        raise KeyError(f"mount names unknown device {mount.device!r}")
+    if not isinstance(sensor, SensesDistance):
+        raise TypeError(f"{mount.device!r} senses no distance; only a sensor is mounted")
+    mounted = MountedSensor(sensor, mount_offset(mount), scene)
+    if mount.carrier is None:
+        mounted.see_from(np.eye(4))
+        return
+    carrier = by_name.get(mount.carrier)
+    if carrier is None:
+        raise KeyError(f"mount puts {mount.device!r} on unknown device {mount.carrier!r}")
+    if not isinstance(carrier, HasMount):
+        raise TypeError(f"{mount.carrier!r} has no mount point to carry {mount.device!r}")
+    carrier.on_mount_moved(mounted.see_from)
+    mounted.see_from(carrier.mount_transform())
 
 
 def _absorb_io(device: Device, io_map: IOMap) -> None:

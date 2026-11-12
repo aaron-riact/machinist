@@ -2,7 +2,7 @@
 
 It shines a beam and switches each of its outputs on while a surface is closer than
 that output's switch point. It knows nothing of where it is: the scene works out the
-distance along its beam and hands it over.
+distance along its beam (see :mod:`machinist.core.environment`) and hands it over.
 
 Signals:
 
