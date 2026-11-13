@@ -1,0 +1,258 @@
+= Yaskawa DX200 concurrent I/O: a working reference
+:toc:
+:toclevels: 2
+
+The facts a ladder emulator, a driver or a commissioning engineer needs from the
+DX200's concurrent I/O (the controller's built-in PLC), in our own words.
+
+Sources::
+* *YASKAWA Europe, "Robot controller, Operating instructions, Concurrent I/O"*,
+  document E1102000155GB05, revision 5, 2015-04 (on the shared Drive as "DX200
+  Controller (Master Cabinet) - Basic Information_E1102000155GB05.pdf"). Cited as
+  _CIO_ with section and printed page.
+* *YASKAWA, "DX200 Operator's manual for ladder editor"*, HW1481795, 2013-10. Cited as
+  _LE_.
+
+The manuals may not be copied or passed on without Yaskawa Europe's approval. This page
+restates facts in our words and points to where each comes from; go to the manual for
+diagrams and the full text.
+
+== The ladder in short
+
+* The concurrent I/O runs a stored relay ladder program, scanned every *4 ms*
+  (_CIO_ 2.2, p. 2-17). Hold an input on or off for clearly longer than that, or it may
+  be missed.
+* The program has two parts (_CIO_ 2.2, p. 2-16):
+** *PART 1, the system ladder*: from the factory, for the application. Cannot be edited.
+** *PART 2, the user ladder*: the cell's wiring of terminals to the robot's signals,
+   prepared at the factory, editable on the pendant (_LE_ 1).
+* Capacity: 20000 steps, 35 instruction types; most instructions take one step, the
+  ones with numbers or registers two. Up to 560 timers, counters and register
+  instructions (_CIO_ 2.2, 11.1, 11.2).
+* The ladder sits between the terminals and the robot: jobs read and write the
+  *general* signals, the wiring is on the *external* terminals, and the ladder copies
+  between them (_CIO_ 4.2, p. 4-26).
+
+== Signal numbers
+
+A relay number has five digits: a block, a channel of eight signals, and the signal in
+the channel, 0 to 7. Digits 8 and 9 are not used, so each block starts at xxx10 and a
+channel (a byte) is addressed by the number ending in 0 (_CIO_ 3.1, p. 3-19 to 3-20).
+
+[cols="1,2,2,3"]
+|===
+|Block |Range |Kind |What it is
+
+|0xxxx |00010-05127 |General input |What a job reads: `IN#n` (`IN#1` = #00010)
+|1xxxx |10010-15127 |General output |What a job writes: `OT#n` (`OT#1` = #10010)
+|2xxxx |20010-25127 |External input |An input terminal
+|27xxx |27010-29567 |Network input |From a network device (and what HSES may write)
+|3xxxx |30010-35127 |External output |An output terminal
+|37xxx |37010-39567 |Network output |To a network device
+|4xxxx |40010-41607 |Specific input |Changes how the robot runs: `SIN#n` (`SIN#1` = #40010)
+|5xxxx |50010-53007 |Specific output |Tells how the robot runs: `SOUT#n`
+|6xxxx |60010-60647 |Interface panel input |From the pendant's interface panel
+|7xxxx |70010-79997 |Auxiliary relay |The ladder's own memory
+|80xxx-81xxx |80010-81287 |Control status |Hardware status of the controller
+|82xxx |82010-82207 |Pseudo input |Set by system parameters
+|===
+
+(_CIO_ 3, p. 3-18)
+
+The ladder may only drive (`OUT`) relays of blocks 0, 3, 4 and 7: general inputs,
+external outputs, specific inputs and auxiliary relays. Each relay is driven in one
+place only (_CIO_ 11.2, p. 11-206).
+
+== Registers
+
+A register holds one 16-bit word, 0-65535 (_CIO_ 3.2, p. 3-21; 10.1, p. 10-184).
+
+[cols="1,2,3"]
+|===
+|Range |Kind |Access
+
+|M000-M559 |General |Read and write
+|M560-M599 |Analog output 1-40 |Read and write; ±14 V is ±32767
+|M600-M639 |Analog input 1-40 |Read only; ±5 V is ±32767
+|M640-M999 |System |Read only, set by the controller
+|===
+
+* M640-M642: alarm code, data low, data high; M644-M646: error code, data low, data
+  high; M650-M653: I/O alarms 1-16, 17-32, 33-64, 65-128 (_CIO_ 10.1.2, p. 10-185).
+* Bit instructions cannot address a register; they work on relays only (_CIO_ 3.2).
+* CIOPRG.LST's header gives initial values for M920-M999, the system registers the
+  ladder editor's header dialog sets, ten to a line (_LE_ 1.3.6.1).
+
+== Instructions
+
+"While on" means the instruction runs only while the rung's result before it is on
+(the manual's "Exe Condition"). Sources may be a register (M000-M999), a number
+(0-65535), a byte (`#xxxx0`) or a word (`W#xxxx0`); destinations a register
+(M000-M599), a byte or a word, unless said otherwise (_CIO_ 11.1, p. 11-196 to 11-205).
+
+[cols="2,4,1,1"]
+|===
+|Instruction |What it does |Manual |Emulator
+
+|`STR #x` / `STR-NOT #x`
+|Starts a rung from x (or its inverse). A further `STR` starts a branch and keeps the
+result so far.
+|11.2.1-2 |runs
+|`AND`, `AND-NOT`, `OR`, `OR-NOT` `#x`
+|Combine x (or its inverse) into the result.
+|11.2.3-6 |runs
+|`AND-STR` / `OR-STR`
+|Combine the branch with the result kept before it.
+|11.2.7-8 |runs
+|`OUT #x`
+|x takes the result.
+|11.2.9 |runs
+|`PART n`, `END`
+|Mark the system (1) and user (2) parts, and the program's end. Not shown on the
+pendant.
+|11.2.10-11 |read
+|`TMR D,S`
+|On-delay timer on a 0.1 s clock. While its input is on, D counts down from S each
+0.1 s; the contact turns on at 0. Input off: D back at S, contact off. D: M000-M559.
+Reset at power-on.
+|11.2.12 |runs
+|`CNT D,S`
+|Down counter with two inputs, the counter input (first `STR`) and the reset input
+(second). Each off-to-on of the counter input counts D down by 1 while reset is off;
+contact on at 0; counts at 0 are ignored. Reset on: D back at S, contact off; reset
+wins when both turn on together. D: M000-M559. Reset at power-on.
+|11.2.13 |runs
+|`GSTR #b` / `GOUT #b`
+|Load a byte, and put it in another byte; always used in pairs.
+|11.2.14 |runs
+|`PLS #x` / `PLF #x`
+|x is on for one scan when the result turns on (`PLS`) or off (`PLF`).
+|11.2.15-16 |not yet
+|`ADD`, `SUB S1,S2,D`
+|16-bit unsigned add or subtract, while on. Carry on overflow or borrow (the result
+wraps by 65536); zero when the result is 0.
+|11.2.17-18 |not yet
+|`MUL S1,S2,Dn`
+|16 × 16 bits into Dn (low word) and Dn+1 (high word), while on. No flags.
+|11.2.19 |not yet
+|`DIV`, `MOD S1,S2,D`
+|Quotient or remainder, while on. Dividing by 0 sets the error flag and leaves D as it
+was.
+|11.2.20-21 |not yet
+|`BIN S,D` / `BCD S,D`
+|BCD to binary, or binary (up to 9999) to BCD, while on. Data that is not BCD, or over
+9999, sets the error flag and leaves D as it was.
+|11.2.22-23 |not yet
+|`MOV S,D`
+|S to D, while on. A byte destination takes 8 bits; a value over 255 sets the carry
+flag.
+|11.2.24 |runs
+|`WAND`, `WOR`, `WXOR S1,S2,D`, `WNOT S,D`
+|Bitwise AND, OR, exclusive OR, NOT of 16 bits, while on.
+|11.2.25-28 |not yet
+|`SHL`, `SHR S,n,D`
+|Shift 16 bits n times (0-16) left or right, 0 shifted in; the bit shifted out goes to
+the carry flag.
+|11.2.29-30 |not yet
+|`ROL`, `ROR S,n,D`
+|Rotate 16 bits n times left or right; the carry flag is not part of the rotation.
+|11.2.31-32 |not yet
+|`BMOV S,n,D`
+|n (1-999) bytes, or registers, from S onward to D onward, while on. No flags.
+|11.2.33 |runs
+|`CMP S1,S2`
+|Compare, while on: equal sets zero; S1 < S2 sets carry.
+|11.2.34 |not yet
+|===
+
+What the manual leaves open, and the emulator assumes:
+
+* The byte order of a word (`W#xxxx0`): the low byte at the given address, the high
+  byte at the next.
+
+== Arithmetic flags
+
+* Carry #51400, zero #51401, error #51402 (_CIO_ 11.3.1, p. 11-235).
+* All three are cleared before every scan. An instruction that uses a flag sets it from
+  its result when it runs, and clears it when its condition is off; an instruction
+  that does not use a flag leaves it alone (_CIO_ 11.3.2).
+* On an error the instruction is not carried out (_CIO_ 11.3.1).
+
+== Specific signals for running a robot from outside
+
+Inputs, which the ladder or a host drives (_CIO_ 5.6.2-5.6.3, p. 5-75 to 5-78):
+
+[cols="1,4"]
+|===
+|#40010-#40013 |System alarm, system message, user alarm, user message request; the
+number in #40210-15, #40230-35, #40220-25, #40240-45 (0-63, binary)
+|#40014 |Alarm reset (on the rising edge)
+|#40040, #40041 |Select a mode, as the mode key does (rising edge). Teach wins if both;
+ignored when the pendant key is on TEACH or PLAY, or when external mode switching is
+prohibited
+|#40042 |*CMD REMOTE SELECT*: selects command remote, for transmission with a host;
+#50056 shows it is set
+|#40044 |External start, as START on the pendant (rising edge)
+|#40045 |External servo on
+|#40065 |External servo off 1: deceleration stop
+|#40066 |External servo off 2: emergency stop category 0
+|#40054 |External servo off 3: emergency stop category 1
+|#40056 |Prohibit pendant operation: cycle, start, servo on and master job call from
+the pendant (unless parameter S2C230 allows them in remote)
+|#40057 |Prohibit I/O: cycle selection, master job call, external servo on and
+external start from inputs
+|#40067 |External hold, as HOLD on the pendant, while on
+|#40070 |Call the master job to line 0 (rising edge); not while a job runs or with
+servo on in teach
+|===
+
+Outputs, which tell a host how the robot runs (_CIO_ 5.12.1-5.12.3, p. 5-141 to 5-143):
+
+[cols="1,4"]
+|===
+|#50010-#50014 |Alarm or error occurred
+|#50050-#50052 |Cycle setting: the cycle selected
+|#50053, #50054 |Mode setting: the mode selected, as the mode key's lamps show it
+|#50056 |Command remote is set
+|#50070 |Running: a job runs, or a start is reserved, or a test run
+|#50071 |Holding
+|#50073 |Servo on, and ready to accept START
+|#50690-#50692 |Security mode: operation, editing, management
+|===
+
+== CIOPRG.LST
+
+The ladder as the controller saves it. Neither manual describes the file; this is its
+layout, with example rungs:
+
+----
+/CIOPRG DN
+//NAME STANDARD
+//ATTR SC
+//CIOAP GENERAL          the application
+//$M                     M920-M999, ten values a line (_LE_ 1.3.6.1)
+0,0,0,0,0,0,0,0,0,0
+...
+//KEY 0
+PART 1                   the system ladder
+STR #70010
+OUT #70100
+PART 2                   the user ladder
+GSTR #20010
+GOUT #00010
+...
+END
+//ALARM1                 I/O alarm texts, then //ALARM2, //MESSAGE1, //MESSAGE2
+----
+
+One instruction a line, its operands after a space, several separated by commas
+(`BMOV #20010,4,#00010`, `TMR M010,100`).
+
+== In the emulator
+
+`src/machinist/devices/robots/yaskawa/ladder.py` reads a CIOPRG.LST (or rungs from a
+scene's `ladder` option), refuses an instruction it does not run when the scene
+loads, and turns the ladder into one generated Python function. The controller scans
+it every `ladder_scan_ms` (4 ms by default, at a fixed rate) and after every write. A
+scene wires devices to the external terminals (`s20021`, `s30020`), as the cell is
+wired.

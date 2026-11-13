@@ -221,7 +221,9 @@ and outputs the jobs use.
 
 The ladder runs the DX200's instruction list (contacts, `OR-STR`/`AND-STR`,
 `OUT`, `GSTR`/`GOUT`, `BMOV`, `MOV`, `TMR`, `CNT`) after every write, and on its
-own every `ladder_scan_ms` (4 ms, as a DX200 scans).
+own every `ladder_scan_ms` (4 ms, as a DX200 scans). The DX200's signal numbers,
+registers, ladder instructions and remote-control signals are summed up, with the
+manual sections they come from, in `docs/yaskawa-dx200-concurrent-io.adoc`.
 
 A started job runs on its own thread, in real time. The emulator runs the
 INFORM a cell's jobs use: I/O and waits, arithmetic, IFTHEN blocks, P variables
