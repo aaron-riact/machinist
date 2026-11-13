@@ -18,8 +18,10 @@ from machinist.devices.robots.yaskawa.ladder import (
     Ladder,
     LadderMemory,
     LoadByte,
+    Move,
+    Operand,
     Out,
-    RegisterMove,
+    Place,
     StoreByte,
     parse_instructions,
     parse_ladder_file,
@@ -38,8 +40,10 @@ GET_SINGLE, SET_SINGLE = 0x0E, 0x10
     ("GSTR #10010 GOUT #30010", (LoadByte(10010), StoreByte(30010))),
     ("STR #27012 OUT #30134", (Contact("STR", 27012), Out(30134))),
     ("STR-NOT  #27012   OUT #30134", (Contact("STR", 27012, inverted=True), Out(30134))),
-    ("MOV M020,#00030", (RegisterMove(20, 30),)),
-    ("MOV M560 #30140", (RegisterMove(560, 30140),)),
+    ("MOV M020,#00030", (Move(Operand(Place.REGISTER, 20), Operand(Place.BYTE, 30)),)),
+    ("MOV M560 W#30140", (Move(Operand(Place.REGISTER, 560), Operand(Place.WORD, 30140)),)),
+    ("MOV #20020,M010", (Move(Operand(Place.BYTE, 20020), Operand(Place.REGISTER, 10)),)),
+    ("MOV 100,M010", (Move(Operand(Place.NUMBER, 100), Operand(Place.REGISTER, 10)),)),
     ("STR #70010 BMOV #20030,4,#00050", (Contact("STR", 70010), BlockMove(20030, 4, 50))),
     ("STR #70020 AND #82010 OR-NOT #70020 OUT #70030",
      (Contact("STR", 70020), Contact("AND", 82010), Contact("OR", 70020, inverted=True),
@@ -65,7 +69,7 @@ def test_rungs_run_in_order_on_bytes_bits_and_registers() -> None:
         "GSTR #10010 GOUT #30010",
         "STR #27012 OUT #30147",
         "STR-NOT #27012 OUT #30146",
-        "MOV M560 #30150",
+        "MOV M560 W#30150",
     ])
     io = {10010: 0b1001, 27010: 0b100, 30140: 0b0100_0000}
     ladder.scan(io, {560: 0x1234})
@@ -135,7 +139,43 @@ def test_bmov_and_mov_run_only_while_their_contact_is_on() -> None:
     io[70010] = 0b11
     ladder.scan(io, {20: 0x0102})
     assert (io[50], io[60]) == (7, 8)
-    assert (io[30], io[40]) == (0x02, 0x01)
+    assert io[30] == 0x02                       # a byte: the low 8 bits
+    assert 40 not in io
+
+
+@pytest.mark.parametrize(("value", "carry"), [(0xFF, 0), (0x0102, 1)])
+def test_mov_to_a_byte_sets_the_carry_flag_when_bits_are_lost(value: int, carry: int) -> None:
+    """11.2.24: a value over 255 moved to a byte sets the carry flag, #51400."""
+    io: dict[int, int] = {}
+    Ladder.parse(["MOV M020,#00030"]).scan(io, {20: value})
+    assert io[30] == value & 0xFF
+    assert io[51400] & 1 == carry
+
+
+def test_the_arithmetic_flags_are_cleared_before_every_scan() -> None:
+    """11.3.2: a flag lasts only as long as the instruction that set it runs."""
+    ladder = Ladder.parse([f"STR #{A} MOV M020,#00030"])
+    io = {70010: 1}
+    ladder.scan(io, {20: 0x0102})
+    assert io[51400] & 1
+    io[70010] = 0
+    ladder.scan(io, {20: 0x0102})
+    assert io[51400] & 1 == 0
+
+
+def test_mov_reads_and_writes_registers_bytes_words_and_numbers() -> None:
+    ladder = Ladder.parse(["MOV W#20020,M010", "MOV M010 W#30010", "MOV 7,M011"])
+    io = {20020: 0x34, 20030: 0x12}
+    registers: dict[int, float] = {}
+    ladder.scan(io, registers)
+    assert registers[10] == 0x1234
+    assert (io[30010], io[30020]) == (0x34, 0x12)
+    assert registers[11] == 7
+
+
+def test_mov_to_a_register_the_ladder_may_not_write_is_refused() -> None:
+    with pytest.raises(ValueError, match="only M000 to M599"):
+        Ladder.parse(["MOV 1,M640"])
 
 
 def test_an_instruction_list_splits_into_rungs_at_each_new_start() -> None:
@@ -154,7 +194,7 @@ def cell() -> Iterator[YaskawaRobot]:
     options = YaskawaOptions(
         controller="dx200", robot="up50n", protocols=("hses",), hses_port=free_port(),
         ladder_copies={27010: 30040},
-        ladder=("STR-NOT #27020 OUT #30050", "MOV M12 #30060"),
+        ladder=("STR-NOT #27020 OUT #30050", "MOV M12 W#30060"),
     )
     m = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
     m.start()
@@ -216,7 +256,7 @@ def test_a_ladder_file_gives_its_header_registers_and_its_rungs() -> None:
         (Contact("STR", 70110, inverted=True), Out(70110)),
         (Contact("STR", 20020), Out(20)),
         (LoadByte(10020), StoreByte(30020)),
-        (Contact("STR", 70110), RegisterMove(920, 30)),
+        (Contact("STR", 70110), Move(Operand(Place.REGISTER, 920), Operand(Place.BYTE, 30))),
     )
 
 

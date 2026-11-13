@@ -71,7 +71,7 @@ class YaskawaOptions(ArmOptions):
     #: The cell's other ladder rungs, in the controller's instruction list, run after
     #: the ladder of controller_files' CIOPRG.LST, if it has one:
     #: ``GSTR #10010 GOUT #30010`` copies a byte, ``STR #27012 OUT #30134`` a
-    #: signal, ``STR-NOT ...`` inverts it, ``MOV M560 #30140`` puts a register on
+    #: signal, ``STR-NOT ...`` inverts it, ``MOV M560 W#30140`` puts a register on
     #: two bytes (see :mod:`.ladder`). They run after ladder_copies.
     ladder: tuple[str, ...] = ()
     #: The names of the jobs the controller holds, each as a NAME.JBI file

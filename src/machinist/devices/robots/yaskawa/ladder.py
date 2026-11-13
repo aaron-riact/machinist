@@ -14,8 +14,11 @@ Its outputs:
 * ``OUT #y``: signal y takes the result. A rung may have several.
 * ``GSTR #a`` ... ``GOUT #b``: byte b takes byte a.
 * ``BMOV #a,n,#b``: while the result is on, the n bytes from a go to those from b.
-* ``MOV M020,#30010``: while the result is on, the register's 16 bits go to two
-  bytes, low byte first.
+* ``MOV S,D``: while the result is on, S goes to D (11.2.24). Each is a register
+  (``M020``), a byte (``#30010``: 8 bits), a word (``W#30010``: two bytes, the low one
+  first, an order the manual does not give) or, as S only, a number. A value over 255
+  moved to a byte keeps its low 8 bits and sets the carry flag ``#51400``, which is
+  cleared at the start of every scan (11.3).
 
 Timers and counters (DX200 Concurrent I/O manual, E1102000155GB05, 11.2.12-13) keep
 their current value in a register and pass their contact on as the result, for the
@@ -45,6 +48,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, MutableMapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +93,27 @@ class BlockMove:
     target: int
 
 
+class Place(StrEnum):
+    """Where MOV takes or puts a value."""
+
+    REGISTER = "M"
+    BYTE = "#"
+    WORD = "W#"
+    NUMBER = ""
+
+
 @dataclass(frozen=True, slots=True)
-class RegisterMove:
-    register: int
-    target: int
+class Operand:
+    place: Place
+    number: int
+
+
+@dataclass(frozen=True, slots=True)
+class Move:
+    """MOV."""
+
+    source: Operand
+    target: Operand
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,14 +134,18 @@ class Counter:
     preset_is_register: bool = False
 
 
-Instruction = (Contact | Combine | Out | LoadByte | StoreByte | BlockMove | RegisterMove
+Instruction = (Contact | Combine | Out | LoadByte | StoreByte | BlockMove | Move
                | Timer | Counter)
 #: A timer's clock, in seconds.
 TIMER_TICK = 0.1
 #: The registers a timer or counter may keep its current value in.
 CURRENT_VALUE_REGISTERS = range(560)
+#: The registers a ladder may write (11.1): general and analog output.
+WRITABLE_REGISTERS = range(600)
+#: The arithmetic flags (11.3.1): carry, zero, error, bits 0-2 of byte #51400.
+FLAGS_BYTE = 51400
 #: What ends a rung's contacts: the next STR or GSTR starts a new rung.
-OUTPUTS = (Out, StoreByte, BlockMove, RegisterMove)
+OUTPUTS = (Out, StoreByte, BlockMove, Move)
 
 _INSTRUCTION = re.compile(
     r"(?P<combine>OR-STR|AND-STR)"
@@ -128,7 +153,7 @@ _INSTRUCTION = re.compile(
     r"|OUT #(?P<out>\d{5})"
     r"|(?P<group>GSTR|GOUT) #(?P<group_byte>\d{5})"
     r"|BMOV #(?P<source>\d{5}), ?(?P<count>\d+), ?#(?P<target>\d{5})"
-    r"|MOV M(?P<register>\d{1,3})(?:, ?| )#(?P<register_target>\d{5})"
+    r"|MOV (?P<move_source>M\d{1,3}|W?#\d{5}|\d+)(?:, ?| )(?P<move_target>M\d{1,3}|W?#\d{5})"
     r"|(?P<clock>TMR|CNT) M(?P<current>\d{1,3}), ?(?P<preset>M?\d+)"
 )
 
@@ -175,7 +200,20 @@ def _data_instruction(match: re.Match[str]) -> Instruction:
         preset = match["preset"]
         kind = Timer if match["clock"] == "TMR" else Counter
         return kind(current, int(preset.removeprefix("M")), preset.startswith("M"))
-    return RegisterMove(int(match["register"]), _byte(match["register_target"]))
+    source, target = _operand(match["move_source"]), _operand(match["move_target"])
+    if target.place is Place.REGISTER and target.number not in WRITABLE_REGISTERS:
+        raise ValueError(f"MOV to M{target.number}: only M000 to M599 can be written")
+    return Move(source, target)
+
+
+def _operand(text: str) -> Operand:
+    if text.startswith("M"):
+        return Operand(Place.REGISTER, int(text[1:]))
+    if text.startswith("W#"):
+        return Operand(Place.WORD, _byte(text[2:]))
+    if text.startswith("#"):
+        return Operand(Place.BYTE, _byte(text[1:]))
+    return Operand(Place.NUMBER, int(text))
 
 
 Rung = tuple[Instruction, ...]
@@ -263,7 +301,9 @@ class Ladder:
 def compile_ladder(rungs: tuple[Rung, ...]) -> ScanFunction:
     """The rungs as one Python function. A rung that cannot run (OR-STR or CNT with no
     branch kept before it) is refused here, before any scan."""
-    lines = ["def scan(io, regs, memory, now):", "    get = io.get", "    g = 0"]
+    # The arithmetic flags are cleared before every scan (11.3.2).
+    lines = ["def scan(io, regs, memory, now):", "    get = io.get", "    g = 0",
+             f"    io[{FLAGS_BYTE}] = get({FLAGS_BYTE}, 0) & 0xF8"]
     clocks: list[Timer | Counter] = []
     for rung_index, rung in enumerate(rungs):
         lines.extend(_rung_source(rung, rung_index, clocks))
@@ -302,7 +342,7 @@ def _rung_source(rung: Rung, rung_index: int, clocks: list[Timer | Counter]) -> 
             case Combine(kind):
                 before = pop(f"{kind} without a branch before it")
                 lines.append(f"    r = {before} {'|' if kind == 'OR-STR' else '&'} r")
-            case Out() | LoadByte() | StoreByte() | BlockMove() | RegisterMove():
+            case Out() | LoadByte() | StoreByte() | BlockMove() | Move():
                 lines += _output_source(instruction)
             case Timer():
                 clocks.append(instruction)
@@ -316,7 +356,7 @@ def _rung_source(rung: Rung, rung_index: int, clocks: list[Timer | Counter]) -> 
     return lines
 
 
-def _output_source(instruction: Out | LoadByte | StoreByte | BlockMove | RegisterMove,
+def _output_source(instruction: Out | LoadByte | StoreByte | BlockMove | Move,
                    ) -> list[str]:
     """What a rung's result, or its byte, does to the controller's bytes."""
     match instruction:
@@ -333,11 +373,35 @@ def _output_source(instruction: Out | LoadByte | StoreByte | BlockMove | Registe
                     f"        values = [get({source} + 10 * i, 0) for i in range({count})]",
                     "        for i, value in enumerate(values):",
                     f"            io[{target} + 10 * i] = value"]
-        case RegisterMove(register, target):
-            return ["    if r:",
-                    f"        v = int(regs.get({register}, 0)) & 0xFFFF",
-                    f"        io[{target}] = v & 0xFF",
-                    f"        io[{target + 10}] = v >> 8"]
+        case Move(source, target):
+            return ["    if r:", f"        v = {_read(source)}", *_write(target)]
+    raise AssertionError(instruction)
+
+
+def _read(operand: Operand) -> str:
+    """A MOV source as an expression for its 16-bit value."""
+    match operand.place:
+        case Place.REGISTER:
+            return f"int(regs.get({operand.number}, 0)) & 0xFFFF"
+        case Place.BYTE:
+            return f"get({operand.number}, 0)"
+        case Place.WORD:
+            return f"get({operand.number}, 0) | get({operand.number + 10}, 0) << 8"
+    return str(operand.number & 0xFFFF)
+
+
+def _write(operand: Operand) -> list[str]:
+    """Lines that put v in a MOV destination; a byte keeps the low 8 bits, and the carry
+    flag says whether more were lost."""
+    flags = FLAGS_BYTE
+    match operand.place:
+        case Place.REGISTER:
+            return [f"        regs[{operand.number}] = v"]
+        case Place.BYTE:
+            return [f"        io[{operand.number}] = v & 0xFF",
+                    f"        io[{flags}] = get({flags}, 0) & 0xFE | (v > 0xFF)"]
+    return [f"        io[{operand.number}] = v & 0xFF",
+            f"        io[{operand.number + 10}] = v >> 8"]
 
 
 def _preset(clock: Timer | Counter, registers: MutableMapping[int, float]) -> int:
