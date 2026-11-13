@@ -15,6 +15,7 @@ from machinist.devices.robots.yaskawa.ladder import (
     BlockMove,
     Contact,
     Ladder,
+    LadderMemory,
     LoadByte,
     Out,
     RegisterMove,
@@ -221,3 +222,115 @@ def test_a_ladder_file_gives_its_header_registers_and_its_rungs() -> None:
 def test_a_ladder_file_with_an_instruction_it_cannot_run_is_refused() -> None:
     with pytest.raises(ValueError, match="'XOR #20020' is not one the emulator runs"):
         parse_ladder_file(CIOPRG.replace("STR #20020", "XOR #20020"))
+
+
+# --- Timers and counters, as the DX200 Concurrent I/O manual's examples run them ----
+
+
+def _timer_scan(ladder: Ladder, io: dict[int, int], registers: dict[int, float],
+                memory: LadderMemory, now: float, *, start: bool) -> bool:
+    io[70010] = int(start)
+    ladder.scan(io, registers, memory, now)
+    return bool(io.get(70100, 0) & 1)
+
+
+def test_a_timer_turns_its_output_on_once_its_input_has_been_on_for_its_time() -> None:
+    """11.2.12: STR #70010, TMR M010,100, OUT #70100: 10.0 s after the input."""
+    ladder = Ladder.parse(["STR #70010 TMR M010,100 OUT #70100"])
+    io: dict[int, int] = {}
+    registers: dict[int, float] = {}
+    memory = LadderMemory()
+    assert not _timer_scan(ladder, io, registers, memory, 0.0, start=False)
+    assert registers[10] == 100
+    assert not _timer_scan(ladder, io, registers, memory, 1.0, start=True)
+    assert not _timer_scan(ladder, io, registers, memory, 3.5, start=True)
+    assert registers[10] == 75                    # counted down every 0.1 s
+    assert not _timer_scan(ladder, io, registers, memory, 10.95, start=True)
+    assert _timer_scan(ladder, io, registers, memory, 11.0, start=True)
+    assert registers[10] == 0
+    assert not _timer_scan(ladder, io, registers, memory, 12.0, start=False)
+    assert registers[10] == 100                   # back at its set value
+
+
+def test_a_timer_takes_its_set_value_from_a_register() -> None:
+    ladder = Ladder.parse(["STR #70010 TMR M010,M020 OUT #70100"])
+    io: dict[int, int] = {}
+    registers: dict[int, float] = {20: 5}
+    memory = LadderMemory()
+    _timer_scan(ladder, io, registers, memory, 0.0, start=True)
+    assert _timer_scan(ladder, io, registers, memory, 0.5, start=True)
+
+
+COUNTER = "STR #70010 STR #70011 CNT M010,3 OUT #70100"
+
+
+def _count(ladder: Ladder, io: dict[int, int], registers: dict[int, float],
+           memory: LadderMemory, *, counting: bool, reset: bool = False) -> bool:
+    io[70010] = int(counting) | int(reset) << 1
+    ladder.scan(io, registers, memory)
+    return bool(io.get(70100, 0) & 1)
+
+
+def test_a_counter_turns_its_output_on_at_its_third_count() -> None:
+    """11.2.13: counter input #70010, reset input #70011, CNT M010,3."""
+    ladder = Ladder.parse([COUNTER])
+    io: dict[int, int] = {}
+    registers: dict[int, float] = {}
+    memory = LadderMemory()
+    assert not _count(ladder, io, registers, memory, counting=False)
+    assert registers[10] == 3                    # from its set value at power-on
+    for expected in (2, 1):
+        assert not _count(ladder, io, registers, memory, counting=True)
+        assert not _count(ladder, io, registers, memory, counting=False)
+        assert registers[10] == expected
+    assert _count(ladder, io, registers, memory, counting=True)
+    assert registers[10] == 0
+    assert _count(ladder, io, registers, memory, counting=False)
+    assert _count(ladder, io, registers, memory, counting=True)     # counted up: ignored
+    assert not _count(ladder, io, registers, memory, counting=False, reset=True)
+    assert registers[10] == 3
+
+
+def test_a_counter_on_at_power_on_does_not_count_until_it_turns_on_again() -> None:
+    ladder = Ladder.parse([COUNTER])
+    io: dict[int, int] = {}
+    registers: dict[int, float] = {10: 0}
+    memory = LadderMemory()
+    _count(ladder, io, registers, memory, counting=True)
+    assert registers[10] == 3
+
+
+def test_reset_wins_when_both_inputs_turn_on_together() -> None:
+    ladder = Ladder.parse([COUNTER])
+    io: dict[int, int] = {}
+    registers: dict[int, float] = {}
+    memory = LadderMemory()
+    _count(ladder, io, registers, memory, counting=False)
+    assert not _count(ladder, io, registers, memory, counting=True, reset=True)
+    assert registers[10] == 3
+
+
+def test_a_counter_on_a_turning_relay_pulses_once_every_100_scans() -> None:
+    """#70110 turns over each scan; CNT counts it and resets on its own output, #70111."""
+    ladder = Ladder.parse(["STR-NOT #70110 OUT #70110",
+                           "STR #70110 STR #70111 CNT M011,50 OUT #70111"])
+    io: dict[int, int] = {}
+    registers: dict[int, float] = {}
+    memory = LadderMemory()
+    pulses = []
+    for scan in range(1, 320):
+        ladder.scan(io, registers, memory)
+        if io[70110] >> 1 & 1:
+            pulses.append(scan)
+    # #70110 is on at the first scan, which does not count; it turns on again every
+    # second scan after: 50 counts take 100 scans, 0.4 s at the controller's 4 ms.
+    assert pulses == [101, 201, 301]
+
+
+@pytest.mark.parametrize(("text", "complaint"), [
+    ("STR #70010 TMR M600,10 OUT #70100", "kept in M000 to M559"),
+    ("STR #70010 CNT M010,3 OUT #70100", "CNT without its counter input"),
+])
+def test_a_timer_or_counter_that_cannot_run_is_refused(text: str, complaint: str) -> None:
+    with pytest.raises(ValueError, match=complaint):
+        Ladder.parse([text]).scan({}, {})

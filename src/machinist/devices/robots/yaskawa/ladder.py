@@ -17,6 +17,21 @@ Its outputs:
 * ``MOV M020,#30010``: while the result is on, the register's 16 bits go to two
   bytes, low byte first.
 
+Timers and counters (DX200 Concurrent I/O manual, E1102000155GB05, 11.2.12-13) keep
+their current value in a register and pass their contact on as the result, for the
+``OUT`` after them:
+
+* ``TMR M010,20``: an on-delay timer on a 0.1 s clock. While the result before it is
+  on, the current value counts down from the set value (20: 2.0 s); the contact is on
+  at 0. Off, the value is back at the set value and the contact off.
+* ``CNT M011,5``: a counter with two inputs, the counter input (the first ``STR``) and
+  the reset input (the second). Each time the counter input turns on, the value counts
+  down by one, unless reset is on, which puts it back at the set value; the contact is
+  on at 0.
+
+Both start from their set value, as a controller's do at power-on. The set value is a
+number or a register (``TMR M010,M020``).
+
 A rung given alone, as a scene's ``ladder`` option does, may start with ``MOV``: with
 no contact before it, it always runs.
 
@@ -80,7 +95,30 @@ class RegisterMove:
     target: int
 
 
-Instruction = Contact | Combine | Out | LoadByte | StoreByte | BlockMove | RegisterMove
+@dataclass(frozen=True, slots=True)
+class Timer:
+    """TMR: its current value's register, and its set value (a number or a register)."""
+
+    register: int
+    preset: int
+    preset_is_register: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Counter:
+    """CNT: as Timer."""
+
+    register: int
+    preset: int
+    preset_is_register: bool = False
+
+
+Instruction = (Contact | Combine | Out | LoadByte | StoreByte | BlockMove | RegisterMove
+               | Timer | Counter)
+#: A timer's clock, in seconds.
+TIMER_TICK = 0.1
+#: The registers a timer or counter may keep its current value in.
+CURRENT_VALUE_REGISTERS = range(560)
 #: What ends a rung's contacts: the next STR or GSTR starts a new rung.
 OUTPUTS = (Out, StoreByte, BlockMove, RegisterMove)
 
@@ -91,6 +129,7 @@ _INSTRUCTION = re.compile(
     r"|(?P<group>GSTR|GOUT) #(?P<group_byte>\d{5})"
     r"|BMOV #(?P<source>\d{5}), ?(?P<count>\d+), ?#(?P<target>\d{5})"
     r"|MOV M(?P<register>\d{1,3})(?:, ?| )#(?P<register_target>\d{5})"
+    r"|(?P<clock>TMR|CNT) M(?P<current>\d{1,3}), ?(?P<preset>M?\d+)"
 )
 
 
@@ -118,11 +157,24 @@ def _instruction(match: re.Match[str]) -> Instruction:
                        inverted=match["contact"].endswith("-NOT"))
     if match["out"]:
         return Out(_bit(match["out"]))
+    return _data_instruction(match)
+
+
+def _data_instruction(match: re.Match[str]) -> Instruction:
+    """GSTR, GOUT, BMOV, MOV, TMR, CNT: the instructions on bytes and registers."""
     if match["group"]:
         byte = _byte(match["group_byte"])
         return LoadByte(byte) if match["group"] == "GSTR" else StoreByte(byte)
     if match["count"]:
         return BlockMove(_byte(match["source"]), int(match["count"]), _byte(match["target"]))
+    if match["clock"]:
+        current = int(match["current"])
+        if current not in CURRENT_VALUE_REGISTERS:
+            raise ValueError(f"{match['clock']} M{current}: a current value is kept in "
+                             f"M000 to M559")
+        preset = match["preset"]
+        kind = Timer if match["clock"] == "TMR" else Counter
+        return kind(current, int(preset.removeprefix("M")), preset.startswith("M"))
     return RegisterMove(int(match["register"]), _byte(match["register_target"]))
 
 
@@ -192,6 +244,16 @@ class _Scan:
         self.result = (before or self.result) if kind == "OR-STR" else (before and self.result)
 
 
+@dataclass(slots=True)
+class LadderMemory:
+    """What the ladder keeps between scans: when each running timer started, and
+    each counter's input at the last scan. Its timers and counters by (rung,
+    instruction); one not yet scanned starts from its set value."""
+
+    timers_since: dict[tuple[int, int], float | None] = field(default_factory=dict)
+    counter_inputs: dict[tuple[int, int], bool] = field(default_factory=dict)
+
+
 @dataclass(frozen=True, slots=True)
 class Ladder:
     rungs: tuple[Rung, ...] = ()
@@ -204,12 +266,59 @@ class Ladder:
     def __add__(self, other: Ladder) -> Ladder:
         return Ladder(self.rungs + other.rungs)
 
-    def scan(self, io: MutableMapping[int, int], registers: MutableMapping[int, float]) -> None:
-        """Run every rung once, in order, on the controller's bytes and registers."""
-        for rung in self.rungs:
+    def scan(self, io: MutableMapping[int, int], registers: MutableMapping[int, float],
+             memory: LadderMemory | None = None, now: float = 0.0) -> None:
+        """Run every rung once, in order, on the controller's bytes and registers;
+        its timers and counters keep what they need in *memory*, at time *now*
+        (seconds)."""
+        memory = LadderMemory() if memory is None else memory
+        for rung_index, rung in enumerate(self.rungs):
             state = _Scan(io)
-            for instruction in rung:
-                _run(instruction, state, io, registers)
+            for index, instruction in enumerate(rung):
+                match instruction:
+                    case Timer():
+                        _time(instruction, state, registers, memory, (rung_index, index), now)
+                    case Counter():
+                        _count(instruction, state, registers, memory, (rung_index, index))
+                    case _:
+                        _run(instruction, state, io, registers)
+
+
+def _preset(clock: Timer | Counter, registers: MutableMapping[int, float]) -> int:
+    if clock.preset_is_register:
+        return int(registers.get(clock.preset, 0))
+    return clock.preset
+
+
+def _time(timer: Timer, state: _Scan, registers: MutableMapping[int, float],
+          memory: LadderMemory, key: tuple[int, int], now: float) -> None:
+    preset = _preset(timer, registers)
+    since = memory.timers_since.get(key)
+    if not state.result:
+        memory.timers_since[key] = None
+        current = preset
+    else:
+        if since is None:
+            memory.timers_since[key] = since = now
+        current = max(preset - int((now - since) / TIMER_TICK + 1e-9), 0)
+    registers[timer.register] = current
+    state.result = state.result and current == 0
+
+
+def _count(counter: Counter, state: _Scan, registers: MutableMapping[int, float],
+           memory: LadderMemory, key: tuple[int, int]) -> None:
+    reset = state.result
+    if not state.kept:
+        raise ValueError("CNT without its counter input before its reset input")
+    counting = state.kept.pop()
+    preset = _preset(counter, registers)
+    first_scan = key not in memory.counter_inputs
+    current = preset if first_scan or reset else int(registers.get(counter.register, preset))
+    if not reset and counting and not memory.counter_inputs.get(key, True) and current > 0:
+        current -= 1
+    memory.counter_inputs[key] = counting
+    registers[counter.register] = current
+    state.result = not reset and current == 0
 
 
 def _run(instruction: Instruction, state: _Scan, io: MutableMapping[int, int],
