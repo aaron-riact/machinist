@@ -6,10 +6,12 @@
 #   uv run machinist run examples/yaskawa_laser_probe.yaml
 # and start SEARCH over HSES (job select, then start).
 #
-# - yaskawa_laser_probe/: the controller's files: the job, and TOOL.CND, whose tool 1
-#   is the laser's switch point, 300 mm along its beam.
-# - The laser: OT#9 switches it on; IN#9 is laser OK; IN#10 and RIN#1, which the
-#   search stops on, are on while a surface is within 300 mm.
+# - yaskawa_laser_probe/: the controller's files: the job; TOOL.CND, whose tool 1 is
+#   the laser's switch point, 300 mm along its beam; and CIOPRG.LST, the ladder, which
+#   copies terminals #20020-#20027 to IN#9-IN#16 and OT#9-OT#16 to #30020-#30027.
+# - The laser, wired to the terminals: OT#9 (#30020) switches it on; #20020 (IN#9) is
+#   laser OK; #20021 (IN#10) and RIN#1, which the search stops on, are on while a
+#   surface is within 300 mm.
 # - The part: 100 mm across, its top 200 mm below the flange at the start, its edge
 #   50 mm ahead along X.
 
@@ -23,7 +25,7 @@ devices:
       controller_files: examples/yaskawa_laser_probe
       # The flange at (1170, 0, 805) mm, pointing straight down.
       start_joints_deg: [0, 0, 0, 0, -90, 0]
-      signals: [ot9, in9, in10, rin1]
+      signals: [s30020, s20020, s20021, rin1]
 
   - name: laser1
     kind: laser
@@ -32,9 +34,9 @@ devices:
         q1: 300
 
 io_links:
-  - {source: r1.ot9, target: laser1.on}
-  - {source: laser1.ok, target: r1.in9}
-  - {source: laser1.q1, target: r1.in10}
+  - {source: r1.s30020, target: laser1.on}
+  - {source: laser1.ok, target: r1.s20020}
+  - {source: laser1.q1, target: r1.s20021}
   - {source: laser1.q1, target: r1.rin1}
 
 mounts:
