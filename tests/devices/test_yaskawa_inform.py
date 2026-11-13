@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -52,6 +53,7 @@ class _Host:
     io: dict[int, int] = field(default_factory=dict)
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
     positions: dict[str, dict[int, tuple[int, ...]]] = field(default_factory=dict)
+    io_lock: threading.RLock = field(default_factory=threading.RLock)
     scans: int = 0
     #: Seconds passed, on the host's own clock: nothing really waits.
     clock: float = 0.0

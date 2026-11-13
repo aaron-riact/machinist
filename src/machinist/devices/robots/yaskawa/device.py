@@ -18,6 +18,7 @@ from ....core.types import Endpoint
 from ....transport.framing import CR
 from ....transport.line_server import LineServer, Reply, SessionHandler
 from ....transport.message import UdpDatagramServer, UdpMessageServer
+from ....transport.service import Poller
 from ..arm import ArmOptions, HasArm, arm_from_options
 from .backup import ControllerBackup
 from .controller import CONTROLLERS, JOB_SUFFIX, ROBOTS, YaskawaController, empty_job
@@ -88,6 +89,11 @@ class YaskawaOptions(ArmOptions):
     #: from the buffer. Unset takes the controller's (on for the NX100, off for
     #: the others); each time it hides a move the device notes it.
     running_bit_quirk: bool | None = None
+    #: How often the ladder scans on its own, in ms, besides after every write: a
+    #: DX200 scans every 4 ms. Its timers count real time whatever this is; its
+    #: counters count scans, so a counter clocked by a relay the ladder turns over
+    #: each scan slows as this grows. None: only after writes, as before.
+    ladder_scan_ms: float | None = 4.0
     #: The controller's signals other devices wire to (see :mod:`.signals`):
     #: ``in10`` a general input, ``ot9`` a general output, ``rin1`` a direct input.
     signals: tuple[ControllerSignal, ...] = ()
@@ -98,6 +104,12 @@ class YaskawaOptions(ArmOptions):
         if isinstance(raw, (list, tuple)):
             return tuple(ControllerSignal.parse(n) if isinstance(n, str) else n for n in raw)
         return raw
+
+    @model_validator(mode="after")
+    def _ladder_scans_at_all(self) -> YaskawaOptions:
+        if self.ladder_scan_ms is not None and self.ladder_scan_ms <= 0:
+            raise ValueError(f"ladder_scan_ms {self.ladder_scan_ms}: not more than 0")
+        return self
 
     @model_validator(mode="after")
     def _each_signal_once(self) -> YaskawaOptions:
@@ -226,6 +238,9 @@ class YaskawaRobot(Device, HasArm, HasIO):
         self._wire_signals(options.signals)
         # A real ladder scans from power-up: an inverted rung is on before any write.
         self.controller.run_ladder()
+        if options.ladder_scan_ms is not None:
+            self.add_service(Poller(self.controller.run_ladder,
+                                    interval=options.ladder_scan_ms / 1000))
         if "ethernet_server" in self.protocols:
             self.add_service(LineServer(
                 endpoint.host, endpoint.port, session_factory=self.make_session, framer=CR,

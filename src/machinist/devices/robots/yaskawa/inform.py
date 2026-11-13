@@ -34,6 +34,7 @@ import math
 import operator
 import re
 from collections.abc import Callable, MutableMapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
@@ -698,6 +699,10 @@ class JobHost(Protocol):
     def variables(self) -> MutableMapping[str, dict[int, float]]: ...
 
     @property
+    def io_lock(self) -> AbstractContextManager[object]:
+        """Held while the job reads and writes the IO bytes together."""
+
+    @property
     def positions(self) -> MutableMapping[str, dict[int, tuple[int, ...]]]:
         """Position variables by kind ("P"), then number, as HSES records."""
 
@@ -921,8 +926,9 @@ class _Run:
             case Timer(seconds):
                 self.host.sleep(self._value(seconds))
             case SetOutputGroup(group, value):
-                self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
-                self.host.run_ladder()
+                with self.host.io_lock:
+                    self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
+                    self.host.run_ladder()
             case Message(text):
                 self.host.show_message(text)
 
@@ -1024,6 +1030,7 @@ class _Run:
 
     def _set_output(self, number: int, on: bool) -> None:
         byte, bit = output_byte(number), (number - 1) % 8
-        value = self.host.io.get(byte, 0)
-        self.host.io[byte] = value | 1 << bit if on else value & ~(1 << bit)
-        self.host.run_ladder()
+        with self.host.io_lock:
+            value = self.host.io.get(byte, 0)
+            self.host.io[byte] = value | 1 << bit if on else value & ~(1 << bit)
+            self.host.run_ladder()

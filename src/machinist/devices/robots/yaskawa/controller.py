@@ -29,7 +29,7 @@ from .inform import (
     output_byte,
     run_job,
 )
-from .ladder import Ladder
+from .ladder import Ladder, LadderMemory
 from .ladder import set_signal as set_signal_bit
 from .ladder import signal as signal_bit
 from .positions import (
@@ -466,6 +466,11 @@ class YaskawaController:
     direct_inputs: dict[int, bool] = field(default_factory=dict)
     #: Called after every write to the IO and the ladder scan that follows it.
     io_written: Callable[[], None] = field(default=lambda: None, repr=False)
+    #: Held while the IO bytes are read and written together: a ladder scan, a job's
+    #: or a host's write. The ladder may scan on its own thread.
+    io_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    #: What the ladder's timers and counters keep between scans.
+    ladder_memory: LadderMemory = field(default_factory=LadderMemory, repr=False)
     #: Registers and variables by kind ("register", "B", "I", ...), then number;
     #: an unset one reads 0.
     variables: dict[str, dict[int, float]] = field(default_factory=dict)
@@ -1192,29 +1197,34 @@ class YaskawaController:
         network_inputs = self.profile.network_inputs
         if signals[0] not in network_inputs or signals[-1] + 7 not in network_inputs:
             raise CommandRefusedError(Refusal.NOT_WRITABLE, f"#{signals[0]} is not a network input")
-        for signal, value in zip(signals, values, strict=True):
-            if not 0 <= value <= 0xFF:
-                raise CommandRefusedError(Refusal.BAD_DATA, f"byte {value}")
-            self.io[signal] = value
-        self.run_ladder()
+        if any(not 0 <= value <= 0xFF for value in values):
+            raise CommandRefusedError(Refusal.BAD_DATA, f"bytes {values}")
+        with self.io_lock:
+            for signal, value in zip(signals, values, strict=True):
+                self.io[signal] = value
+            self.run_ladder()
 
     def run_ladder(self) -> None:
         """Pass on what the ladder's rungs read: bytes, signals and registers."""
-        self.ladder.scan(self.io, self.variables.setdefault("register", {}))
+        with self.io_lock:
+            self.ladder.scan(self.io, self.variables.setdefault("register", {}),
+                             self.ladder_memory, time.monotonic())
         self.io_written()
         with self._changes:
             self._changes.notify_all()
 
     def set_input(self, number: int, on: bool) -> None:
         """Switch general input IN#number, as the wiring outside the controller does."""
-        _set_bit(self.io, input_byte(number), (number - 1) % 8, on)
-        self.run_ladder()
+        with self.io_lock:
+            _set_bit(self.io, input_byte(number), (number - 1) % 8, on)
+            self.run_ladder()
         self._check_watch()
 
     def set_signal(self, number: int, on: bool) -> None:
         """Switch the controller's signal #number (an external input's terminal)."""
-        set_signal_bit(self.io, number, on)
-        self.run_ladder()
+        with self.io_lock:
+            set_signal_bit(self.io, number, on)
+            self.run_ladder()
         self._check_watch()
 
     def signal(self, number: int) -> bool:

@@ -4,6 +4,7 @@ after the writes that can change what they read."""
 from __future__ import annotations
 
 import struct
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -334,3 +335,40 @@ def test_a_counter_on_a_turning_relay_pulses_once_every_100_scans() -> None:
 def test_a_timer_or_counter_that_cannot_run_is_refused(text: str, complaint: str) -> None:
     with pytest.raises(ValueError, match=complaint):
         Ladder.parse([text]).scan({}, {})
+
+
+def _scanning(ladder: tuple[str, ...], **options: object) -> YaskawaRobot:
+    robot = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), YaskawaOptions(
+        controller="dx200", robot="up50n", ladder=ladder, **options))
+    robot.start()
+    wait_running(robot)
+    return robot
+
+
+def test_a_started_controllers_ladder_scans_on_its_own_so_a_timer_runs_out() -> None:
+    robot = _scanning(("STR #27010 TMR M010,2 OUT #30010",))
+    try:
+        controller = robot.controller
+        controller.write_network_inputs([27010], [1])
+        assert not controller.signal(30010)
+        # Nothing is written after this: only the ladder's own scans can turn it on.
+        controller.wait_until(lambda: controller.signal(30010), 2)
+        assert controller.signal(30010)
+    finally:
+        robot.stop()
+
+
+def test_without_its_own_scans_the_ladder_runs_only_after_writes() -> None:
+    robot = _scanning(("STR-NOT #70110 OUT #70110",), ladder_scan_ms=None)
+    try:
+        controller = robot.controller
+        before = controller.signal(70110)
+        time.sleep(0.05)
+        assert controller.signal(70110) == before
+    finally:
+        robot.stop()
+
+
+def test_a_scan_time_of_zero_is_refused() -> None:
+    with pytest.raises(ValueError, match="ladder_scan_ms"):
+        YaskawaOptions(controller="dx200", robot="up50n", ladder_scan_ms=0)
