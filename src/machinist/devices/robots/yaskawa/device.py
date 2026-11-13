@@ -68,7 +68,8 @@ class YaskawaOptions(ArmOptions):
     #: byte, as ``{22010: 30040}`` mirrors #22010-#22017 on #30040-#30047.
     #: Signal numbers name the first signal of each byte.
     ladder_copies: dict[int, int] = Field(default_factory=dict)
-    #: The cell's other ladder rungs, in the controller's instruction list:
+    #: The cell's other ladder rungs, in the controller's instruction list, run after
+    #: the ladder of controller_files' CIOPRG.LST, if it has one:
     #: ``GSTR #10010 GOUT #30010`` copies a byte, ``STR #27012 OUT #30134`` a
     #: signal, ``STR-NOT ...`` inverts it, ``MOV M560 #30140`` puts a register on
     #: two bytes (see :mod:`.ladder`). They run after ladder_copies.
@@ -222,10 +223,12 @@ class YaskawaRobot(Device, HasArm, HasIO):
             pulses_per_degree=options.pulses_per_degree,
             max_joint_speed_deg_s=options.max_joint_speed_deg_s,
             soft_limit_pulses=options.soft_limit_pulses,
-            ladder=options.cell_ladder(),
+            ladder=backup.ladder.ladder + options.cell_ladder(),
             files={**{name + JOB_SUFFIX: empty_job(name) for name in options.jobs},
                    **backup.files},
-            variables=backup.variables,
+            variables={**backup.variables,
+                       "register": {**backup.variables.get("register", {}),
+                                    **backup.ladder.registers}},
             positions={"P": dict(backup.positions)},
             model=ROBOTS[options.robot].model if options.robot is not None else "",
             move_buffer=_move_buffer(options),

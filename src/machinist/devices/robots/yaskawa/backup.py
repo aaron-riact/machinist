@@ -4,7 +4,8 @@ pendant to USB), loaded so the emulator holds what that controller holds.
 Every file in the folder becomes one of the controller's files: its jobs
 (NAME.JBI), TOOL.CND, CIOPRG.LST and the rest, which take the place of the
 emulator's own. VAR.DAT also gives the B, I, D and R variables the jobs read, and
-the P variables (see :mod:`.positions`).
+the P variables (see :mod:`.positions`). CIOPRG.LST gives the cell's ladder and the
+registers its header sets (see :mod:`.ladder`).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .ladder import Ladder, LadderFile, parse_ladder_file
 from .positions import parse_variable_line
 
 #: The variable kinds VAR.DAT holds that the emulator keeps, by their section.
@@ -24,6 +26,8 @@ class ControllerBackup:
     variables: dict[str, dict[int, float]]
     #: P variables by number, as HSES records; UNUSED ones are left out.
     positions: dict[int, tuple[int, ...]] = field(default_factory=dict)
+    #: The saved ladder, empty when the folder has no CIOPRG.LST.
+    ladder: LadderFile = field(default_factory=lambda: LadderFile({}, Ladder()))
 
     @classmethod
     def load(cls, folder: Path) -> ControllerBackup:
@@ -33,7 +37,10 @@ class ControllerBackup:
                  for path in sorted(folder.iterdir()) if path.is_file()}
         var_dat = files.get("VAR.DAT")
         text = var_dat.decode("ascii", errors="replace") if var_dat else ""
-        return cls(files, parse_variables(text), parse_position_variables(text))
+        cioprg = files.get("CIOPRG.LST")
+        ladder = (parse_ladder_file(cioprg.decode("ascii", errors="replace"))
+                  if cioprg is not None else LadderFile({}, Ladder()))
+        return cls(files, parse_variables(text), parse_position_variables(text), ladder)
 
 
 def parse_variables(text: str) -> dict[str, dict[int, float]]:

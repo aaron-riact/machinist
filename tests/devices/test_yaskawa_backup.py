@@ -68,3 +68,26 @@ def test_a_scene_runs_a_saved_job_with_its_saved_variables(saved: Path) -> None:
 def test_a_folder_that_is_not_there_fails_when_the_scene_loads(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not a folder"):
         YaskawaOptions(controller="dx200", robot="up50n", controller_files=tmp_path / "gone")
+
+
+#: A CIOPRG.LST as a DX200 saves it, cut short: M920 starts at 7, and the ladder copies
+#: terminals #20020-#20027 to IN#9-IN#16 and OT#9-OT#16 to #30020-#30027.
+CIOPRG = "\r\n".join([
+    "/CIOPRG DN", "//NAME STANDARD", "//ATTR SC", "//CIOAP GENERAL", "//$M",
+    "7,0,0,0,0,0,0,0,0,0", *["0,0,0,0,0,0,0,0,0,0"] * 7, "//KEY 0",
+    "PART 1", "STR-NOT #70110", "OUT #70110",
+    "PART 2", "GSTR #20020", "GOUT #00020", "GSTR #10020", "GOUT #30020",
+    "END", "//ALARM1", "Example alarm",
+]) + "\r\n"
+
+
+def test_a_saved_ladder_runs_with_the_scenes_rungs_after_it(saved: Path) -> None:
+    (saved / "CIOPRG.LST").write_text(CIOPRG)
+    options = YaskawaOptions(controller="dx200", robot="up50n", controller_files=saved,
+                             ladder=("GSTR #00020 GOUT #30010",), signals=("s20021",))
+    robot = YaskawaRobot("r1", Endpoint("127.0.0.1", free_port()), EventBus(), options)
+    controller = robot.controller
+    assert controller.variables["register"][920] == 7
+    robot.io["s20021"].set(True)
+    assert controller.io[20] == 0b10           # the saved ladder: terminal to IN#10
+    assert controller.io[30010] == 0b10         # then the scene's rung
