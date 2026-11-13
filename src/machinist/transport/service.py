@@ -10,6 +10,7 @@ device can hold a list of them and drive all of them the same way.
 from __future__ import annotations
 
 import threading
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import ClassVar
@@ -49,6 +50,41 @@ class Poller(Service):
         while not self._stop.is_set():
             self._poll()
             self._stop.wait(self._interval)
+
+    def shutdown(self) -> None:
+        self._stop.set()
+
+
+class Ticker(Service):
+    """Call *tick* every *interval* seconds, at a fixed rate, until shut down.
+
+    Unlike :class:`Poller`, the time *tick* takes does not stretch the period: each
+    call is due one interval after the one before was due. A tick that falls
+    behind by more than an interval skips the calls it missed rather than making
+    them up in a burst. For a cycle that keeps time, as a PLC's scan does.
+    """
+
+    def __init__(self, tick: Callable[[], None], *, interval: float,
+                 clock: Callable[[], float] = time.monotonic,
+                 wait: Callable[[float], object] | None = None) -> None:
+        """*clock* and *wait* (which a shutdown cuts short) are the time it keeps."""
+        self._tick = tick
+        self._interval = interval
+        self._clock = clock
+        self._stop = threading.Event()
+        self._wait = self._stop.wait if wait is None else wait
+
+    def serve_forever(self, ready: threading.Event | None = None) -> None:
+        if ready is not None:
+            ready.set()
+        due = self._clock()
+        while not self._stop.is_set():
+            self._tick()
+            due += self._interval
+            now = self._clock()
+            if now - due > self._interval:
+                due = now
+            self._wait(max(due - now, 0.0))
 
     def shutdown(self) -> None:
         self._stop.set()
