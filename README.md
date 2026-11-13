@@ -212,9 +212,16 @@ mount's angles turn about X, then Y, then Z, as Yaskawa's Rx, Ry, Rz do.
 ### Yaskawa jobs
 
 A `yaskawa` device's `signals` option names the controller's inputs (`in10`),
-outputs (`ot9`) and direct inputs (`rin1`) that `io_links` may wire.
-`controller_files` loads a folder saved from a real controller: its jobs,
-TOOL.CND, and the B, I, D, R and P variables in VAR.DAT.
+outputs (`ot9`), direct inputs (`rin1`) and external terminals (`s20021`,
+`s30020`) that `io_links` may wire. `controller_files` loads a folder saved from a
+real controller: its jobs, TOOL.CND, the B, I, D, R and P variables in VAR.DAT,
+and CIOPRG.LST, the cell's ladder. With a saved ladder, wire devices to the
+terminals, as the cell is wired: the ladder passes them on to the general inputs
+and outputs the jobs use.
+
+The ladder runs the DX200's instruction list (contacts, `OR-STR`/`AND-STR`,
+`OUT`, `GSTR`/`GOUT`, `BMOV`, `MOV`, `TMR`, `CNT`) after every write, and on its
+own every `ladder_scan_ms` (4 ms, as a DX200 scans).
 
 A started job runs on its own thread, in real time. The emulator runs the
 INFORM a cell's jobs use: I/O and waits, arithmetic, IFTHEN blocks, P variables
