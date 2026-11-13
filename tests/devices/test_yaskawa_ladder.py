@@ -372,3 +372,13 @@ def test_without_its_own_scans_the_ladder_runs_only_after_writes() -> None:
 def test_a_scan_time_of_zero_is_refused() -> None:
     with pytest.raises(ValueError, match="ladder_scan_ms"):
         YaskawaOptions(controller="dx200", robot="up50n", ladder_scan_ms=0)
+
+
+@pytest.mark.parametrize(("text", "complaint"), [
+    ("STR #70010 OR-STR OUT #70100", "OR-STR without a branch before it"),
+    ("STR #70010 AND-STR OUT #70100", "AND-STR without a branch before it"),
+])
+def test_a_rung_that_cannot_run_is_refused_when_the_ladder_is_made(text: str,
+                                                                    complaint: str) -> None:
+    with pytest.raises(ValueError, match=complaint):
+        Ladder.parse([text])
