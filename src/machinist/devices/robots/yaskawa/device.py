@@ -18,7 +18,7 @@ from ....core.types import Endpoint
 from ....transport.framing import CR
 from ....transport.line_server import LineServer, Reply, SessionHandler
 from ....transport.message import UdpDatagramServer, UdpMessageServer
-from ....transport.service import Poller
+from ....transport.service import Ticker
 from ..arm import ArmOptions, HasArm, arm_from_options
 from .backup import ControllerBackup
 from .controller import CONTROLLERS, JOB_SUFFIX, ROBOTS, YaskawaController, empty_job
@@ -242,7 +242,7 @@ class YaskawaRobot(Device, HasArm, HasIO):
         # A real ladder scans from power-up: an inverted rung is on before any write.
         self.controller.run_ladder()
         if options.ladder_scan_ms is not None:
-            self.add_service(Poller(self.controller.run_ladder,
+            self.add_service(Ticker(self.controller.run_ladder,
                                     interval=options.ladder_scan_ms / 1000))
         if "ethernet_server" in self.protocols:
             self.add_service(LineServer(
