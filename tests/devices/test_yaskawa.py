@@ -18,6 +18,7 @@ from machinist.core.events import EventBus
 from machinist.core.registry import default_registry
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import CONTROLLERS, ROBOTS, YaskawaOptions, YaskawaRobot
+from machinist.devices.robots.yaskawa.positions import offset_transform
 from machinist.kinematics.dh_backend import pose_to_mat
 
 from ..conftest import free_port, wait_running
@@ -1068,6 +1069,30 @@ def test_the_mh50_counts_its_pulses_as_a_real_one() -> None:
                for limit in (low, high)]
     assert degrees == pytest.approx([-180, 180, -90, 135, -80, 206, -360, 360,
                                      -125, 125, -360, 360], abs=0.002)
+
+
+#: Two of a real MH50's user frames (Welltec's DX200, UFRAME.CND): the pulses its origin
+#: was taught at, the tool it was taught in (TOOL.CND), and where the controller put it.
+MH50_TAUGHT_ORIGINS = [
+    # UF11, taught in tool 3 (PZN A: -0.5, -90, 146.5 mm, turned 90, 0, 180 deg).
+    ((10794, 95543, 45323, -12474, 20107, 6007), (-0.5, -90.0, 146.5, 90.0, 0.0, 180.0),
+     (2139.407, 337.361, -69.060)),
+    # UF1, taught in tool 1 (LASER1: -355.92, -8.232, 139.778 mm, turned 90, 0, 90 deg).
+    ((87162, -5672, -142649, 91158, 76656, -8944), (-355.92, -8.232, 139.778, 90.0, 0.0, 90.0),
+     (4.502, 582.341, -360.226)),
+]
+
+
+@pytest.mark.parametrize(("pulses", "tool", "origin_mm"), MH50_TAUGHT_ORIGINS)
+def test_the_mh50s_flange_is_a_real_ones(
+    pulses: tuple[int, ...], tool: tuple[float, ...], origin_mm: tuple[float, ...],
+) -> None:
+    """A tool point lands where the controller taught it only with the flange's axes
+    as the controller's: a flange turned 180 degrees about Z puts tool 3 at tool 4."""
+    options = YaskawaOptions(controller="dx200", robot="mh50", protocols=("hses",))
+    controller = YaskawaRobot("r1", Endpoint("127.0.0.1", 0), EventBus(), options).controller
+    point = controller.flange_at(pulses) @ offset_transform(tool)
+    assert tuple(point[:3, 3] * 1000) == pytest.approx(origin_mm, abs=0.1)
 
 
 def test_the_mh50_35_reaches_as_its_data_sheet() -> None:
