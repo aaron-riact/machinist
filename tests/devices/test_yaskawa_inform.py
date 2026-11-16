@@ -139,9 +139,16 @@ def test_a_pulse_switches_its_output_on_and_off_again_after_its_time() -> None:
 
 
 def test_a_timer_lets_its_time_pass() -> None:
-    host = _Host({"T": _job("TIMER T=0.20", "SET I000 3", "TIMER T=I000")})
+    host = _Host({"T": _job("TIMER T=0.20", "TIMER T=1.00")})
     run_job(host, "T")
-    assert host.clock == pytest.approx(3.2)
+    assert host.clock == pytest.approx(1.2)
+
+
+def test_a_timer_counts_a_variables_time_in_hundredths_of_a_second() -> None:
+    # The INFORM manual's example: I000 = 1000 waits 10.00 s.
+    host = _Host({"T": _job("SET I000 1000", "TIMER T=I000")})
+    run_job(host, "T")
+    assert host.clock == pytest.approx(10.0)
 
 
 def test_a_wait_already_met_goes_straight_on() -> None:

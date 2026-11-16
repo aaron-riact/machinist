@@ -18,7 +18,7 @@ and $B002, ``CNVRT``, ``MFRAME``, ``GETTOOL``, ``SETTOOL``, ``TCPON``/``TCPOF``;
 with ``SRCH RIN#(..)`` or ``UNTIL IN#(..)``;
 ``DIN`` of a signal or group, ``SETREG``; ``MSG``; ``CLEAR STACK``; ``PAUSE``, which
 stops the job;
-``TIMER T=..``;
+``TIMER T=..``, in seconds, or in hundredths of a second from a variable;
 ``WAIT IN#(..)=ON|OFF [T=..]``. A signal or value is a number or a variable
 (``OT#(D001)``, ``T=I020``).
 
@@ -924,7 +924,7 @@ class _Run:
                 self._set_output(number, True)
                 self.host.after(self._value(seconds), lambda: self._set_output(number, False))
             case Timer(seconds):
-                self.host.sleep(self._value(seconds))
+                self.host.sleep(self._timer_seconds(seconds))
             case SetOutputGroup(group, value):
                 with self.host.io_lock:
                     self.host.io[output_byte(self._int(group) * 8)] = self._int(value) & 0xFF
@@ -1000,6 +1000,13 @@ class _Run:
         if isinstance(operand, Literal):
             return operand.value
         return self.host.variables.get(operand.kind, {}).get(operand.number, 0)
+
+    def _timer_seconds(self, operand: Operand) -> float:
+        """TIMER's time: a number is in seconds, a variable in hundredths of a second
+        (the INFORM manuals of the NX100, DX100, DX200 and YRC1000)."""
+        if isinstance(operand, Literal):
+            return operand.value
+        return self._value(operand) / 100
 
     def _int(self, operand: Operand) -> int:
         return int(self._value(operand))
