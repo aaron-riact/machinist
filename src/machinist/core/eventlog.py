@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Collection, Mapping
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 from enum import Enum
 from math import degrees
 from pathlib import Path
@@ -22,8 +22,10 @@ from .events import Event, EventBus
 
 def to_jsonable(value: Any) -> Any:
     """Turn events, frozen views, enums and mappings into JSON-ready data."""
+    # Field by field, not asdict: asdict deep-copies what it does not know, and a
+    # frozen view's MappingProxyType cannot be copied.
     if is_dataclass(value) and not isinstance(value, type):
-        return {k: to_jsonable(v) for k, v in asdict(value).items()}
+        return {f.name: to_jsonable(getattr(value, f.name)) for f in fields(value)}
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Mapping):

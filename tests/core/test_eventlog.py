@@ -9,6 +9,7 @@ from machinist.core.eventlog import ConsoleLog, EventLog, to_jsonable
 from machinist.core.events import EventBus, LifecycleChanged, Note
 from machinist.core.io import Direction, SignalChanged
 from machinist.core.types import DeviceState
+from machinist.devices.machines.state import MachineChanged, MachineState
 from machinist.devices.robots.arm import ArmChanged, ArmMode, RobotArm
 
 
@@ -34,6 +35,15 @@ def test_nested_views_are_written_as_plain_objects() -> None:
     record = to_jsonable(ArmChanged(device="a", view=arm.state.view).payload)
     assert record["view"]["mode"] == "idle"
     assert record["view"]["joints"] == [0.0, 0.0]
+
+
+def test_a_machine_view_writes_its_doors_and_chucks_as_plain_objects() -> None:
+    state = MachineState(doors=("main",), chucks=("main",))
+    state.set_door("main", open=True)
+    record = to_jsonable(MachineChanged(device="m", view=state.view).payload)
+    assert record["view"]["doors"] == {"main": True}
+    assert record["view"]["chucks"] == {"main": False}
+    assert record["view"]["variables"] == {}
 
 
 def test_the_console_log_prints_each_event_on_a_line() -> None:
