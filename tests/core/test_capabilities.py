@@ -22,6 +22,7 @@ from machinist.devices.machines.fanuc_focas_cnc import FanucFocasCnc
 from machinist.devices.machines.haas_ngc import HaasNGC
 from machinist.devices.machines.mazak_840d import MazakSinumerik840D
 from machinist.devices.machines.mazak_smooth import MazakSmoothEmulator
+from machinist.devices.machines.okuma_lb3000ex import OkumaLB3000EX
 from machinist.devices.machines.state import HasMachineState
 from machinist.devices.robots.arm import HasArm
 from machinist.devices.robots.dobot import DobotDashboard
@@ -44,6 +45,7 @@ EXPECTED = {
     HaasNGC: {HasMachineState, HasPrograms},
     MazakSinumerik840D: {HasMachineState, HasIO},
     MazakSmoothEmulator: {HasMachineState, HasIO},
+    OkumaLB3000EX: {HasMachineState, HasIO},
     FanucFocasCnc: set(),
     PneumaticGripper: {HasIO},
     OnRobot3FG25: {HasRegisters},

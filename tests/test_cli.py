@@ -28,6 +28,7 @@ def test_kinds_lists_all_devices() -> None:
         "haas_ngc",
         "mazak_840d",
         "mazak_smooth",
+        "okuma_lb3000ex",
         "pneumatic_gripper",
         "onrobot_3fg25",
         "zimmer_ged6000il",
