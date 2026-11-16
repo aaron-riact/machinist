@@ -1057,6 +1057,19 @@ def test_the_mh50_reaches_as_its_data_sheet() -> None:
         assert _answer(robot, "RPOSC", "0,0").startswith(b"1170.000,0.000,905.000,")
 
 
+def test_the_mh50_counts_its_pulses_as_a_real_one() -> None:
+    """A real MH50's (Welltec's DX200): its top speeds in pulses/s over the data sheet's
+    put every soft limit on a whole degree, to 0.002, S 180, L -90..135, U -80..206,
+    R 360, B 125, T 360 deg, as riflex's settings for it have them."""
+    arm = ROBOTS["mh50"]
+    assert arm.soft_limit_pulses is not None
+    degrees = [limit / ppd
+               for (low, high), ppd in zip(arm.soft_limit_pulses, arm.pulses_per_degree, strict=True)
+               for limit in (low, high)]
+    assert degrees == pytest.approx([-180, 180, -90, 135, -80, 206, -360, 360,
+                                     -125, 125, -360, 360], abs=0.002)
+
+
 def test_the_mh50_35_reaches_as_its_data_sheet() -> None:
     """1.150 m L to U, 0.210 m up and 1.225 m out to the wrist, 0.175 m to the flange:
     with the flange down at zero it is 1.370 m out and 1.185 m up."""

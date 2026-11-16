@@ -142,13 +142,19 @@ ROBOTS: dict[str, YaskawaArm] = {
         max_joint_speed_deg_s=(140.0, 140.0, 140.0, 250.0, 250.0, 350.0),
         model="YR-UP50N-A00",
     ),
-    # The MH50, the UP50N's successor, from the MH50 II data sheet. Its pulses
-    # are not known, so it counts with the UP50N's.
+    # The MH50, the UP50N's successor, from the MH50 II data sheet. Its pulses and
+    # soft limits are a real one's ALL.PRM, on a DX200 (Welltec's): its top speeds in
+    # pulses/s (RC1G 1148-1153) over the data sheet's, which put every limit on a whole
+    # degree.
     "mh50": YaskawaArm(
         urdf=_URDF_DIR / "yr_mh50.urdf",
-        pulses_per_degree=(1416.552, 1945.413, 1994.362, 895.052, 814.519, 418.627),
+        pulses_per_degree=(1413.522, 1604.270, 1994.365, 779.644, 765.208, 467.433),
         max_joint_speed_deg_s=(180.0, 178.0, 178.0, 250.0, 250.0, 360.0),
         model="YR-MH00050II-J00",
+        # That one's soft limits (ALL.PRM S1C1G 400-405 and 408-413): S 180,
+        # L -90..135, U -80..206, R 360, B 125, T 360 deg.
+        soft_limit_pulses=((-254434, 254434), (-144384, 216576), (-159549, 410839),
+                           (-280671, 280671), (-95651, 95651), (-168276, 168276)),
     ),
     # The MH50-35: longer arms (1.150 m L to U, 1.225 m U to the wrist) for
     # 35 kg, L at 140 degrees/s.
