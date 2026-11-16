@@ -15,6 +15,15 @@ def test_link_propagates_value() -> None:
     assert dst.value is True
 
 
+def test_a_link_carries_the_value_the_source_already_has() -> None:
+    io = IOMap()
+    src = io.bank("machine").declare("door_closed")
+    dst = io.bank("ctrl").declare("in_3")
+    src.set(True)  # a device's power-up state, set before the links are made
+    io.link("machine.door_closed", "ctrl.in_3")
+    assert dst.value is True
+
+
 def test_signal_direction_defaults_to_input_and_is_recorded() -> None:
     bank = IOMap().bank("ctrl")
     cmd = bank.declare("door_open_cmd")

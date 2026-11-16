@@ -134,10 +134,15 @@ class IOMap:
         self._banks[bank.owner] = bank
 
     def link(self, source: str, target: str) -> None:
-        """Wire ``source`` -> ``target``. Both are ``device.signal`` paths."""
+        """Wire ``source`` -> ``target``. Both are ``device.signal`` paths.
+
+        Like a real wire, the target takes the source's value at once: a device's
+        power-up state, set before the links are made, reaches what it is wired to.
+        """
         src = self.signal(source)
         dst = self.signal(target)
         src.subscribe(dst.set)
+        dst.set(src.value)
 
     def signal(self, path: str) -> Signal:
         """Look up a signal by its ``device.signal`` path."""
