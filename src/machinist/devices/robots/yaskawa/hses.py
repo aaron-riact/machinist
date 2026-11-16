@@ -446,7 +446,7 @@ class HighSpeedEthernetServer:
         """A control group's position in the base, robot or a user frame, with a
         tool. In: group kind, index, frame and tool. Out: coordinate type, user
         frame, tool, form, a reserved word and eight axes in µm and 0.0001 degrees.
-        The emulated arm has no tool files, so every tool reads the same position."""
+        The pose is the point of the tool asked for, as TOOL.CND has it."""
         if request.service != Service.GET_ALL:
             raise HsesError(Status.UNDEFINED_COMMAND)
         if len(request.data) != 16:
@@ -454,8 +454,7 @@ class HighSpeedEthernetServer:
         kind, index, frame, tool, _ = struct.unpack("<2i2Hi", request.data)
         if (kind, index) != (ROBOT_GROUPS, 0):
             raise _added(AddedStatus.CONTROL_GROUP_ERROR)
-        self.controller.check_tool(tool)
-        pose = self.controller.arm.state.view.pose
+        pose = self.controller.tool_point(self.controller.check_tool(tool))
         coordinate, user = (UAPI_BASE if frame == BASE_FRAME else UAPI_ROBOT), 0
         if frame not in (BASE_FRAME, ROBOT_FRAME):
             coordinate, user = UAPI_USER, frame - 1
@@ -534,7 +533,7 @@ class HighSpeedEthernetServer:
             axes = _pad(self.controller.pulses(), AXIS_ELEMENTS, 0)[:count]
         else:
             data_type, axes = BASE_COORDINATE_DATA, _pad(_micrometres_and_ten_thousandths(
-                self.controller.arm.state.view.pose
+                self.controller.tool_point(self.controller.tool)
             ), AXIS_ELEMENTS, 0)
         values = [data_type, self.controller.form, self.controller.tool, 0, 0, *axes]
         if (request.service == Service.GET_SINGLE
@@ -882,7 +881,8 @@ class HighSpeedEthernetServer:
                                         speed=speed, queue=self._queues)
             return b""
         assert frame is not None
-        target = from_frame(frame, target)
+        # The pose is the tool's point; the arm drives its flange.
+        target = self.controller.flange_for(from_frame(frame, target), tool)
         if kind is MoveKind.JOINT:
             self.controller.move_joints_to_pose(target, speed, queue=self._queues)
         else:

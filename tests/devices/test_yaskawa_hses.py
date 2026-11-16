@@ -983,3 +983,40 @@ def test_an_io_write_may_carry_its_byte_in_8_bytes(yrc: YaskawaRobot) -> None:
 def test_a_pendant_message_may_come_unpadded(yrc: YaskawaRobot) -> None:
     assert _ask(yrc, 0x85, 1, 1, SET_SINGLE, b"YMCONNECT").status is Status.OK
     assert yrc.controller.pendant_message == "YMCONNECT"
+
+
+#: Tool 1 reaches 100 mm along the flange's Z: at HOME, pointing down, 100 mm below it.
+TOOL_1_DOWN_100 = "\r\n".join([
+    "//TOOL 0", "///NAME", "0.000,0.000,0.000,0.0000,0.0000,0.0000", "0,0,0", "0", "0,0,0", "0,0,1",
+    "//TOOL 1", "///NAME", "0.000,0.000,100.000,0.0000,0.0000,0.0000", "0,0,0", "0", "0,0,0",
+    "0,0,1",
+]).encode() + b"\r\n"
+
+
+def test_a_position_read_answers_the_point_of_the_tool_last_used(yrc: YaskawaRobot) -> None:
+    """A real controller answers 0x75 in the tool it last moved in, not at the flange."""
+    yrc.controller.files["TOOL.CND"] = TOOL_1_DOWN_100
+    stay = _pulses(tuple(_ints(_ask(yrc, 0x75, 1, 0, GET_ALL))[5:11]) + (0, 0), tool=1)
+    assert _ask(yrc, 0x8B, 1, 1, SET_ALL, stay).status is Status.OK
+    _settle(yrc)
+    values = _ints(_ask(yrc, 0x75, 101, 0, GET_ALL))
+    assert values[2] == 1
+    assert values[5:8] == pytest.approx((1_170_000, 0, 705_000), abs=100)
+
+
+def test_a_cartesian_read_answers_the_point_of_the_tool_asked_for(yrc: YaskawaRobot) -> None:
+    yrc.controller.files["TOOL.CND"] = TOOL_1_DOWN_100
+    answer = struct.unpack("<i2h2I8i", _read_cartesian(yrc, frame=0, tool=1).data)
+    assert answer[5:8] == pytest.approx((1_170_000, 0, 705_000), abs=100)
+
+
+@pytest.mark.parametrize("kind", [1, 2])
+def test_a_cartesian_move_takes_its_pose_as_the_tools_point(yrc: YaskawaRobot, kind: int) -> None:
+    """Tool 1's point sent to Z 605 mm puts the flange at 705 mm, 100 mm above it."""
+    yrc.controller.files["TOOL.CND"] = TOOL_1_DOWN_100
+    down = (HOME[0], HOME[1], 605_000, *HOME[3:])
+    move = _cartesian(kind, down, tool=1, speed_class=0 if kind == 1 else 1)
+    assert _ask(yrc, 0x8A, kind, 1, SET_ALL, move).status is Status.OK
+    _settle(yrc)
+    x, y, z, *_ = yrc.controller.arm.state.view.pose
+    assert (x, y, z) == pytest.approx((1.170, 0, 0.705), abs=1e-4)

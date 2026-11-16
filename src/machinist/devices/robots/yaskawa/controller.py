@@ -853,6 +853,16 @@ class YaskawaController:
     def tool_transform(self, number: int) -> NDArray[np.float64]:
         return offset_transform(self.tool_offset(number))
 
+    def tool_point(self, tool: int) -> Pose:
+        """Where *tool*'s point is now, in base coordinates: what a position read
+        answers in that tool."""
+        return _mat_to_pose(pose_to_mat(self.arm.state.view.pose) @ self.tool_transform(tool))
+
+    def flange_for(self, point: Pose, tool: int) -> Pose:
+        """Where the flange goes for *tool*'s point to be at *point*: what a Cartesian
+        move in that tool drives to."""
+        return _mat_to_pose(pose_to_mat(point) @ np.linalg.inv(self.tool_transform(tool)))
+
     def frame_transform(self, data_type: DataType, user: int) -> NDArray[np.float64]:
         """The robot frame is the base frame: the emulator has no base axes."""
         match data_type:
