@@ -237,6 +237,9 @@ class YaskawaRobot(Device, HasArm, HasIO):
                                else options.running_bit_quirk),
             note=self.emit,
         )
+        for number, saved in backup.user_frames.items():
+            self.controller.restore_user_frame(number, frame_mm_deg=saved.frame_mm_deg,
+                                               tool=saved.tool, external=saved.external)
         self.io = SignalBank(owner=name, publish=bus.publish)
         self._wire_signals(options.signals)
         # A real ladder scans from power-up: an inverted rung is on before any write.

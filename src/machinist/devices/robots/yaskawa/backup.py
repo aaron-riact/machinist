@@ -21,6 +21,19 @@ VARIABLE_SECTIONS = ("B", "I", "D", "R")
 
 
 @dataclass(frozen=True, slots=True)
+class SavedUserFrame:
+    """A user frame as UFRAME.CND keeps it: the frame in base coordinates (BUSER: X Y Z
+    in mm, Rx Ry Rz in degrees), the tool it was taught in, and ORG's external axes.
+
+    The frame, not the points: a frame a job makes (MFRAME) keeps points that need not
+    span a plane, while its BUSER is the frame the controller uses."""
+
+    frame_mm_deg: tuple[float, ...]
+    tool: int
+    external: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ControllerBackup:
     files: dict[str, bytes]
     variables: dict[str, dict[int, float]]
@@ -28,6 +41,8 @@ class ControllerBackup:
     positions: dict[int, tuple[int, ...]] = field(default_factory=dict)
     #: The saved ladder, empty when the folder has no CIOPRG.LST.
     ladder: LadderFile = field(default_factory=lambda: LadderFile({}, Ladder()))
+    #: The user frames UFRAME.CND keeps, by number; the ones never taught are left out.
+    user_frames: dict[int, SavedUserFrame] = field(default_factory=dict)
 
     @classmethod
     def load(cls, folder: Path) -> ControllerBackup:
@@ -40,7 +55,43 @@ class ControllerBackup:
         cioprg = files.get("CIOPRG.LST")
         ladder = (parse_ladder_file(cioprg.decode("ascii", errors="replace"))
                   if cioprg is not None else LadderFile({}, Ladder()))
-        return cls(files, parse_variables(text), parse_position_variables(text), ladder)
+        uframe = files.get("UFRAME.CND")
+        user_frames = (parse_user_frames(uframe.decode("ascii", errors="replace"))
+                       if uframe is not None else {})
+        return cls(files, parse_variables(text), parse_position_variables(text), ladder,
+                   user_frames)
+
+
+#: How many of a UFRAME.CND point's pulses are the robot's; the rest are external axes.
+ROBOT_AXES = 6
+#: The external axes a user frame records.
+EXTERNAL_AXES = 6
+
+
+def parse_user_frames(text: str) -> dict[int, SavedUserFrame]:
+    """The taught user frames of a UFRAME.CND, by number: each ``//UFRAME n`` section's
+    ``///TOOL``, ``////BUSER`` and ORG's external axes. A frame whose points
+    (``////RORG``, ``////RXX``, ``////RXY``) are all zero was never taught."""
+    frames: dict[int, SavedUserFrame] = {}
+    for section in text.replace("\r", "").split("//UFRAME ")[1:]:
+        lines = section.split("\n")
+        tool, frame, points = 0, None, {}
+        for line in lines[1:]:
+            if line.startswith("///TOOL "):
+                tool = int(line.split()[1])
+            elif line.startswith("////BUSER "):
+                frame = tuple(float(v) for v in line.split(" ", 1)[1].split(","))
+            elif line.startswith(("////RORG ", "////RXX ", "////RXY ")):
+                key, _, values = line[4:].partition(" ")
+                points[key] = tuple(int(v) for v in values.split("=", 1)[1].split(","))
+        if frame is None or not any(any(p) for p in points.values()):
+            continue
+        org = points.get("RORG", ())
+        frames[int(lines[0])] = SavedUserFrame(
+            frame_mm_deg=frame[:6], tool=tool,
+            external=(org[ROBOT_AXES:] + (0,) * EXTERNAL_AXES)[:EXTERNAL_AXES],
+        )
+    return frames
 
 
 def parse_variables(text: str) -> dict[str, dict[int, float]]:

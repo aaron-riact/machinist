@@ -402,6 +402,12 @@ POSITION_NUMBERS = range(128)
 STRING_SIZE = 32
 #: How far apart a user frame's taught points must be, in metres.
 FRAME_POINT_SPACING = 1e-3
+#: How far from its origin a restored user frame's XX and XY points sit, in metres.
+RESTORED_POINT_SPACING = 0.1
+_RESTORED_POINTS = tuple(
+    np.array([[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float)
+    for x, y in ((0, 0), (RESTORED_POINT_SPACING, 0), (0, RESTORED_POINT_SPACING))
+)
 #: The modes MODE selects: 1 teach, 2 play.
 MODES = {1: Status1.TEACH, 2: Status1.PLAY}
 #: The cycles both servers number 1 step, 2 one cycle, 3 auto (CYCLE, HSES 0x84).
@@ -1056,6 +1062,21 @@ class YaskawaController:
         self.check_tool(frame.tool)
         frame.transform()
         self.user_frames[number] = frame
+
+    def restore_user_frame(
+        self, number: int, *, frame_mm_deg: tuple[float, ...], tool: int,
+        external: tuple[int, ...],
+    ) -> None:
+        """User frame *number* as a saved UFRAME.CND keeps it: the frame in base
+        coordinates, X Y Z in mm and Rx Ry Rz in degrees. The controller holds it from
+        power-up, so no teach mode is needed. Its points are put on the frame's axes,
+        RESTORED_POINT_SPACING from its origin."""
+        if not 1 <= number <= self.profile.user_frames:
+            raise CommandRefusedError(Refusal.BAD_DATA, f"user frame {number}")
+        frame = offset_transform(frame_mm_deg)
+        org, xx, xy = (_mat_to_pose(frame @ step) for step in _RESTORED_POINTS)
+        self.user_frames[number] = UserFrame(org=org, xx=xx, xy=xy, types=(0, 0, 0),
+                                             tool=self.check_tool(tool), external=external)
 
     def move_joints(self, target: Joints, speed_percent: float, *,
                     queue: bool = True) -> BufferedMove | None:

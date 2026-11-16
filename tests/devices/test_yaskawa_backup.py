@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from machinist.core.events import EventBus
 from machinist.core.types import Endpoint
 from machinist.devices.robots.yaskawa import YaskawaOptions, YaskawaRobot
 from machinist.devices.robots.yaskawa.backup import ControllerBackup, parse_variables
+from machinist.kinematics.dh_backend import pose_to_mat
 
 from ..conftest import free_port
 
@@ -91,3 +93,54 @@ def test_a_saved_ladder_runs_with_the_scenes_rungs_after_it(saved: Path) -> None
     robot.io["s20021"].set(True)
     assert controller.io[20] == 0b10           # the saved ladder: terminal to IN#10
     assert controller.io[30010] == 0b10         # then the scene's rung
+
+
+#: A real MH50's user frame 11 (Welltec's DX200, UFRAME.CND): ORG, XX and XY as the
+#: pulses they were taught at, in tool 3; BUSER is where the controller put the frame.
+UFRAME_CND = "\r\n".join([
+    "//UFRAME 11", "///NAME MULTUS", "///TOOL 3", "///GROUP 1" + ",0" * 31,
+    "///BASICFRM 1,16,0", "///BASEP 0.000,0.000,0.000,0.0000,0.0000,0.0000", "///PULSE",
+    "////RORG C000=10794,95543,45323,-12474,20107,6007,0,0,0",
+    "////RXX C001=-9303,95542,45176,12305,20146,-6064,0,0,0",
+    "////RXY C002=7893,98588,61863,-11485,14855,5973,0,0,0",
+    "////BUSER 2139.407,337.361,-69.060,51.8855,0.1512,-89.5443",
+]) + "\r\n"
+#: Its tool 3 (PZN A).
+TOOL_3_CND = "\r\n".join([
+    "//TOOL 3", "///NAME PZN A", "-0.500,-90.000,146.500,90.0000,0.0000,180.0000",
+    "0.000,0.000,0.000", "0.000", "0.000,0.000,0.000", "0.000,0,3",
+]) + "\r\n"
+
+
+def test_a_saved_user_frame_is_taught_where_the_controller_put_it(tmp_path: Path) -> None:
+    """UFRAME.CND keeps a frame's points as pulses; through the arm and its tool they
+    give the frame the controller stored (BUSER)."""
+    (tmp_path / "UFRAME.CND").write_text(UFRAME_CND)
+    (tmp_path / "TOOL.CND").write_text(TOOL_3_CND)
+    options = YaskawaOptions(controller="dx200", robot="mh50", protocols=("hses",),
+                             controller_files=tmp_path)
+    controller = YaskawaRobot("r1", Endpoint("127.0.0.1", 0), EventBus(), options).controller
+    frame = controller.user_frame_transform(11)
+    assert tuple(frame[:3, 3] * 1000) == pytest.approx((2139.407, 337.361, -69.060), abs=0.1)
+    stored = pose_to_mat((0, 0, 0, *(math.radians(a) for a in (51.8855, 0.1512, -89.5443))))
+    assert frame[:3, :3] == pytest.approx(stored[:3, :3], abs=1e-3)
+    assert controller.taught_user_frame(11).tool == 3
+
+
+def test_a_user_frame_a_job_made_keeps_its_frame_not_its_points(tmp_path: Path) -> None:
+    """The cell's UF7 came from a job's MFRAME: its three points lie within 0.01 mm of
+    each other, yet the controller holds the frame BUSER gives."""
+    (tmp_path / "UFRAME.CND").write_text("\r\n".join([
+        "//UFRAME 7", "///NAME LASER OPRET", "///TOOL 3", "///PULSE",
+        "////RORG C000=96622,86999,-77489,15825,71082,42569,0,0,0",
+        "////RXX C001=96615,87000,-77484,15829,71080,42568,0,0,0",
+        "////RXY C002=96625,87001,-77477,15824,71078,42568,0,0,0",
+        "////BUSER 379.059,1255.950,-616.266,0.0000,0.0000,-1.1458",
+    ]) + "\r\n")
+    (tmp_path / "TOOL.CND").write_text(TOOL_3_CND)
+    options = YaskawaOptions(controller="dx200", robot="mh50", protocols=("hses",),
+                             controller_files=tmp_path)
+    controller = YaskawaRobot("r1", Endpoint("127.0.0.1", 0), EventBus(), options).controller
+    frame = controller.user_frame_transform(7)
+    assert tuple(frame[:3, 3] * 1000) == pytest.approx((379.059, 1255.950, -616.266), abs=0.001)
+    assert math.degrees(math.atan2(frame[1, 0], frame[0, 0])) == pytest.approx(-1.1458, abs=1e-3)
