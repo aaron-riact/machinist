@@ -183,7 +183,7 @@ async def test_moving_the_cursor_selects_the_device() -> None:
         await pilot.pause()
         detail = app.query_one(DetailPane)
         assert detail.view is not None and detail.view.name == "g1"
-        assert [r[0].split()[-1] for r in _rows(detail.inputs)] == ["cmd_open", "cmd_close"]
+        assert [r[0].split()[-1] for r in _rows(detail.inputs)] == ["cmd_open", "cmd_close", "part"]
 
 
 @pytest.mark.timeout(10)

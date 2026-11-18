@@ -8,11 +8,14 @@ from machinist.core.types import Endpoint
 from machinist.devices.grippers.pneumatic import PneumaticGripper, PneumaticGripperOptions
 
 
-def test_open_close_cycle() -> None:
-    gripper = PneumaticGripper(
-        "g1", Endpoint("127.0.0.1", 0), EventBus(), PneumaticGripperOptions(settle_seconds=0.05),
-        io=SignalBank(owner="g1"),
+def _gripper(options: PneumaticGripperOptions) -> PneumaticGripper:
+    return PneumaticGripper(
+        "g1", Endpoint("127.0.0.1", 0), EventBus(), options, io=SignalBank(owner="g1"),
     )
+
+
+def test_open_close_cycle() -> None:
+    gripper = _gripper(PneumaticGripperOptions(settle_seconds=0.05))
     gripper.start()
     try:
         gripper.io["cmd_open"].set(True)
@@ -25,5 +28,34 @@ def test_open_close_cycle() -> None:
         time.sleep(0.15)
         assert gripper.io["is_closed"].value is True
         assert gripper.io["is_open"].value is False
+    finally:
+        gripper.stop()
+
+
+def test_closing_on_a_part_makes_neither_limit_switch() -> None:
+    gripper = _gripper(PneumaticGripperOptions(settle_seconds=0.05, part=True))
+    gripper.start()
+    try:
+        gripper.io["cmd_close"].set(True)
+        time.sleep(0.15)
+        assert gripper.io["is_closed"].value is False
+        assert gripper.io["is_open"].value is False
+
+        gripper.io["cmd_close"].set(False)
+        gripper.io["cmd_open"].set(True)
+        time.sleep(0.15)
+        assert gripper.io["is_open"].value is True
+    finally:
+        gripper.stop()
+
+
+def test_without_its_part_the_gripper_closes_fully() -> None:
+    gripper = _gripper(PneumaticGripperOptions(settle_seconds=0.05, part=True))
+    gripper.start()
+    try:
+        gripper.io["part"].set(False)
+        gripper.io["cmd_close"].set(True)
+        time.sleep(0.15)
+        assert gripper.io["is_closed"].value is True
     finally:
         gripper.stop()

@@ -7,6 +7,10 @@ two input coils report the limit switches (fully open / fully closed).
 The emulator wires up a small state machine: when ``cmd_open`` goes high
 it transitions to "fully open" after a configurable settle time; same for
 ``cmd_close``. If both are high (or both low) it parks in transit.
+
+A ``part`` input says a part sits between the jaws. Closing on it, the jaws
+stop on the part: neither limit switch is made, as a real gripper holding a
+part reports. Its start value is the ``part`` option.
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ from ...core.types import Endpoint
 
 class PneumaticGripperOptions(Options):
     settle_seconds: float = 0.3
+    #: Whether a part sits between the jaws at power-up (the ``part`` input).
+    part: bool = False
 
 
 class PneumaticGripper(Device, HasIO):
@@ -40,6 +46,8 @@ class PneumaticGripper(Device, HasIO):
         self._cmd_close = self.io.declare("cmd_close", Direction.INPUT)
         self._is_open = self.io.declare("is_open", Direction.OUTPUT)
         self._is_closed = self.io.declare("is_closed", Direction.OUTPUT)
+        self._part = self.io.declare("part", Direction.INPUT)
+        self._part.set(options.part)
         self._cmd_open.subscribe(lambda _: self._react())
         self._cmd_close.subscribe(lambda _: self._react())
         self._timer: threading.Timer | None = None
@@ -64,6 +72,9 @@ class PneumaticGripper(Device, HasIO):
         timer.start()
 
     def _settle(self, target: str) -> None:
+        if target == "closed" and self._part.value:
+            self.emit("settled", target="part")
+            return
         (self._is_open if target == "open" else self._is_closed).set(True)
         self.emit("settled", target=target)
 

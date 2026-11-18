@@ -30,6 +30,7 @@ def test_the_signal_bank_is_the_source_of_io() -> None:
     assert names == {
         ("cmd_open", Direction.INPUT),
         ("cmd_close", Direction.INPUT),
+        ("part", Direction.INPUT),
         ("is_open", Direction.OUTPUT),
         ("is_closed", Direction.OUTPUT),
     }
