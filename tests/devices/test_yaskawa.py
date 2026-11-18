@@ -544,6 +544,21 @@ def test_jseq_while_the_arm_moves_is_an_error(with_jobs: YaskawaRobot) -> None:
     assert _answer(with_jobs, "JSEQ", "PICK,0") == b"ERROR:JSEQ is not successful (2010).\r\n"
 
 
+def test_jseq_while_the_arm_moves_is_taken_where_the_cell_allows_it() -> None:
+    options = YaskawaOptions(controller="nx100", start_joints_deg=START, jobs=("MAIN", "PICK"),
+                             job_select_while_moving=True, **UP50N_AXES)
+    for robot in _running(options):
+        _answer(robot, "PMOVJ", "1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0")
+        assert robot.arm.state.view.moving
+        assert _answer(robot, "JSEQ", "PICK,0") == b"0000\r\n"
+
+
+def test_the_settings_say_jobs_are_selected_while_moving() -> None:
+    assert "jobs selected while moving" in _device(controller="dx200",
+                                                   job_select_while_moving=True).settings()
+    assert "jobs selected while moving" not in _device(controller="dx200").settings()
+
+
 def test_rgroup_reads_r1_and_the_master_task(motoman: YaskawaRobot) -> None:
     assert _answer(motoman, "RGROUP") == b"1,0,0\r"
 

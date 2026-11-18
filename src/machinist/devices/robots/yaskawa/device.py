@@ -90,6 +90,9 @@ class YaskawaOptions(ArmOptions):
     #: from the buffer. Unset takes the controller's (on for the NX100, off for
     #: the others); each time it hides a move the device notes it.
     running_bit_quirk: bool | None = None
+    #: Whether a job is selected (HSES 0x87, JSEQ, SETMJ) while the arm moves. The
+    #: YRC1000 manual's interlock table (11.1.1) refuses it (2010), so by default it is.
+    job_select_while_moving: bool = False
     #: How often the ladder scans on its own, in ms, besides after every write: a
     #: DX200 scans every 4 ms. Its timers count real time whatever this is; its
     #: counters count scans, so a counter clocked by a relay the ladder turns over
@@ -235,6 +238,7 @@ class YaskawaRobot(Device, HasArm, HasIO):
             running_bit_quirk=(CONTROLLERS[options.controller].running_bit_quirk
                                if options.running_bit_quirk is None
                                else options.running_bit_quirk),
+            job_select_while_moving=options.job_select_while_moving,
             note=self.emit,
         )
         for number, saved in backup.user_frames.items():
@@ -297,6 +301,8 @@ class YaskawaRobot(Device, HasArm, HasIO):
         lines.append(f"moves taken while moving: {'unlimited' if buffer is None else buffer}")
         if self.controller.running_bit_quirk:
             lines.append("running bit quirk on")
+        if self.controller.job_select_while_moving:
+            lines.append("jobs selected while moving")
         if not self.arm.state.view.servo_on:
             lines.append("servos off")
         return lines

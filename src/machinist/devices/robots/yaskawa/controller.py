@@ -523,6 +523,8 @@ class YaskawaController:
     #: Whether RSTATS hides the moves that start from the buffer (the profile's
     #: running_bit_quirk).
     running_bit_quirk: bool = False
+    #: Whether a job is selected while the arm moves; refused (2010) when not.
+    job_select_while_moving: bool = False
     #: Whether the move under way shows in RSTATS: under the quirk, only a move
     #: that started with the arm still.
     _move_shows_running: bool = field(default=True, repr=False)
@@ -765,8 +767,8 @@ class YaskawaController:
 
     def select_job(self, name: str, line: int = 0, *, master_of_task: int | None = None) -> None:
         """Set the executing job (and its line), or a task's master job; not while
-        the arm moves."""
-        if self.arm.state.view.moving:
+        the arm moves, unless job_select_while_moving."""
+        if self.arm.state.view.moving and not self.job_select_while_moving:
             raise CommandRefusedError(Refusal.MOVING, "the manipulator is operating")
         self.check_no_alarm()
         if name not in self.jobs:
