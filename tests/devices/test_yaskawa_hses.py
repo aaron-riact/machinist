@@ -539,6 +539,15 @@ def test_a_refusal_is_noted_with_its_added_status(yrc: YaskawaRobot) -> None:
     )
 
 
+def test_a_job_select_is_noted_by_its_job_and_line(yrc: YaskawaRobot) -> None:
+    notes = _noting(yrc)
+    _ask(yrc, 0x87, 1, 0, SET_ALL, b"NO_SUCH_JOB".ljust(32, b"\0") + struct.pack("<i", 3))
+    kind, details = notes[-1]
+    assert (kind, details["command"], details["data"]) == (
+        "hses refused", "job select", {"job": "NO_SUCH_JOB", "line": 3},
+    )
+
+
 def test_a_move_during_an_emergency_stop_finds_the_servos_off(yrc: YaskawaRobot) -> None:
     """A real GP8's YRC1000, E-stopped during a jog, raised no alarm and refused the next
     joint moves 0x2070 (servo off)."""

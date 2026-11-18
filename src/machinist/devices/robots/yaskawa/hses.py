@@ -290,6 +290,8 @@ SPEED_OVERRIDE = 10_000
 EXECUTING_JOB = 1
 MASTER_JOB_INSTANCES = range(10, 26)
 JOB_NAME_FIELD = 32
+#: HSES 3.3.24, job select.
+JOB_SELECT = 0x87
 MAX_JOB_LINE = 9999
 #: The pendant's remote display takes 30 characters in a 32-byte field (3.3.22).
 PENDANT_CHARACTERS, PENDANT_FIELD = 30, 32
@@ -363,10 +365,15 @@ class HighSpeedEthernetServer:
         ))
 
     def _note(self, kind: str, request: Request, **details: object) -> None:
-        """Note a command on the device's log: its name, instance and data, the data as
-        32-bit integers where it divides into them, else as text."""
+        """Note a command on the device's log: its name, instance and data. A job select's
+        data is its job and line; other data is 32-bit integers where it divides into
+        them, else text."""
         data: object = request.data.rstrip(b"\0").decode("ascii", "replace")
-        if request.data and len(request.data) % 4 == 0:
+        if request.command == JOB_SELECT and len(request.data) == JOB_NAME_FIELD + 4:
+            name = request.data[:JOB_NAME_FIELD].split(b"\0", 1)[0].decode("ascii", "replace")
+            (line,) = struct.unpack_from("<i", request.data, JOB_NAME_FIELD)
+            data = {"job": name, "line": line}
+        elif request.data and len(request.data) % 4 == 0:
             data = list(struct.unpack(f"<{len(request.data) // 4}i", request.data))
         self.controller.note(
             f"hses {kind}", command=COMMAND_NAMES.get(request.command, f"{request.command:#05x}"),
@@ -411,7 +418,7 @@ class HighSpeedEthernetServer:
             0x84: self._cycle,
             0x85: self._pendant_message,
             0x86: self._start_job,
-            0x87: self._select_job,
+            JOB_SELECT: self._select_job,
             0x88: self._management_time,
             0x89: self._system_information,
             0x8A: self._move_cartesian,
